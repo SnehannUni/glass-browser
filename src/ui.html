@@ -880,8 +880,10 @@
     { id: 'google', name: 'Google', icon: favicon('google.com'), hint: 'Suchbegriff oder Websitename eingeben' },
     { id: 'chatgpt', name: 'ChatGPT', icon: favicon('chatgpt.com'), hint: 'ChatGPT fragen oder Website eingeben' },
     { id: 'claude', name: 'Claude', icon: favicon('claude.ai'), hint: 'Claude fragen oder Website eingeben' },
-    { id: 'perplexity', name: 'Perplexity', icon: favicon('perplexity.ai'), hint: 'Mit Perplexity suchen oder Website eingeben' },
-    { id: 'copilot', name: 'Copilot', icon: 'https://copilot.microsoft.com/favicon.ico', hint: 'Copilot fragen oder Website eingeben' },
+    // Gemini, Kimi und Z.ai nehmen keinen Prompt über die Adresse an – Glass tippt ihn dort ein (prompt.js)
+    { id: 'gemini', name: 'Gemini', icon: favicon('gemini.google.com'), hint: 'Gemini fragen oder Website eingeben' },
+    { id: 'kimi', name: 'Kimi', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
+    { id: 'zai', name: 'Z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
   ];
   const ENGINE_KEY = 'glass.engine';
   let engine = ENGINES[0];
