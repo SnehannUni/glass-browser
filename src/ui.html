@@ -1173,11 +1173,7 @@
     slot.append(engineImg(e));
     slot.addEventListener('pointerdown', (ev) => {
       ev.preventDefault(); ev.stopPropagation(); // Fokus bleibt im Feld
-      clearTimeout(wheelTimer);
-      if (e === engine) { closeWheel(); return; }
-      setEngine(e);
-      turnWheel();
-      wheelTimer = setTimeout(closeWheel, 750); // erst hineindrehen lassen, dann schließen
+      closeWheel(e === engine ? undefined : e); // der neue dreht sich beim Eindrehen über den bisherigen
     });
     wheelSpin.append(slot);
     return slot;
@@ -1207,27 +1203,36 @@
     document.body.classList.add('wheel-open');
     moveSlots(true);
   }
-  // Aus- und Eindrehen, beides im Uhrzeigersinn: Eingefahren liegen alle Kreise gestapelt unter dem gewählten.
-  // Beim Öffnen fächern sie sich auf der Umlaufbahn auf ihre Plätze, beim Schließen drehen sie weiter,
-  // bis sie wieder unter ihm liegen. Alle kommen gleichzeitig an; der gewählte bleibt, wo er ist.
-  function moveSlots(out) {
-    const n = ENGINES.length, sel = ENGINES.indexOf(engine);
+  // Aus- und Eindrehen in einem Schwung, beides im Uhrzeigersinn: Das Rad dreht sich als Ganzes.
+  // Öffnen: die Kreise lösen sich nacheinander vom Stapel unter dem gewählten, der am weitesten reist zuerst.
+  // Schließen: jeder Kreis, der links am Knopf ankommt, bleibt dort liegen – unter dem bisherigen Anbieter,
+  // nur ein neu gewählter (`pick`) legt sich obendrauf.
+  function moveSlots(out, pick = -1) {
+    const n = ENGINES.length, from = ENGINES.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
     return Promise.all(slots.map((s, i) => {
-      const j = (i - sel + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
+      const j = (i - from + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
+      s.style.zIndex = i === pick ? n + 1 : n - j;
+      if (pick >= 0) s.classList.toggle('on', i === pick);
       if (!j) return null;
-      return out
-        ? s.animate([{ '--off': `${-j * STEP}deg` }, { '--off': '0deg' }],
-          { duration: 650, easing: 'cubic-bezier(.3, 1.15, .45, 1)', fill: 'backwards' }).finished
-        : s.animate([{ '--off': '0deg' }, { '--off': `${(n - j) * STEP}deg` }],
-          { duration: 380, easing: 'cubic-bezier(.45, 0, .6, 1)', fill: 'forwards' }).finished;
+      const deg = (k) => ({ '--off': `${k * STEP}deg` });
+      if (out) {
+        return s.animate([{ ...deg(-j), offset: 0 }, { ...deg(-j), offset: (last - j) / last }, { ...deg(0), offset: 1 }],
+          { duration: 750, easing: 'cubic-bezier(.3, 1.1, .45, 1)', fill: 'backwards' }).finished;
+      }
+      const d = n - j; // so viele Plätze bis zum Knopf
+      return s.animate([{ ...deg(0), offset: 0 }, { ...deg(d), offset: d / last }, { ...deg(d), offset: 1 }],
+        { duration: 650, easing: 'cubic-bezier(.45, 0, .4, 1)', fill: 'forwards' }).finished;
     }));
   }
-  function closeWheel() {
+  function closeWheel(pick) {
     clearTimeout(wheelTimer);
     if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
     wheel.dataset.closing = '1';
-    document.body.classList.remove('wheel-open');
-    moveSlots(false).then(() => {
+    const moving = moveSlots(false, pick ? ENGINES.indexOf(pick) : -1);
+    if (pick) setEngine(pick);
+    // Knopf erst zeigen, wenn alles eingedreht ist – sonst läge er schon mit dem neuen Logo unter dem Stapel
+    moving.then(() => {
+      document.body.classList.remove('wheel-open');
       delete wheel.dataset.closing;
       wheel.classList.remove('open');
       slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
