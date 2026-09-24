@@ -5,7 +5,9 @@
   window.addEventListener('keydown', (e) => {
     if (!e.ctrlKey || e.altKey) return;
     const key = e.key.toLowerCase();
+    if (key === 'f8' && e.shiftKey && e.repeat) { e.preventDefault(); return; }
     const cmd =
+      key === 'f8' && e.shiftKey ? 'animation_debug' :
       key === 't' ? 'new_tab' :
       key === 'n' && e.shiftKey ? 'private_tab' :
       key === 'w' ? 'close_tab' :

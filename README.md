@@ -70,6 +70,15 @@ Prüfen: `node tests/ui-smoke.mjs` (synthetische Logins) und `node tests/icloud-
 
 ## Glasdarstellung
 
+**Animation-Debug-Modus:** `Strg+Umschalt+F8` schaltet die Browser-UI auf 5 %
+Animationsgeschwindigkeit (20-fache Dauer). Derselbe Shortcut oder ein Klick auf
+den gelben Hinweis schaltet zurück. CSS-Animationen, Übergänge, Pseudo-Elemente
+und Web Animations teilen die Steuerung in `src/animation-debug.js`; auch bereits
+laufende Animationen werden ohne Zurücksetzen ihrer Position umgeschaltet.
+Der zusätzliche Animations-Scan läuft nur im Debug-Modus. Dieser startet bei jedem
+UI-Neustart ausgeschaltet. Webseiten, Netzwerk-Timer und direkte Mausbewegungen
+bleiben unverändert; Layout- und Maskenberechnungen folgen weiter jedem Frame.
+
 Die gemeinsame `.glass`-Darstellung verwendet eine einzelne, 1 CSS-Pixel breite SVG-Kontur
 aus `src/glass-rim.js`. Ein gerichteter Lichtverlauf beleuchtet nur Teile dieser Kontur;
 seine Breite wird entlang des Umfangs in CSS-Pixeln gemessen, unabhängig vom Seitenverhältnis.
@@ -100,7 +109,10 @@ zusätzlich eine andere Komposition oder laufende Aufnahme der Inhalte erfordern
 Jeder Push auf `main` baut über GitHub Actions (`.github/workflows/release.yml`) die fertige `Browser.exe` und
 veröffentlicht sie als Release `build-<Nummer>`. Glass prüft beim Start und danach alle 6 Stunden das neueste
 Release und bietet neuere Versionen in einem Update-Modal an; „Jetzt installieren“ tauscht die Exe aus und
-startet Glass neu. Lokal gebaute Versionen haben keine Build-Nummer und prüfen nicht auf Updates.
+startet Glass neu. Auto-Updates sind nur aktiv, wenn der Build mit `GLASS_RELEASE_REF=refs/heads/main`
+und einer gültigen `GLASS_BUILD`-Nummer gekennzeichnet wurde. Der Release-Workflow setzt beides und
+läuft ausschließlich auf `main`, auch bei manuellem Start. Lokale und Feature-Builds prüfen standardmäßig
+nicht auf Updates – selbst wenn eine Build-Nummer gesetzt ist – und erlauben keine Update-Installation.
 
 ## Lizenz
 

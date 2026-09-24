@@ -766,6 +766,7 @@ name = "glass-browser"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "base64",
  "serde_json",
  "tao",
  "webview2-com",

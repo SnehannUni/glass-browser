@@ -5,6 +5,8 @@ mod suggest;
 mod update;
 mod window_frame;
 mod autofill;
+mod favicon;
+mod resize_preview;
 
 use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc};
@@ -63,6 +65,8 @@ enum UserEvent {
     Ui(String),
     Content(String),
     Title(u32, String),
+    Favicon(u32, String),
+    ResizeSnapshot(u64, u32, String),
     Load(u32, bool, String),
     /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
     NewWindow(u32, String),
@@ -101,6 +105,7 @@ fn to_rect([x, y, w, h]: Area) -> Rect {
 struct Tab {
     id: u32,
     title: String,
+    favicon: String,
     url: String,
     loading: bool,
     /// Privater Tab: eigenes InPrivate-Profil nur im Arbeitsspeicher (siehe `build_content_webview`).
@@ -143,6 +148,7 @@ struct Browser {
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
+    resize_preview: Option<(u64, bool)>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
 }
@@ -205,6 +211,14 @@ impl Browser {
     /// Positioniert alle Webseiten: sichtbare an ihren Platz, alle anderen ausgeblendet.
     fn layout(&self) {
         let _ = self.ui.set_bounds(full_bounds(&self.window));
+        if let Some((_, hidden)) = self.resize_preview {
+            if hidden {
+                for tab in &self.tabs {
+                    if let Some(wv) = &tab.webview { let _ = wv.set_visible(false); }
+                }
+            }
+            return; // Keep both website viewports unchanged throughout the drag.
+        }
         let panes = self.panes();
         for (i, tab) in self.tabs.iter().enumerate() {
             let Some(wv) = &tab.webview else { continue };
@@ -354,6 +368,7 @@ impl Browser {
                 let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), t.url.as_str()) };
                 json!({
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
+                    "favicon": if t.home { "" } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
                 })
             })
@@ -382,7 +397,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -539,12 +554,19 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
+        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay") {
+            if let Some((token, _)) = self.resize_preview.take() {
+                self.layout();
+                let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
+            }
+        }
         if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
         let id = msg["id"].as_u64().map(|v| v as u32);
         let value = msg["value"].as_str().unwrap_or_default();
         match cmd {
+            "animation_debug" => { let _ = self.ui.evaluate_script("window.AnimationDebug?.toggle()"); }
             "ready" => {
                 self.sync_ui();
                 self.sync_geometry();
@@ -611,7 +633,13 @@ impl Browser {
                     let _ = wv.reload();
                 }
             }
-            "stop" => self.active_script("window.stop()"),
+            "stop" => {
+                if let Some(wv) = &self.tabs[self.active].webview {
+                    // Stop the pending native navigation too, not just resource
+                    // loading in the previously committed document.
+                    let _ = unsafe { wv.webview().Stop() };
+                }
+            }
             "focus_address" => self.focus_address(),
             "minimize" => self.window.set_minimized(true),
             "maximize" => self.window.set_maximized(!self.window.is_maximized()),
@@ -635,6 +663,39 @@ impl Browser {
                 self.split = None;
                 self.layout();
                 self.sync_ui();
+            }
+            "split_resize_start" => {
+                if self.panes().len() == 2 {
+                    let token = msg["token"].as_u64().unwrap_or_default();
+                    self.resize_preview = Some((token, false));
+                    for (i, _) in self.panes() {
+                        let tab = &self.tabs[i];
+                        let (id, proxy) = (tab.id, self.proxy.clone());
+                        let result = tab.webview.as_ref().map(|wv| resize_preview::capture(&wv.webview(), move |image| {
+                            let _ = proxy.send_event(UserEvent::ResizeSnapshot(token, id, image));
+                        }));
+                        if !matches!(result, Some(Ok(()))) {
+                            let _ = self.proxy.send_event(UserEvent::ResizeSnapshot(token, id, String::new()));
+                        }
+                    }
+                }
+            }
+            "split_resize_ready" => {
+                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
+                    self.resize_preview = self.resize_preview.map(|(token, _)| (token, true));
+                    self.layout();
+                }
+            }
+            "split_resize_end" => {
+                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
+                    self.resize_preview = None;
+                    if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
+                        split.ratio = r.clamp(0.2, 0.8);
+                    }
+                    self.layout();
+                    let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({})", msg["token"]));
+                    self.sync_ui();
+                }
             }
             "split_ratio" => {
                 if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
@@ -667,7 +728,7 @@ impl Browser {
             }
             // Webseiten dürfen nur Tastenkürzel melden, sonst nichts steuern.
             UserEvent::Content(cmd) => {
-                if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address") {
+                if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
                 }
             }
@@ -697,6 +758,17 @@ impl Browser {
                 let css = blocker::hide_css(url, &list("classes"), &list("ids"), msg["first"].as_bool().unwrap_or(false));
                 if !css.is_empty() {
                     let _ = wv.evaluate_script(&format!("window.__glassHide?.({})", json!(css)));
+                }
+            }
+            UserEvent::ResizeSnapshot(token, id, image) => {
+                if self.resize_preview.map(|p| p.0) == Some(token) {
+                    let _ = self.ui.evaluate_script(&format!("window.setResizeSnapshot?.({token},{id},{})", json!(image)));
+                }
+            }
+            UserEvent::Favicon(id, icon) => {
+                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                    tab.favicon = icon;
+                    self.sync_ui();
                 }
             }
             UserEvent::Title(id, title) => {
@@ -800,7 +872,7 @@ fn build_content_webview(
     url: &str,
     bounds: Rect,
 ) -> wry::Result<WebView> {
-    let (p_ipc, p_title, p_load, p_new) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
+    let (p_ipc, p_title, p_load, p_new, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
     let main_nav = Rc::new(RefCell::new(url.to_owned()));
     let nav = main_nav.clone();
@@ -827,6 +899,10 @@ fn build_content_webview(
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
+            // Wry's PageLoadEvent::Started maps to ContentLoading on Windows, after
+            // the server responds. NavigationStarting also covers the wait after
+            // in-page links, history navigation and reloads.
+            let _ = p_nav.send_event(UserEvent::Load(id, true, url.clone()));
             *nav.borrow_mut() = url;
             true
         })
@@ -834,13 +910,22 @@ fn build_content_webview(
             let _ = p_title.send_event(UserEvent::Title(id, title));
         })
         .with_on_page_load_handler(move |event, url| {
-            let _ = p_load.send_event(UserEvent::Load(id, matches!(event, PageLoadEvent::Started), url));
+            if matches!(event, PageLoadEvent::Finished) {
+                let _ = p_load.send_event(UserEvent::Load(id, false, url));
+            }
         })
         .with_new_window_req_handler(move |url, _| {
             let _ = p_new.send_event(UserEvent::NewWindow(id, url));
             NewWindowResponse::Deny
         })
         .build_as_child(window)?;
+
+    if !private {
+        let proxy = proxy.clone();
+        let _ = favicon::watch(&webview.webview(), move |icon| {
+            let _ = proxy.send_event(UserEvent::Favicon(id, icon));
+        });
+    }
 
     // Glass supplies its own login picker; suppress WebView2's overlapping autofill UI.
     {
@@ -1055,6 +1140,8 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
     let (mime, body): (&str, Cow<'static, [u8]>) = match request.uri().path() {
         "/autofill-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("autofill-ui.js"))),
         "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
+        "/group-hover.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("group-hover.js"))),
+        "/animation-debug.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("animation-debug.js"))),
         "/wallpaper" => match wallpaper() {
             Some(bytes) => {
                 let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
@@ -1181,7 +1268,7 @@ fn main() -> wry::Result<()> {
     let mut browser = Browser {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, was_maximized: false, overlay: None, split: None, hover: None, update: None,
+        fullscreen: false, was_maximized: false, overlay: None, split: None, resize_preview: None, hover: None, update: None,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();

@@ -13,9 +13,15 @@ const LATEST: &str = "/repos/SnehannUni/glass-browser/releases/latest";
 /// Name der Exe im Release. (Früher `Glass.exe` – den Namen kennt Discord als Spiel und blendet sein Overlay ein.)
 const ASSET: &str = "Browser.exe";
 
-/// Build-Nummer dieser Exe; lokale Entwickler-Builds haben keine und prüfen nicht auf Updates.
+/// Nur explizit gekennzeichnete Main-Releases nehmen am Auto-Update teil.
+/// Eine Build-Nummer allein (z. B. in einem lokalen Dev-Build) reicht nicht aus.
 pub fn current_build() -> Option<u32> {
-    option_env!("GLASS_BUILD").and_then(|b| b.parse().ok())
+    release_build(option_env!("GLASS_RELEASE_REF"), option_env!("GLASS_BUILD"))
+}
+
+fn release_build(reference: Option<&str>, build: Option<&str>) -> Option<u32> {
+    if reference != Some("refs/heads/main") { return None; }
+    build.and_then(|b| b.parse().ok()).filter(|b| *b > 0)
 }
 
 pub struct Release {
@@ -46,6 +52,7 @@ fn paths() -> std::io::Result<(PathBuf, PathBuf, PathBuf)> {
 /// Neue Exe laden, prüfen, an die Stelle der laufenden setzen und starten.
 /// Danach muss sich Glass beenden (die neue Instanz wartet darauf).
 pub fn install(url: &str) -> Result<(), String> {
+    if current_build().is_none() { return Err("Auto-Updates sind in Entwickler-Builds deaktiviert.".into()); }
     let rest = url.strip_prefix("https://").ok_or("Ungültige Download-Adresse")?;
     let (host, path) = rest.split_once('/').ok_or("Ungültige Download-Adresse")?;
     // GitHub leitet auf seinen Datei-Server um; WinHTTP folgt der Umleitung selbst.
@@ -99,6 +106,22 @@ fn wait_for(pid: u32) {
         if !handle.is_null() {
             WaitForSingleObject(handle, 15_000);
             CloseHandle(handle);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_build;
+
+    #[test]
+    fn only_main_releases_with_valid_build_numbers_receive_updates() {
+        assert_eq!(release_build(Some("refs/heads/main"), Some("42")), Some(42));
+        for reference in [None, Some("refs/heads/feature"), Some("refs/pull/1/merge"), Some("refs/tags/build-42")] {
+            assert_eq!(release_build(reference, Some("42")), None);
+        }
+        for build in [None, Some(""), Some("invalid"), Some("0")] {
+            assert_eq!(release_build(Some("refs/heads/main"), build), None);
         }
     }
 }

@@ -10,9 +10,15 @@ const watchdog = setTimeout(() => { console.error('UI smoke test exceeded 60 sec
 
 const html = await readFile(new URL('../src/ui.html', import.meta.url));
 const autofillUI = await readFile(new URL('../src/autofill-ui.js', import.meta.url));
+const groupHover = await readFile(new URL('../src/group-hover.js', import.meta.url));
+const animationDebug = await readFile(new URL('../src/animation-debug.js', import.meta.url));
 const glassRim = await readFile(new URL('../src/glass-rim.js', import.meta.url));
 const server = createServer((req, res) => {
-  if (req.url === '/glass-rim.js') {
+  if (req.url === '/animation-debug.js') {
+    res.setHeader('Content-Type', 'text/javascript'); res.end(animationDebug);
+  } else if (req.url === '/group-hover.js') {
+    res.setHeader('Content-Type', 'text/javascript'); res.end(groupHover);
+  } else if (req.url === '/glass-rim.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(glassRim);
   } else if (req.url === '/autofill-ui.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(autofillUI);
@@ -80,10 +86,47 @@ try {
   await evaluate(`window.testState={tabs:[{id:1,title:'Example',url:'https://example.com',page:true,adblock:true},{id:2,title:'Second tab',url:'https://example.org',page:true}],active:1,focused:true,chromeHeight:42,tabbar:true,panes:[]};render(structuredClone(testState));setGeometry({x:0,y:0,mx:0,my:0,mw:1280,mh:820,floating:true})`);
   await delay(700);
   const geometry = await evaluate(`(() => {const rect=id=>document.querySelector(id).getBoundingClientRect();const a=rect('#address'),s=rect('#addr-search'),r=rect('#btn-reload'),t=rect('.tab'),c=rect('.close');return {left:s.left-a.left,right:a.right-r.right,gap:r.left-s.right,close:[c.left-t.left,c.top-t.top,t.bottom-c.bottom]}})()`);
-  assert.equal(geometry.left, 3); assert.equal(geometry.right, 3); assert.equal(geometry.gap, 4);
+  assert.equal(geometry.left, 5); assert.equal(geometry.right, 5); assert.equal(geometry.gap, 0);
   assert.deepEqual(geometry.close, [3, 3, 3]);
   await writeFile('target/ui-smoke/toolbar.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   console.log('Spacing verified');
+  await evaluate(`{
+    const style=document.createElement('style');style.id='debug-test-style';
+    style.textContent='@keyframes debug-spin {to {transform:rotate(360deg)}} #debug-probe {opacity:1;transition:opacity 10s} #debug-probe::before {content:"test";animation:debug-spin 10s linear infinite}';document.head.append(style);
+    window.debugProbe=document.createElement('div');debugProbe.id='debug-probe';document.body.append(debugProbe);
+    window.debugAnimation=debugProbe.animate([{translate:'0px'},{translate:'100px'}],{duration:10000});
+    getComputedStyle(debugProbe).opacity;
+    debugProbe.style.opacity='.2';
+    window.debugBefore=debugAnimation.currentTime;
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'F8',ctrlKey:true,shiftKey:true,bubbles:true}));
+  }`);
+  await delay(120);
+  assert.equal(await evaluate('AnimationDebug.enabled'),true);
+  assert.ok(await evaluate(`debugAnimation.currentTime-debugBefore < 80`),'enabling preserves animation position and slows its clock');
+  assert.ok(await evaluate(`debugProbe.getAnimations({subtree:true}).length>=3 && debugProbe.getAnimations({subtree:true}).every(a=>a.playbackRate===.05)`),'CSS transition, pseudo animation and WAAPI all slowed');
+  await evaluate(`window.debugLate=debugProbe.animate([{color:'red'},{color:'blue'}],{duration:10000})`);
+  await delay(60);
+  assert.equal(await evaluate('debugLate.playbackRate'),.05,'new animations inherit slow mode');
+  await evaluate(`document.getElementById('animation-debug').click()`);
+  await delay(50);
+  assert.equal(await evaluate('AnimationDebug.enabled'),false);
+  assert.ok(await evaluate(`debugProbe.getAnimations({subtree:true}).every(a=>a.playbackRate===1)`),'disabling restores original speed');
+  await evaluate(`debugProbe.getAnimations({subtree:true}).forEach(a=>a.cancel());debugProbe.remove();document.getElementById('debug-test-style').remove()`);
+  console.log('PASS: animation debug slows CSS/WAAPI, picks up new animations and restores live playback.');
+  const compact = await evaluate(`(()=>{const a=document.getElementById('address'),s=document.querySelector('#addr-search svg').getBoundingClientRect(),r=document.querySelector('#btn-reload svg').getBoundingClientRect(),box=a.getBoundingClientRect();const b=document.getElementById('addr-search').getBoundingClientRect();hoverAt(b.x+b.width/2,b.y+b.height/2,true);return {left:s.left-box.left,gap:r.left-s.right,right:box.right-r.right,clearance:r.left-(b.right+2)};})()`);
+  assert.ok(Math.abs(compact.left-compact.gap)<=1 && Math.abs(compact.right-compact.gap)<=1,'even optical icon spacing');
+  assert.ok(compact.clearance>=2,`hover leaves clearance to neighbouring icon: ${JSON.stringify(compact)}`);
+  await delay(140);
+  const hoverX=()=>evaluate(`new DOMMatrix(getComputedStyle(document.getElementById('address'),'::before').transform).m41`);
+  const from=await hoverX();
+  await evaluate(`{const r=document.getElementById('btn-reload').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
+  await delay(45);
+  const during=await hoverX();
+  assert.ok(during>from && during<from+24,'shared hover travels between buttons');
+  await delay(110); assert.equal(await hoverX(),from+24);
+  await evaluate(`hoverAt(800,600,false)`);
+  await waitFor(`getComputedStyle(document.getElementById('address'),'::before').opacity==='0'`);
+  console.log('PASS: compact icon spacing, neighbour clearance and snappy shared hover motion.');
   // Native cursor updates must move the light over child webviews without hovering the UI behind them.
   await evaluate(`hoverAt(300, 400, false)`);
   await delay(40);
@@ -102,7 +145,7 @@ try {
   await delay(40);
   assert.equal(await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`), lastLight);
   console.log('Light follows native page coordinates; UI hover remains separate');
-  for (const id of ['addr-search', 'btn-reload', 'btn-private', 'btn-favs', 'btn-new']) {
+  for (const id of ['btn-private', 'btn-favs', 'btn-new']) {
     await evaluate(`document.getElementById('${id}').classList.add('vh')`);
     await delay(220);
     assert.equal(await evaluate(`getComputedStyle(document.getElementById('${id}')).backgroundColor`), 'rgba(255, 255, 255, 0.12)', id);
@@ -143,6 +186,8 @@ try {
   assert.equal(await value(),'alpha');
   assert.equal(await evaluate('document.activeElement.id'),'addr-input');
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
+  await delay(450);
+  await writeFile('target/ui-smoke/start-suggestions.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   await key('Escape','Escape');
   await key('Tab', 'Tab'); assert.notEqual(await evaluate('document.activeElement.id'), 'addr-input');
   for (const floating of [false, true]) {
@@ -153,6 +198,9 @@ try {
   await delay(700);
   const screenshot = await call('Page.captureScreenshot');
   await writeFile('target/ui-smoke/start.png', Buffer.from(screenshot.data, 'base64'));
+  const startGeometry = await evaluate(`(()=>{const input=document.getElementById('addr-input'),icon=document.querySelector('#addr-search svg'),box=document.getElementById('address').getBoundingClientRect(),a=icon.getBoundingClientRect(),b=input.getBoundingClientRect();return {left:a.left-box.left,gap:b.left-a.right,iconCenter:a.top+a.height/2,inputCenter:b.top+b.height/2}})()`);
+  assert.equal(startGeometry.left,startGeometry.gap,'equal spacing on both sides of the search icon');
+  assert.equal(startGeometry.inputCenter,startGeometry.iconCenter-1,'optical text alignment');
   assert.deepEqual(errors, [], 'no JavaScript exceptions');
   // Measure coverage of the rendered ring. Average a corner arc: one diagonal
   // scanline is biased by pixel phase at 1x. Allow raster AA, not geometric scaling.
