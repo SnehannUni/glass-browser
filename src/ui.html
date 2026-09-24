@@ -976,9 +976,8 @@
     { id: 'kimi', name: 'Kimi', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
     { id: 'zai', name: 'Z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
   ];
-  const ENGINE_KEY = 'glass.engine';
+  // Jeder neue Tab beginnt mit Google (siehe window.render) – die Wahl wird deshalb nicht gespeichert
   let engine = ENGINES[0];
-  try { engine = ENGINES.find((e) => e.id === localStorage.getItem(ENGINE_KEY)) || engine; } catch { /* Standard */ }
   const engineImg = (e) => { const img = new Image(); img.src = e.icon; img.alt = ''; return img; };
   const engineBtn = $('btn-engine');
   function renderEngine() {
@@ -987,7 +986,6 @@
   }
   function setEngine(e) {
     engine = e;
-    try { localStorage.setItem(ENGINE_KEY, e.id); } catch { /* egal */ }
     renderEngine();
     renderAddress();
   }
@@ -1745,7 +1743,9 @@
   window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
+    const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
     state = next;
+    if (opened && engine !== ENGINES[0]) { engine = ENGINES[0]; renderEngine(); } // neuer Tab → immer Google
     document.documentElement.style.setProperty('--chrome', `${state.chromeHeight}px`);
     document.body.classList.toggle('multi', !!state.tabbar); // Tabs sichtbar (Rust: sobald etwas offen ist)
     document.body.classList.toggle('inactive', !state.focused);
