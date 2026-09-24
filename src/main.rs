@@ -31,7 +31,29 @@ const MARGIN: f64 = 4.0;
 const CONTENT_RADIUS: f64 = 4.0;
 /// Abstand zwischen den beiden Seiten einer geteilten Ansicht – zugleich Griff zum Verschieben.
 const SPLIT_GAP: f64 = 4.0;
-const SEARCH_URL: &str = "https://www.google.com/search?q=";
+const PROMPT_JS: &str = include_str!("prompt.js");
+
+/// Wie ein Suchanbieter den Text bekommt.
+enum Search {
+    /// Wird an die Adresse angehängt (`?q=…`); die Seite führt den Prompt selbst aus.
+    Query(&'static str),
+    /// Die Seite kennt keinen solchen Parameter: Glass öffnet sie und tippt den Prompt selbst ein (prompt.js).
+    Typed(&'static str),
+}
+
+/// Suchanbieter im Adressfeld (Kennungen wie in ui.html).
+const SEARCH_ENGINES: &[(&str, Search)] = &[
+    ("google", Search::Query("https://www.google.com/search?q=")),
+    ("chatgpt", Search::Query("https://chatgpt.com/?q=")),
+    ("claude", Search::Query("https://claude.ai/new?q=")),
+    ("gemini", Search::Typed("https://gemini.google.com/app")),
+    ("kimi", Search::Typed("https://www.kimi.ai/")), // internationale Seite (kimi.com ist die chinesische)
+    ("zai", Search::Typed("https://chat.z.ai/")),
+];
+
+fn search_engine(engine: &str) -> &'static Search {
+    &SEARCH_ENGINES.iter().find(|(id, _)| *id == engine).unwrap_or(&SEARCH_ENGINES[0]).1
+}
 
 enum UserEvent {
     Ui(String),
@@ -87,6 +109,8 @@ struct Tab {
     /// Ganz an den Anfang zurückgegangen: der Tab zeigt den Startbildschirm, die Seite wartet
     /// ausgeblendet dahinter – „Vor“ holt sie zurück.
     home: bool,
+    /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`).
+    pending_prompt: Option<String>,
 }
 
 impl Tab {
@@ -326,7 +350,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false });
+        self.tabs.push(Tab { id, title: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -537,7 +561,15 @@ impl Browser {
             }
             "next_tab" => self.cycle(1),
             "prev_tab" => self.cycle(-1),
-            "navigate" if !value.trim().is_empty() => self.navigate_to(resolve_input(value)),
+            "navigate" if !value.trim().is_empty() => match (as_url(value), search_engine(msg["engine"].as_str().unwrap_or_default())) {
+                (Some(url), _) => self.navigate_to(url),
+                (None, Search::Query(prefix)) => self.navigate_to(format!("{prefix}{}", url_encode(value.trim()))),
+                // Seite öffnen und den Prompt eintippen, sobald sie geladen ist (siehe UserEvent::Load)
+                (None, Search::Typed(home)) => {
+                    self.tabs[self.active].pending_prompt = Some(value.trim().to_owned());
+                    self.navigate_to((*home).to_owned());
+                }
+            },
             "back" => self.go_back(),
             "forward" => self.go_forward(),
             "reload" => {
@@ -647,6 +679,8 @@ impl Browser {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     if loading {
                         tab.blocked = 0;
+                    } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
+                        let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
                     }
                     tab.loading = loading;
                     if !url.is_empty() {
@@ -879,21 +913,27 @@ fn set_adblock_flag(webview: &WebView, slot: &ScriptSlot) {
 }
 
 /// Adresse, Hostname oder Suchbegriff → URL.
-fn resolve_input(input: &str) -> String {
+/// Eingabe als Webadresse, falls sie wie eine aussieht – sonst `None` (dann ist es ein Suchbegriff).
+fn as_url(input: &str) -> Option<String> {
     let s = input.trim();
     if s.contains("://") || s.starts_with("about:") || s.starts_with("data:") {
-        return s.to_owned();
+        return Some(s.to_owned());
     }
     let host = s.split(['/', '?', '#']).next().unwrap_or_default();
     if !s.contains(char::is_whitespace) {
         if host.starts_with("localhost") || host.starts_with("127.0.0.1") {
-            return format!("http://{s}");
+            return Some(format!("http://{s}"));
         }
         if host.contains('.') && !host.starts_with('.') && !host.ends_with('.') {
-            return format!("https://{s}");
+            return Some(format!("https://{s}"));
         }
     }
-    format!("{SEARCH_URL}{}", url_encode(s))
+    None
+}
+
+/// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
+fn resolve_input(input: &str) -> String {
+    as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())))
 }
 
 fn url_encode(s: &str) -> String {
