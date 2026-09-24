@@ -129,6 +129,8 @@ struct Browser {
     proxy: EventLoopProxy<UserEvent>,
     /// Die aktive Seite füllt gerade den ganzen Bildschirm.
     fullscreen: bool,
+    /// War das Fenster vor dem Vollbild maximiert? Wird beim Verlassen wiederhergestellt.
+    was_maximized: bool,
     /// Offenes Overlay der Oberfläche über der Webseite: x, y, Breite, Höhe, Eckradius (logische px).
     overlay: Option<[f64; 5]>,
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
@@ -308,9 +310,28 @@ impl Browser {
             return;
         }
         self.active = idx;
-        self.fullscreen = on;
-        self.window.set_fullscreen(on.then_some(tao::window::Fullscreen::Borderless(None)));
+        self.apply_fullscreen(on);
         self.layout();
+    }
+
+    /// Schaltet das Fenster in den Vollbildmodus und zurück. Ein maximiertes Fenster ohne Rahmen beschneidet
+    /// tao (WM_NCCALCSIZE) auf den Arbeitsbereich – die Taskleiste bliebe sichtbar und die Seite bekäme nicht
+    /// den ganzen Bildschirm. Darum vorher entmaximieren und danach wiederherstellen.
+    fn apply_fullscreen(&mut self, on: bool) {
+        self.fullscreen = on;
+        set_round_corners(&self.window, !on);
+        if on {
+            self.was_maximized = self.window.is_maximized();
+            if self.was_maximized {
+                self.window.set_maximized(false);
+            }
+            self.window.set_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
+        } else {
+            self.window.set_fullscreen(None);
+            if std::mem::take(&mut self.was_maximized) {
+                self.window.set_maximized(true);
+            }
+        }
     }
 
     fn sync_ui(&self) {
@@ -405,8 +426,7 @@ impl Browser {
         // Tabwechsel beendet den Vollbildmodus der bisherigen Seite.
         if self.fullscreen {
             self.active_script("document.exitFullscreen?.()");
-            self.fullscreen = false;
-            self.window.set_fullscreen(None);
+            self.apply_fullscreen(false);
         }
         self.active = idx.min(self.tabs.len() - 1);
         self.layout();
@@ -463,8 +483,7 @@ impl Browser {
         }
         if self.fullscreen {
             self.active_script("document.exitFullscreen?.()");
-            self.fullscreen = false;
-            self.window.set_fullscreen(None);
+            self.apply_fullscreen(false);
         }
         self.tabs[self.active].home = true;
         self.layout();
@@ -1010,12 +1029,22 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
 ///
 /// Der DWM-Rahmen wird über den gesamten Client-Bereich erweitert; dort, wo das Fenster
 /// schwarz gemalt ist (siehe `with_background_color`), zeigt Windows das Backdrop.
+/// Windows-Eckenrundung des Fensters. Im Vollbild aus, sonst schneidet DWM die Bildschirmecken ab.
+fn set_round_corners(window: &Window, round: bool) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
+    };
+    let value: i32 = if round { DWMWCP_ROUND } else { DWMWCP_DONOTROUND } as _;
+    unsafe {
+        DwmSetWindowAttribute(window.hwnd() as _, DWMWA_WINDOW_CORNER_PREFERENCE as _, &value as *const _ as _, 4);
+    }
+}
+
 fn style_frame(window: &Window) {
     use windows_sys::Win32::{
         Graphics::Dwm::{
             DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
             DWMWA_USE_IMMERSIVE_DARK_MODE,
-            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
         },
         UI::Controls::MARGINS,
     };
@@ -1024,7 +1053,7 @@ fn style_frame(window: &Window) {
         DwmSetWindowAttribute(hwnd, attr as _, &value as *const _ as _, 4);
     };
     set(DWMWA_USE_IMMERSIVE_DARK_MODE as _, 1);
-    set(DWMWA_WINDOW_CORNER_PREFERENCE as _, DWMWCP_ROUND as _);
+    set_round_corners(window, true);
     // Keine Windows-Rahmenlinie: sie folgt der 8-px-Ecke und stünde sonst neben unserer 18-px-Rundung.
     set(DWMWA_BORDER_COLOR as _, DWMWA_COLOR_NONE as _);
     let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
@@ -1112,7 +1141,7 @@ fn main() -> wry::Result<()> {
 
     let mut browser = Browser {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, overlay: None, split: None, hover: None, update: None,
+        fullscreen: false, was_maximized: false, overlay: None, split: None, hover: None, update: None,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
