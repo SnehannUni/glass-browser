@@ -1,4 +1,4 @@
-# Baut bei jedem Push auf main die fertige Glass.exe und veröffentlicht sie als Release „build-<Nummer>“.
+# Baut bei jedem Push auf main die fertige Browser.exe und veröffentlicht sie als Release „build-<Nummer>“.
 # Glass prüft dieses Release beim Start und bietet neuere Versionen im Update-Modal an (src/update.rs).
 name: Release
 
@@ -36,7 +36,10 @@ jobs:
 
       - name: Dateien fürs Release
         shell: pwsh
-        run: Copy-Item target/release/glass-browser.exe Glass.exe
+        # Glass.exe: dieselbe Datei für ältere Installationen (bis Build 4), die noch nach diesem Namen suchen
+        run: |
+          Copy-Item target/release/glass-browser.exe Browser.exe
+          Copy-Item target/release/glass-browser.exe Glass.exe
 
       - name: Release veröffentlichen
         uses: softprops/action-gh-release@v2
@@ -47,6 +50,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: |
+            Browser.exe
             Glass.exe
             THIRD_PARTY_LICENSES.html
             LICENSE

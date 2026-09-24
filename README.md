@@ -42,7 +42,7 @@ Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter 
 
 ## Updates
 
-Jeder Push auf `main` baut über GitHub Actions (`.github/workflows/release.yml`) die fertige `Glass.exe` und
+Jeder Push auf `main` baut über GitHub Actions (`.github/workflows/release.yml`) die fertige `Browser.exe` und
 veröffentlicht sie als Release `build-<Nummer>`. Glass prüft beim Start und danach alle 6 Stunden das neueste
 Release und bietet neuere Versionen in einem Update-Modal an; „Jetzt installieren“ tauscht die Exe aus und
 startet Glass neu. Lokal gebaute Versionen haben keine Build-Nummer und prüfen nicht auf Updates.

@@ -1,16 +1,17 @@
-//! Updates über GitHub-Releases: Jeder Push auf `main` baut per GitHub Actions eine neue `Glass.exe`
+//! Updates über GitHub-Releases: Jeder Push auf `main` baut per GitHub Actions eine neue `Browser.exe`
 //! und veröffentlicht sie als Release `build-<Nummer>`. Glass vergleicht diese Nummer mit der eigenen
 //! (`GLASS_BUILD`, beim Bauen in der CI gesetzt) und bietet neuere Versionen im Update-Modal an.
 //!
 //! Austausch der laufenden Exe: Windows erlaubt, eine laufende Exe umzubenennen. Die alte wird zu
-//! `Glass.old.exe`, die neue nimmt ihren Platz ein und startet – sie wartet, bis die alte beendet ist,
+//! `Browser.old.exe`, die neue nimmt ihren Platz ein und startet – sie wartet, bis die alte beendet ist,
 //! weil beide sonst gleichzeitig denselben WebView2-Datenordner öffnen würden.
 
 use std::path::PathBuf;
 
 const API_HOST: &str = "api.github.com";
 const LATEST: &str = "/repos/SnehannUni/glass-browser/releases/latest";
-const ASSET: &str = "Glass.exe";
+/// Name der Exe im Release. (Früher `Glass.exe` – den Namen kennt Discord als Spiel und blendet sein Overlay ein.)
+const ASSET: &str = "Browser.exe";
 
 /// Build-Nummer dieser Exe; lokale Entwickler-Builds haben keine und prüfen nicht auf Updates.
 pub fn current_build() -> Option<u32> {
@@ -50,7 +51,7 @@ pub fn install(url: &str) -> Result<(), String> {
     // GitHub leitet auf seinen Datei-Server um; WinHTTP folgt der Umleitung selbst.
     let bytes = crate::suggest::https_get(host, &format!("/{path}")).ok_or("Download fehlgeschlagen")?;
     if bytes.len() < 1_000_000 || !bytes.starts_with(b"MZ") {
-        return Err("Die heruntergeladene Datei ist keine gültige Glass.exe".into());
+        return Err("Die heruntergeladene Datei ist keine gültige Browser.exe".into());
     }
     let (exe, old, new) = paths().map_err(|e| e.to_string())?;
     std::fs::write(&new, &bytes).map_err(|e| format!("Konnte das Update nicht speichern: {e}"))?;
