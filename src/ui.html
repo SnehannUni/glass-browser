@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="de">
 <head>
 <meta charset="utf-8">
@@ -15,6 +15,13 @@
     --violet: #bf9dff; /* Kennfarbe für privates Surfen */
     --spring: cubic-bezier(.32, 1.5, .44, 1);
     --ease: cubic-bezier(.25, .8, .25, 1);
+    --control-hover: rgba(255, 255, 255, .12);
+    --control-pressed: rgba(255, 255, 255, .2);
+    --address-width: 66px;
+    --glass-rim: 1px;
+    --glass-outline: .08;
+    --glass-highlight: .72;
+    --glass-reflection: .22;
     --font: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
 
@@ -22,6 +29,12 @@
   /* Fensterecken: genau wie Windows 11 (DWMWCP_ROUND = 8 px), damit Glas und Systemecke deckungsgleich sind.
      Beim Maximieren wird --radius auf 0 gesetzt. */
   html { --radius: 8px; clip-path: inset(0 round var(--radius)); }
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: 100; pointer-events: none;
+    border-radius: var(--radius); border: 1px solid rgba(255, 255, 255, .38);
+  }
+  body.seamless::after { display: none; }
+  body.inactive::after { border-color: rgba(255, 255, 255, .22); }
   [hidden] { display: none !important; } /* sonst überschreibt z. B. .key { display: grid } das Attribut */
   html, body {
     height: 100%; overflow: hidden; background: transparent; color: var(--label);
@@ -57,43 +70,47 @@
   /* ---------- Liquid Glass ---------- */
   .glass {
     position: relative; isolation: isolate;
-    background: linear-gradient(180deg, rgba(255, 255, 255, .11), rgba(255, 255, 255, .04));
+    background: linear-gradient(180deg, rgba(255, 255, 255, var(--glass-fill-top, .065)), rgba(255, 255, 255, var(--glass-fill-bottom, .025)));
     /* Ohne JS-Linse; lens() ersetzt das durch Lichtbrechung + Blur */
-    backdrop-filter: blur(6px) saturate(1.5) brightness(.82);
+    backdrop-filter: blur(6px) saturate(1.5) brightness(var(--glass-brightness, .82));
     box-shadow:
-      inset 0 0 0 .5px rgba(255, 255, 255, .14),
-      inset 0 -10px 18px -12px rgba(255, 255, 255, .16),
-      0 8px 24px -6px rgba(0, 0, 0, .38),
-      0 1px 3px rgba(0, 0, 0, .22);
+      inset 0 -10px 18px -14px rgba(255, 255, 255, .08),
+      0 6px 20px -6px rgba(0, 0, 0, .28),
+      0 1px 3px rgba(0, 0, 0, .16);
     transition: transform .5s var(--spring), background .3s;
   }
-  /* Glanzkante als Innenschatten (sauber geglättet, anders als ein maskierter 1-px-Ring):
-     --lx/--ly zeigen vom Mauszeiger weg, also leuchtet die ihm zugewandte Kante auf, die Gegenseite
-     schimmert schwächer. Eigene Ebene (will-change): Folgt die Kante der Maus, wird nur sie neu
-     gezeichnet – nicht das Glas mit der Lichtbrechung, das sonst Reste alter Bilder einlesen kann. */
-  .glass::after {
-    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-    will-change: transform;
-    box-shadow:
-      inset calc(var(--lx, .7) * 1.2px) calc(var(--ly, .7) * 1.2px) 0 -.2px rgba(255, 255, 255, var(--hl, .5)),
-      inset calc(var(--lx, .7) * -1px) calc(var(--ly, .7) * -1px) 0 -.2px rgba(255, 255, 255, calc(var(--hl, .5) * .35));
+  /* Eine Vektorkontur mit Lichtverlauf in CSS-Pixeln entlang ihres Umfangs. */
+  .glass > svg.glass-rim {
+    position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+    fill: none; stroke: none; filter: none; overflow: visible;
+    opacity: var(--rim-window-active, 1);
+    transition: opacity .2s var(--ease);
   }
-  body.inactive { --hl: .2; }
+  .glass-outline { stroke-opacity: var(--glass-outline); }
+  .glass-highlights { opacity: var(--rim-proximity, 0); transition: opacity .2s var(--ease); }
+  body.inactive .glass > svg.glass-rim { --rim-window-active: .4; }
+  @media (prefers-contrast: more) {
+    .glass { outline: 1px solid var(--label-2); outline-offset: -1px; }
+  }
 
   .capsule { height: 30px; border-radius: 15px; display: flex; align-items: center; }
 
-  /* Tasten in Glas: beim Drücken quellen sie auf und leuchten */
+  /* Gemeinsame Interaktion für alle Symboltasten – ohne Skalierung der SVGs. */
+  :is(.key, .tab-new, .close) {
+    transition: opacity .18s var(--ease), background-color .18s var(--ease), color .18s var(--ease);
+  }
+  :is(.key, .tab-new, .close):is(:hover, .vh) { background-color: var(--control-hover); }
+  :is(.key, .tab-new, .close):active { background-color: var(--control-pressed); }
+  :is(.key, .tab-new, .close):focus-visible { outline: 2px solid var(--label); outline-offset: -2px; }
   .key {
     position: relative; height: 26px; min-width: 32px; border-radius: 13px;
     display: grid; place-items: center; color: var(--label);
-    transition: transform .45s var(--spring), background-color .2s;
   }
-  .key:is(:hover, .vh) { background-color: rgba(255, 255, 255, .08); }
-  .key:active { transform: scale(1.14); background-color: rgba(255, 255, 255, .2); transition-duration: .12s; }
   .key:disabled { color: var(--label-3); background: none; transform: none; }
 
   /* ---------- Toolbar ---------- */
   #toolbar {
+    --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
     height: 42px; display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr;
     align-items: center; gap: 10px; padding: 0 12px 0 16px;
   }
@@ -128,20 +145,20 @@
   @keyframes pop-in { from { opacity: 0; transform: scale(.6); } }
 
   /* Platzhalter in der Leiste: so breit wie die eingefahrene Kapsel, damit ausgefahren nichts verrutscht */
-  .center { position: relative; width: 64px; align-self: stretch; }
+  .center { position: relative; width: var(--address-width); align-self: stretch; }
   /* In der Leiste eingefahren: nur Lupe + Neu laden. Ein Klick fährt das Feld nach links über die Tabs aus. */
   .address {
     position: absolute; right: 0; top: calc(50% - 15px); z-index: 5;
-    width: 64px; padding: 0 3px 0 11px; gap: 4px; cursor: pointer;
+    width: var(--address-width); padding: 0 3px; gap: 4px; cursor: pointer;
     transition: width .5s var(--spring), padding .3s var(--ease), gap .3s var(--ease);
   }
   .address.editing {
-    width: clamp(280px, 42vw, 580px); padding: 0 4px 0 14px; gap: 8px; cursor: text;
+    width: clamp(280px, 42vw, 580px); padding: 0 3px; gap: 8px; cursor: text;
     background: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .08));
   }
   /* Stern und Werbeblocker-Schild gibt es nur im ausgefahrenen Feld */
   .address:not(.editing) :is(#btn-star, #btn-shield) { display: none; }
-  .address:not(.editing):is(:hover, .vh) #addr-search { color: var(--label); }
+  body:not(.start) .address:not(.editing) #addr-input { position: absolute; width: 0; pointer-events: none; }
   /* Solange gesucht wird, treten die Tabs zurück – das Feld liegt über ihnen */
   #tabbar { transition: opacity .25s var(--ease); }
   body.searching #tabbar { opacity: 0; pointer-events: none; }
@@ -155,6 +172,9 @@
   /* Startbildschirm: Platzhalter steht immer dort, wo getippt wird – beim Klick springt nichts */
   body.start .address #addr-input { opacity: 1; }
   .address .ic { color: var(--label-2); width: 14px; height: 14px; flex: none; transition: color .2s; }
+  #addr-search { flex: none; min-width: 28px; height: 24px; }
+  #addr-search:is(:hover, .vh) .ic { color: var(--label); }
+  body.start #addr-search { width: 46px; height: 46px; border-radius: 50%; margin-left: -12px; }
   #addr-input { flex: 1; width: 0; height: 100%; opacity: 0; transition: opacity .2s; }
   #addr-input::placeholder { color: var(--label-2); }
   .address.editing #addr-input { opacity: 1; }
@@ -224,10 +244,9 @@
   #tabs { position: relative; flex: 0 1 auto; min-width: 0; height: 26px; display: flex; gap: 4px; }
   .tab-new {
     width: 24px; height: 24px; margin-left: -10px; border-radius: 50%; flex: none;
-    display: grid; place-items: center; transition: transform .45s var(--spring);
+    display: grid; place-items: center;
   }
   .tab-new svg { width: 14px; height: 14px; }
-  .tab-new:active { transform: scale(1.14); transition-duration: .12s; }
   #lens {
     position: absolute; top: 0; left: 0; height: 26px; width: 0; pointer-events: none;
     transition: transform .6s var(--spring), width .6s var(--spring);
@@ -247,7 +266,7 @@
   }
   .tab:is(:hover, .vh):not(.active) { background-color: rgba(255, 255, 255, .05); }
   .tab.active { color: var(--label); }
-  @keyframes tab-in { from { opacity: 0; transform: scale(.8); } }
+  @keyframes tab-in { from { opacity: 0; } }
   .tab-label { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 30px; }
   .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .fav { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--label-2); }
@@ -261,17 +280,17 @@
   }
   @keyframes spin { to { transform: rotate(1turn); } }
   .close {
-    position: absolute; left: 6px; width: 20px; height: 20px; border-radius: 50%;
+    position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%;
     display: grid; place-items: center; color: var(--label-2);
-    opacity: 0; transform: scale(.7); transition: opacity .15s, transform .3s var(--spring), background-color .15s;
+    opacity: 0;
   }
   .close svg { width: 10px; height: 10px; stroke-width: 2; }
-  .tab:is(:hover, .vh) .close { opacity: 1; transform: none; }
-  .close:is(:hover, .vh) { background: rgba(255, 255, 255, .14); color: var(--label); }
+  .tab:is(:hover, .vh, :focus-within) .close { opacity: 1; }
+  .close:is(:hover, .vh) { color: var(--label); }
   .tab.compact .tab-label { padding: 0; }
   .tab.compact .title, .tab.compact:not(.active) .close { display: none; }
   .tab.compact.active .fav { display: none; }
-  .tab.compact .close { position: static; opacity: 1; transform: none; }
+  .tab.compact .close { position: static; opacity: 1; }
 
   /* ---------- Inhalt ---------- */
   #stage {
@@ -333,7 +352,7 @@
   @keyframes star-pop { 40% { transform: scale(1.45) rotate(-12deg); } }
   /* Knopf ganz rechts oben */
   .fav-btn { margin-left: -4px; } /* rückt etwas an den Privat-Knopf */
-  .fav-btn.open { background: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .1)); }
+  .fav-btn.open { background-image: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .1)); }
   /* Ausklappende Liste der Favoriten */
   #favs {
     position: fixed; z-index: 20; display: none; width: 320px; max-height: 60vh; overflow-y: auto;
@@ -408,7 +427,7 @@
   .private-btn { margin-left: 0; } /* nicht wie „+“ an den Nachbarn heranrücken */
   .private-btn svg { width: 15px; height: 15px; }
   /* Aktiver Tab ist privat: Knopf leuchtet, Adressfeld und Tab bekommen einen violetten Schimmer */
-  body.private .private-btn { color: var(--violet); background: linear-gradient(180deg, rgba(175, 130, 255, .3), rgba(130, 90, 255, .14)); }
+  body.private .private-btn { color: var(--violet); background-image: linear-gradient(180deg, rgba(175, 130, 255, .3), rgba(130, 90, 255, .14)); }
   body.private .address { background: linear-gradient(180deg, rgba(160, 120, 255, .24), rgba(110, 70, 230, .12)); }
   body.private .address.editing { background: linear-gradient(180deg, rgba(175, 135, 255, .32), rgba(120, 80, 240, .18)); }
   .tab.private .fav { color: var(--violet); }
@@ -458,7 +477,7 @@
     <div class="center" data-drag>
       <form id="address" class="glass capsule address" data-lens>
         <button type="button" class="key star" id="btn-star" hidden></button>
-        <svg class="ic" id="addr-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg>
+        <button type="button" class="key" id="addr-search" title="Suchen (Strg+L)" aria-label="Suche öffnen"><svg class="ic" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg></button>
         <input id="addr-input" spellcheck="false" autocomplete="off" placeholder="Suchbegriff oder Websitename eingeben">
         <button type="button" class="key shield" id="btn-shield" hidden></button>
         <button type="button" class="key" id="btn-reload"></button>
@@ -512,6 +531,8 @@
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs id="filters"></defs></svg>
 
+<script src="/glass-rim.js"></script>
+<script src="/autofill-ui.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -616,14 +637,14 @@
     filter.innerHTML =
       `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>` +
       channel('r', scale, '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0') +
-      channel('g', scale * .93, '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0') +
-      channel('b', scale * .86, '0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0') +
+      channel('g', scale * .98, '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0') +
+      channel('b', scale * .96, '0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0') +
       `<feBlend in="r" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="b" mode="screen"/>`;
     $('filters').appendChild(filter);
     const old = el.dataset.lensId && document.getElementById(el.dataset.lensId);
     el.dataset.lensId = id;
     // leicht abdunkeln statt aufhellen: Text im Glas bleibt auf jedem Wallpaper lesbar
-    el.style.backdropFilter = `url(#${id}) blur(3px) saturate(1.5) brightness(.82)`;
+    el.style.backdropFilter = `url(#${id}) blur(2px) saturate(1.5) brightness(var(--glass-brightness, .82))`;
     // alten Filter erst entfernen, wenn der neue sicher gezeichnet ist
     if (old) requestAnimationFrame(() => requestAnimationFrame(() => old.remove()));
   }
@@ -640,19 +661,30 @@
 
   // ---------- Licht: die Glanzkanten richten sich zum Mauszeiger aus ----------
   let pointer = null, lightFrame = 0;
-  document.addEventListener('pointermove', (e) => {
-    pointer = { x: e.clientX, y: e.clientY };
+  function trackLight(x, y) {
+    if (x == null || y == null) {
+      pointer = null;
+      window.GlassRim.leave();
+      return;
+    }
+    pointer = { x, y };
     if (!lightFrame) lightFrame = requestAnimationFrame(updateLight);
+  }
+  document.addEventListener('pointermove', (e) => {
+    trackLight(e.clientX, e.clientY);
     updateResizeCursor(e);
   });
   function updateLight() {
     lightFrame = 0;
+    if (!pointer) return;
     for (const el of document.querySelectorAll('.glass')) {
       const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
       const dx = pointer.x - (r.left + r.width / 2), dy = pointer.y - (r.top + r.height / 2);
       const len = Math.hypot(dx, dy) || 1;
       el.style.setProperty('--lx', (-dx / len).toFixed(3));
       el.style.setProperty('--ly', (-dy / len).toFixed(3));
+      window.GlassRim.move(el, pointer.x, pointer.y);
     }
   }
 
@@ -686,6 +718,8 @@
   }
   window.setGeometry = (g) => {
     geo = g;
+    document.body.classList.toggle('seamless', !g.floating);
+    document.documentElement.style.setProperty('--radius', g.floating ? '8px' : '0px');
     bakeWall();
     placeWall();
     scheduleInk();
@@ -979,6 +1013,8 @@
   address.addEventListener('pointerdown', (e) => {
     if (!e.target.closest('button') && !editing()) { e.preventDefault(); window.focusAddress(); }
   });
+  $('addr-search').addEventListener('pointerdown', (e) => e.preventDefault());
+  $('addr-search').addEventListener('click', () => window.focusAddress());
   // Ein- und Ausfahren in der Leiste: Während sich die Breite ändert, läuft das Glas ohne Lichtbrechung
   // (die Karte passt nur zu einer festen Größe) und die Vorschläge warten, bis das Feld seine Endbreite hat.
   function slide(open) {
@@ -1026,16 +1062,13 @@
     renderAddress();
   });
   input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'Escape' && wheel.classList.contains('open')) closeWheel();
     else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
-    } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && suggestions.length) {
+    } else if (['ArrowDown', 'ArrowUp', 'Tab'].includes(e.key) && suggestions.length && suggestBox.classList.contains('open')) {
       e.preventDefault();
-      const n = suggestions.length, step = e.key === 'ArrowDown' ? 1 : -1;
-      // -1 = eigener Text; wie in Chrome übernimmt das Feld den gewählten Vorschlag
-      selected = ((selected + 1 + step + n + 1) % (n + 1)) - 1;
-      input.value = selected < 0 ? typed : suggestions[selected];
-      markSelected();
+      moveSuggestion(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
     }
   });
   address.addEventListener('submit', (e) => {
@@ -1051,6 +1084,13 @@
   // ---------- Suchvorschläge (von Google, abgerufen über Rust: /suggest) ----------
   const suggestBox = $('suggest');
   let suggestions = [], selected = -1, typed = '', suggestSeq = 0, suggestTimer = 0;
+  function moveSuggestion(step) {
+    // -1 ist der eigene Text; beide Richtungen laufen durch denselben Auswahlzyklus.
+    const count = suggestions.length + 1;
+    selected = (selected + 1 + step + count) % count - 1;
+    input.value = selected < 0 ? typed : suggestions[selected];
+    markSelected();
+  }
 
   // ---------- Suchverlauf (nur lokal, im Speicher der Oberfläche) ----------
   // Je Anbieter ein eigener Verlauf: Google-Suchen wie bisher, dazu die Prompts an ChatGPT, Claude & Co.
@@ -1532,11 +1572,11 @@
 
   // ---------- Hover, gemeldet von Rust ----------
   // Hat eine Webseite den Tastaturfokus, liefert WebView2 der Oberfläche keine Hover-Ereignisse.
-  // Rust meldet dann die Mausposition; das Element darunter (samt Vorfahren) bekommt die Klasse .vh,
-  // für die alle :hover-Stile ebenfalls gelten.
+  // Das Licht verfolgt auch die Position über Webseiten. Nur echte UI-Treffer erhalten .vh.
   let vhover = [];
-  window.hoverAt = (x, y) => {
-    const el = x == null ? null : document.elementFromPoint(x, y);
+  window.hoverAt = (x, y, overUI = true) => {
+    trackLight(x, y);
+    const el = x == null || !overUI ? null : document.elementFromPoint(x, y);
     const chain = [];
     for (let n = el; n && n !== document.body; n = n.parentElement) chain.push(n);
     vhover.forEach((n) => { if (!chain.includes(n)) n.classList.remove('vh'); });
@@ -1615,11 +1655,11 @@
   divider.addEventListener('dblclick', () => send('split_ratio', { value: 0.5 }));
 
   // ---------- Zustand aus Rust ----------
+  window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
     state = next;
     document.documentElement.style.setProperty('--chrome', `${state.chromeHeight}px`);
-    document.documentElement.style.setProperty('--radius', state.maximized ? '0px' : '8px');
     document.body.classList.toggle('multi', !!state.tabbar); // Tabs sichtbar (Rust: sobald etwas offen ist)
     document.body.classList.toggle('inactive', !state.focused);
     const hasPage = !!activeTab()?.page; // Rust meldet, ob der Tab eine Webseite hat (die URL kann leer sein)

@@ -3,6 +3,8 @@
 mod blocker;
 mod suggest;
 mod update;
+mod window_frame;
+mod autofill;
 
 use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc};
@@ -56,6 +58,8 @@ fn search_engine(engine: &str) -> &'static Search {
 }
 
 enum UserEvent {
+    AutofillRequest(u32, String, String),
+    AutofillReply(Value),
     Ui(String),
     Content(String),
     Title(u32, String),
@@ -121,6 +125,9 @@ impl Tab {
 }
 
 struct Browser {
+    icloud: std::sync::mpsc::Sender<Value>,
+    autofill: Option<autofill::Pending>,
+    autofill_seq: u64,
     window: Window,
     ui: WebView,
     tabs: Vec<Tab>,
@@ -134,7 +141,7 @@ struct Browser {
     /// Offenes Overlay der Oberfläche über der Webseite: x, y, Breite, Höhe, Eckradius (logische px).
     overlay: Option<[f64; 5]>,
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
-    hover: Option<(i32, i32)>,
+    hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
@@ -183,6 +190,7 @@ impl Browser {
 
     /// Fenster- und Monitorposition, damit die Oberfläche das Wallpaper deckungsgleich hinter das Glas legen kann.
     fn sync_geometry(&self) {
+        let floating = window_frame::sync(&self.window, self.fullscreen);
         let scale = self.window.scale_factor();
         let pos = self.window.inner_position().unwrap_or_default().to_logical::<f64>(scale);
         let (mpos, msize) = self
@@ -190,7 +198,7 @@ impl Browser {
             .current_monitor()
             .map(|m| (m.position().to_logical::<f64>(scale), m.size().to_logical::<f64>(scale)))
             .unwrap_or_default();
-        let geo = json!({ "x": pos.x, "y": pos.y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height });
+        let geo = json!({ "x": pos.x, "y": pos.y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height, "floating": floating });
         let _ = self.ui.evaluate_script(&format!("window.setGeometry({geo})"));
     }
 
@@ -258,7 +266,8 @@ impl Browser {
 
     /// WebView2 liefert der Oberfläche keine Hover-Ereignisse, solange eine Webseite den Tastaturfokus hat –
     /// Klicks ja, Drüberfahren nicht. Deshalb schaut Rust selbst nach, wo der Mauszeiger steht, und meldet
-    /// der Oberfläche die Position, wenn er über ihr (nicht über einer Webseite) liegt.
+    /// der Oberfläche die Position über dem ganzen Fenster. Der UI-Treffer wird getrennt übertragen:
+    /// Webseiten bewegen das Glaslicht, dürfen aber keine verdeckten UI-Knöpfe hovern.
     fn poll_hover(&mut self) {
         use windows_sys::Win32::{
             Foundation::POINT,
@@ -266,7 +275,8 @@ impl Browser {
         };
         let mut pt = POINT { x: 0, y: 0 };
         let top = self.window.hwnd() as *mut core::ffi::c_void;
-        let over_ui = unsafe {
+        let mut over_ui = false;
+        let over_window = unsafe {
             GetCursorPos(&mut pt) != 0 && {
                 let hit = WindowFromPoint(pt);
                 !hit.is_null() && GetAncestor(hit, GA_ROOT) == top && {
@@ -284,19 +294,20 @@ impl Browser {
                     while !n.is_null() && n != top && !pages.contains(&n) {
                         n = GetParent(n);
                     }
-                    !pages.contains(&n)
+                    over_ui = !pages.contains(&n);
+                    true
                 }
             }
         };
-        let pos = over_ui.then(|| {
+        let pos = over_window.then(|| {
             let origin = self.window.inner_position().unwrap_or_default();
             let scale = self.window.scale_factor();
-            (((pt.x - origin.x) as f64 / scale) as i32, ((pt.y - origin.y) as f64 / scale) as i32)
+            (((pt.x - origin.x) as f64 / scale) as i32, ((pt.y - origin.y) as f64 / scale) as i32, over_ui)
         });
         if pos != self.hover {
             self.hover = pos;
             let js = match pos {
-                Some((x, y)) => format!("window.hoverAt({x}, {y})"),
+                Some((x, y, over_ui)) => format!("window.hoverAt({x}, {y}, {over_ui})"),
                 None => "window.hoverAt(null)".to_owned(),
             };
             let _ = self.ui.evaluate_script(&js);
@@ -319,7 +330,6 @@ impl Browser {
     /// den ganzen Bildschirm. Darum vorher entmaximieren und danach wiederherstellen.
     fn apply_fullscreen(&mut self, on: bool) {
         self.fullscreen = on;
-        set_round_corners(&self.window, !on);
         if on {
             self.was_maximized = self.window.is_maximized();
             if self.was_maximized {
@@ -332,6 +342,7 @@ impl Browser {
                 self.window.set_maximized(true);
             }
         }
+        self.sync_geometry();
     }
 
     fn sync_ui(&self) {
@@ -423,6 +434,7 @@ impl Browser {
     }
 
     fn activate(&mut self, idx: usize) {
+        self.dismiss_autofill();
         // Tabwechsel beendet den Vollbildmodus der bisherigen Seite.
         if self.fullscreen {
             self.active_script("document.exitFullscreen?.()");
@@ -527,6 +539,9 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
+        if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
+        if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
+        if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
         let id = msg["id"].as_u64().map(|v| v as u32);
         let value = msg["value"].as_str().unwrap_or_default();
         match cmd {
@@ -695,6 +710,16 @@ impl Browser {
                 }
             }
             UserEvent::Load(id, loading, url) => {
+                if !loading {
+                    if let Ok(uri) = url.parse::<wry::http::Uri>() {
+                        if uri.scheme_str() == Some("https") {
+                            if let Some(host) = uri.host() {
+                                let _ = self.icloud.send(json!({"id": 0, "op": "list", "host": host}));
+                            }
+                        }
+                    }
+                }
+                if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     if loading {
                         tab.blocked = 0;
@@ -723,6 +748,8 @@ impl Browser {
                     }
                 }
             }
+            UserEvent::AutofillRequest(id, source, raw) => self.autofill_request(id, &source, &raw),
+            UserEvent::AutofillReply(reply) => self.autofill_reply(reply),
         }
         true
     }
@@ -787,10 +814,16 @@ fn build_content_webview(
         .with_bounds(bounds)
         .with_devtools(true)
         .with_initialization_script(CONTENT_JS)
+        .with_initialization_script(include_str!("passkey-policy.js"))
+        .with_initialization_script(include_str!("autofill-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
-            let event = if body.starts_with('{') { UserEvent::Cosmetic(id, body) } else { UserEvent::Content(body) };
+            let event = if body.starts_with('{') {
+                if serde_json::from_str::<Value>(&body).ok().is_some_and(|v| v.get("autofill").is_some()) {
+                    UserEvent::AutofillRequest(id, req.uri().to_string(), body)
+                } else { UserEvent::Cosmetic(id, body) }
+            } else { UserEvent::Content(body) };
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
@@ -808,6 +841,17 @@ fn build_content_webview(
             NewWindowResponse::Deny
         })
         .build_as_child(window)?;
+
+    // Glass supplies its own login picker; suppress WebView2's overlapping autofill UI.
+    {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+        use windows::core::Interface;
+        unsafe {
+            let settings = webview.webview().Settings()?.cast::<ICoreWebView2Settings4>()?;
+            settings.SetIsGeneralAutofillEnabled(false)?;
+            settings.SetIsPasswordAutosaveEnabled(false)?;
+        }
+    }
 
     // Privat zusätzlich mit strengem Tracking-Schutz (gilt nur für das InPrivate-Profil).
     if private {
@@ -1009,6 +1053,8 @@ fn wallpaper() -> Option<Vec<u8>> {
 fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     use std::borrow::Cow;
     let (mime, body): (&str, Cow<'static, [u8]>) = match request.uri().path() {
+        "/autofill-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("autofill-ui.js"))),
+        "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
         "/wallpaper" => match wallpaper() {
             Some(bytes) => {
                 let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
@@ -1029,17 +1075,6 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
 ///
 /// Der DWM-Rahmen wird über den gesamten Client-Bereich erweitert; dort, wo das Fenster
 /// schwarz gemalt ist (siehe `with_background_color`), zeigt Windows das Backdrop.
-/// Windows-Eckenrundung des Fensters. Im Vollbild aus, sonst schneidet DWM die Bildschirmecken ab.
-fn set_round_corners(window: &Window, round: bool) {
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
-    };
-    let value: i32 = if round { DWMWCP_ROUND } else { DWMWCP_DONOTROUND } as _;
-    unsafe {
-        DwmSetWindowAttribute(window.hwnd() as _, DWMWA_WINDOW_CORNER_PREFERENCE as _, &value as *const _ as _, 4);
-    }
-}
-
 fn style_frame(window: &Window) {
     use windows_sys::Win32::{
         Graphics::Dwm::{
@@ -1053,8 +1088,8 @@ fn style_frame(window: &Window) {
         DwmSetWindowAttribute(hwnd, attr as _, &value as *const _ as _, 4);
     };
     set(DWMWA_USE_IMMERSIVE_DARK_MODE as _, 1);
-    set_round_corners(window, true);
-    // Keine Windows-Rahmenlinie: sie folgt der 8-px-Ecke und stünde sonst neben unserer 18-px-Rundung.
+    window_frame::sync(window, false);
+    // Die Web-Oberfläche zeichnet den Rahmen selbst, auch unter Windows 10.
     set(DWMWA_BORDER_COLOR as _, DWMWA_COLOR_NONE as _);
     let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
     unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
@@ -1119,7 +1154,9 @@ fn main() -> wry::Result<()> {
             "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --ui-disable-partial-swap",
         )
         .with_ipc_handler(move |req| {
-            let _ = p_ui.send_event(UserEvent::Ui(req.body().clone()));
+            if req.uri().to_string() == UI_URL {
+                let _ = p_ui.send_event(UserEvent::Ui(req.body().clone()));
+            }
         })
         .build(&window)?;
 
@@ -1139,7 +1176,10 @@ fn main() -> wry::Result<()> {
         });
     }
 
+    let icloud = autofill::start(proxy.clone());
+    let _ = icloud.send(json!({"id": 0, "op": "probe"}));
     let mut browser = Browser {
+        icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: None, split: None, hover: None, update: None,
     };
@@ -1158,7 +1198,7 @@ fn main() -> wry::Result<()> {
         let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
             == browser.window.hwnd() as *mut core::ffi::c_void;
         *control_flow = if foreground {
-            ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(40))
+            ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(16))
         } else {
             ControlFlow::Wait
         };
@@ -1167,6 +1207,7 @@ fn main() -> wry::Result<()> {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    browser.dismiss_autofill();
                     browser.layout();
                     browser.sync_ui();
                     browser.sync_geometry();
