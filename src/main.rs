@@ -407,8 +407,12 @@ impl Browser {
 
     fn close_tab(&mut self, id: u32) -> bool {
         let Some(idx) = self.index_of(id) else { return true };
+        // Der letzte Tab schließt nicht das Fenster, sondern macht einem leeren Platz – zurück zum Startbildschirm.
         if self.tabs.len() == 1 {
-            return false;
+            if !self.show_tabbar() {
+                return true; // schon auf dem Startbildschirm
+            }
+            self.new_tab(None, false);
         }
         // Schließt man eine Seite der geteilten Ansicht, bleibt die andere allein stehen.
         if self.split_of(id).is_some() {
