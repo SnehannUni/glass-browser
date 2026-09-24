@@ -16,10 +16,13 @@ concurrency:
 
 jobs:
   build:
+    # Auch manuelle Starts auf Feature-Branches dürfen kein offizielles Release erzeugen.
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     env:
       # Build-Nummer, die in die Exe eingebaut wird – daran erkennt Glass neuere Versionen
       GLASS_BUILD: ${{ github.run_number }}
+      GLASS_RELEASE_REF: ${{ github.ref }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
