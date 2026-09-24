@@ -294,9 +294,18 @@
   #update {
     position: fixed; z-index: 30; left: 50%; top: 50%; width: 360px; margin: -110px 0 0 -180px;
     display: none; padding: 18px 18px 14px; border-radius: 22px;
-    backdrop-filter: blur(24px) saturate(1.5) brightness(.75);
+    /* dichter als die übrigen Gläser: der Text dahinter (z. B. die Such-Kapsel) darf nicht durchscheinen */
+    background: linear-gradient(180deg, rgba(40, 42, 54, .78), rgba(26, 28, 38, .82));
+    backdrop-filter: blur(30px) saturate(1.4) brightness(.7);
   }
   #update.open { display: block; animation: pop-in .5s var(--spring); }
+  /* Abdunkeln hinter dem Modal (nur die Oberfläche – eine Webseite ist ein eigenes Fenster) */
+  #scrim {
+    position: fixed; inset: 0; z-index: 29; display: none; pointer-events: none;
+    background: rgba(0, 0, 0, .3); backdrop-filter: blur(3px);
+  }
+  body.modal #scrim { display: block; animation: fade-in .3s var(--ease); }
+  @keyframes fade-in { from { opacity: 0; } }
   .up-head { display: flex; gap: 12px; align-items: center; }
   .up-head > svg {
     width: 36px; height: 36px; padding: 8px; border-radius: 12px; flex: none; color: #fff;
@@ -431,6 +440,7 @@
   <div id="favs" class="glass"></div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
+  <div id="scrim"></div>
   <div id="update" class="glass" role="dialog" aria-labelledby="up-title">
     <div class="up-head">
       <svg viewBox="0 0 16 16"><path d="M8 2.2v8.2M4.7 7.2 8 10.5l3.3-3.3"/><path d="M3 12.8h10"/></svg>
@@ -1187,10 +1197,11 @@
     $('up-error').textContent = '';
     upInstall.disabled = false; upInstall.textContent = 'Jetzt installieren';
     upBox.classList.add('open');
+    document.body.classList.add('modal');
     requestAnimationFrame(reportUpdateOverlay);
     upBox.dataset.build = build;
   };
-  const closeUpdate = () => { upBox.classList.remove('open'); send('overlay', { rect: null }); };
+  const closeUpdate = () => { upBox.classList.remove('open'); document.body.classList.remove('modal'); send('overlay', { rect: null }); };
   $('up-later').addEventListener('click', () => { upDismissed = Number(upBox.dataset.build) || 0; closeUpdate(); });
   upInstall.addEventListener('click', () => {
     upInstall.disabled = true;
