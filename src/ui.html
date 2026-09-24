@@ -176,7 +176,7 @@
   #wheel {
     --slot: 46px; --orbit: 78px; --rot: 0deg; /* --orbit = WHEEL_ORBIT im Skript */
     position: fixed; z-index: 11; width: calc(2 * var(--orbit) + var(--slot) + 10px); aspect-ratio: 1;
-    display: none; pointer-events: none; transform-origin: calc(var(--slot) / 2 + 5px) 50%;
+    display: none; pointer-events: none;
   }
   #wheel.open { display: block; }
   body.wheel-open #btn-engine { opacity: 0; }
@@ -1190,7 +1190,7 @@
   function openWheel() {
     closeSuggest();
     clearTimeout(wheelTimer);
-    wheel.getAnimations().forEach((a) => a.cancel());
+    slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
     delete wheel.dataset.closing;
     wheel.classList.add('open', 'instant');
     // Mittelpunkt des Rads eine Umlaufbahn rechts vom Knopf: so liegt der linke Platz genau auf ihm
@@ -1200,19 +1200,37 @@
     turnWheel();
     requestAnimationFrame(() => requestAnimationFrame(() => wheel.classList.remove('instant')));
     document.body.classList.add('wheel-open');
-    // Aufklappen aus dem Knopf heraus: das Rad wächst vom linken Platz aus und dreht sich dabei ein Stück ein
-    wheel.animate([{ opacity: 0, transform: 'scale(.24) rotate(-50deg)' }, { opacity: 1, transform: 'none' }],
-      { duration: 550, easing: 'cubic-bezier(.3, 1.3, .45, 1)' });
+    moveSlots(true);
+  }
+  // Aus- und Einfahren: Jeder Kreis gleitet aus dem Knopf nach rechts auf seinen Platz (und zurück),
+  // die dem Knopf nächsten zuerst. Der gewählte bleibt, wo er ist – er liegt ja schon auf dem Knopf.
+  function moveSlots(out) {
+    const b = engineBtn.getBoundingClientRect();
+    const bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    // `translate` wirkt im gedrehten Rad – den Weg zum Knopf also um die Raddrehung zurückdrehen
+    const rad = (-wheelRot * Math.PI) / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+    const n = ENGINES.length, sel = ENGINES.indexOf(engine);
+    return Promise.all(slots.map((s, i) => {
+      const k = Math.min((i - sel + n) % n, (sel - i + n) % n); // Abstand zum Knopf in Plätzen
+      if (!k) return null;
+      const r = s.getBoundingClientRect();
+      const dx = bx - (r.left + r.width / 2), dy = by - (r.top + r.height / 2);
+      const home = { translate: `${dx * cos - dy * sin}px ${dx * sin + dy * cos}px`, scale: .5, opacity: 0 };
+      const place = { translate: '0px 0px', scale: 1, opacity: 1 };
+      return out
+        ? s.animate([home, place], { duration: 520, delay: (k - 1) * 45, easing: 'cubic-bezier(.3, 1.25, .45, 1)', fill: 'backwards' }).finished
+        : s.animate([place, home], { duration: 230, delay: (n / 2 - k) * 30, easing: 'cubic-bezier(.4, 0, .7, .2)', fill: 'forwards' }).finished;
+    }));
   }
   function closeWheel() {
     clearTimeout(wheelTimer);
     if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
     wheel.dataset.closing = '1';
     document.body.classList.remove('wheel-open');
-    wheel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.24) rotate(-50deg)' }],
-      { duration: 260, easing: 'cubic-bezier(.4, 0, .7, .2)' }).finished.then(() => {
+    moveSlots(false).then(() => {
       delete wheel.dataset.closing;
       wheel.classList.remove('open');
+      slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
       if (editing() && !suggestBox.classList.contains('open')) refreshSuggest(input.value);
     }, () => {}); // abgebrochen, weil das Rad gleich wieder aufgeht
   }
