@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {AccountCache} from '../src/icloud/account-cache.mjs';
+let now = 0;
+const cache = new AccountCache({ttl:60,limit:2,now:()=>now});
+cache.set('one.invalid',[{username:'test',label:'Test',password:'must-not-be-stored'}]);
+assert.deepEqual(cache.get('one.invalid'),[{username:'test',label:'Test'}]);
+cache.get('one.invalid')[0].username='mutated';
+assert.equal(cache.get('one.invalid')[0].username,'test');
+assert.equal(cache.get('other.invalid'),null);
+cache.set('empty.invalid',[]);
+assert.deepEqual(cache.get('empty.invalid'),[]);
+now=60;
+assert.equal(cache.get('one.invalid'),null);
+cache.set('two.invalid',[]);cache.set('three.invalid',[]);
+assert.equal(cache.get('empty.invalid'),null);
+cache.clear();assert.equal(cache.get('three.invalid'),null);
+console.log('PASS: metadata-only cache, expiry, host isolation, negative lookup, size bound and clearing.');
