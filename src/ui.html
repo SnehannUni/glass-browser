@@ -1009,6 +1009,8 @@
     e.preventDefault();
     const value = input.value.trim();
     if (!value) return;
+    // Prompts an KI-Chats merken (Google-Suchen erkennt recordSearches an der Ergebnis-URL)
+    if (engine.id !== 'google' && !activeTab()?.private && !looksLikeUrl(value)) remember(engine.id, value);
     send('navigate', { value, engine: engine.id });
     input.blur();
   });
@@ -1018,19 +1020,36 @@
   let suggestions = [], selected = -1, typed = '', suggestSeq = 0, suggestTimer = 0;
 
   // ---------- Suchverlauf (nur lokal, im Speicher der Oberfläche) ----------
-  const HISTORY_KEY = 'glass.searchHistory', HISTORY_MAX = 50;
-  let searchHistory = [];
-  try { searchHistory = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { /* leer starten */ }
-  const saveHistory = () => { try { localStorage.setItem(HISTORY_KEY, JSON.stringify(searchHistory)); } catch { /* egal */ } };
-  function rememberSearch(q) {
-    q = q.trim();
-    if (!q || searchHistory[0] === q) return;
-    searchHistory = [q, ...searchHistory.filter((h) => h.toLowerCase() !== q.toLowerCase())].slice(0, HISTORY_MAX);
-    saveHistory();
+  // Je Anbieter ein eigener Verlauf: Google-Suchen wie bisher, dazu die Prompts an ChatGPT, Claude & Co.
+  const HISTORY_MAX = 50;
+  const historyKey = (id) => (id === 'google' ? 'glass.searchHistory' : `glass.promptHistory.${id}`);
+  const histories = {};
+  function historyOf(id) {
+    if (!histories[id]) {
+      try { histories[id] = JSON.parse(localStorage.getItem(historyKey(id))) || []; } catch { histories[id] = []; }
+    }
+    return histories[id];
   }
-  function forgetSearch(q) {
-    searchHistory = searchHistory.filter((h) => h !== q);
-    saveHistory();
+  const saveHistory = (id) => { try { localStorage.setItem(historyKey(id), JSON.stringify(histories[id])); } catch { /* egal */ } };
+  function remember(id, q) {
+    q = q.trim();
+    const list = historyOf(id);
+    if (!q || list[0] === q) return;
+    histories[id] = [q, ...list.filter((h) => h.toLowerCase() !== q.toLowerCase())].slice(0, HISTORY_MAX);
+    saveHistory(id);
+  }
+  function forget(id, q) {
+    histories[id] = historyOf(id).filter((h) => h !== q);
+    saveHistory(id);
+  }
+  const rememberSearch = (q) => remember('google', q);
+  // Webadresse statt Suchbegriff? (wie resolve_input in main.rs – Adressen gehören in keinen Verlauf)
+  function looksLikeUrl(v) {
+    v = v.trim();
+    if (/^[a-z][\w+.-]*:\/\//i.test(v) || /^(about|data):/i.test(v)) return true;
+    if (/\s/.test(v)) return false;
+    const host = v.split(/[/?#]/)[0];
+    return /^(localhost|127\.0\.0\.1)/.test(host) || (host.includes('.') && !host.startsWith('.') && !host.endsWith('.'));
   }
   // Jede Google-Suche landet im Verlauf – auch die direkt auf google.com, erkennbar an der Ergebnis-URL
   const seenQueries = new Map();
@@ -1053,8 +1072,8 @@
     const q = text.trim(), lower = q.toLowerCase();
     // Privat: frühere Suchen nicht anzeigen – der private Tab soll wie ein unbeschriebenes Blatt wirken
     const past = (activeTab()?.private ? [] : q
-      ? searchHistory.filter((h) => h.toLowerCase().includes(lower) && h.toLowerCase() !== lower).slice(0, 3)
-      : searchHistory.slice(0, 6)
+      ? historyOf(engine.id).filter((h) => h.toLowerCase().includes(lower) && h.toLowerCase() !== lower).slice(0, 3)
+      : historyOf(engine.id).slice(0, 6)
     ).map((text) => ({ text, kind: 'history' }));
     const seq = ++suggestSeq;
     // Ohne passende frühere Suchen nur ausblenden – closeSuggest() würde die folgende Google-Anfrage verwerfen
@@ -1125,7 +1144,7 @@
       if (first && (item.kind !== 'suggest' || i > 0)) {
         const head = document.createElement('div');
         head.className = 'sg-head';
-        head.textContent = SECTION[item.kind];
+        head.textContent = item.kind === 'history' && engine.id !== 'google' ? `Zuletzt an ${engine.name}` : SECTION[item.kind];
         nodes.push(head);
       }
       const row = document.createElement('div');
@@ -1147,7 +1166,7 @@
         rm.innerHTML = svg('close');
         rm.addEventListener('pointerdown', (e) => {
           e.preventDefault(); e.stopPropagation(); // Fokus bleibt im Feld, nicht suchen
-          forgetSearch(item.text);
+          forget(engine.id, item.text);
           refreshSuggest(typed, related);
         });
         row.append(rm);
