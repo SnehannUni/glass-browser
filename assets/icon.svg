@@ -1,45 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- Glass-Logo: gläserner Planet mit Ring (Variante H, aufgehellt). Das Glas entsteht nur durch Licht an den Kanten;
-       der vordere Ring stanzt eine Lücke in die Kugel. --><defs>
-  <linearGradient id="ball" x1=".3" y1="0" x2=".7" y2="1"><stop offset="0" stop-color="#5fadff"/><stop offset="1" stop-color="#2b62e6"/></linearGradient>
-  <!-- Brechung: zum Rand hin heller -->
-  <radialGradient id="edge" cx=".5" cy=".5" r=".5"><stop offset=".72" stop-color="#fff" stop-opacity="0"/><stop offset=".95" stop-color="#fff" stop-opacity=".16"/><stop offset="1" stop-color="#fff" stop-opacity=".34"/></radialGradient>
-  <!-- Licht, das durch die Kugel fällt und unten wieder austritt -->
-  <radialGradient id="glow" cx=".5" cy=".92" r=".55"><stop offset="0" stop-color="#b3ecff" stop-opacity=".75"/><stop offset="1" stop-color="#b3ecff" stop-opacity="0"/></radialGradient>
-  <!-- Lichtkante: oben links hell, Mitte aus, unten rechts ein Rest -->
-  <linearGradient id="rim" x1=".15" y1=".05" x2=".85" y2=".95"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset=".42" stop-color="#fff" stop-opacity=".08"/><stop offset=".72" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".7"/></linearGradient>
-  <linearGradient id="crescent" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
-  <clipPath id="sphere"><circle cx="128" cy="128" r="110"/></clipPath>
-  <clipPath id="back"><rect x="-60" y="-60" width="376" height="188"/></clipPath>
-  <clipPath id="front"><rect x="-60" y="128" width="376" height="188"/></clipPath>
-  <!-- Lücke, die der vordere Ring in die Kugel stanzt -->
-  <mask id="gap" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><rect width="256" height="256" fill="#fff"/>
-    <g transform="rotate(-30 128 128)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#000" stroke-width="24" clip-path="url(#front)" /></g></mask>
-  <!-- schmale Glanzsichel oben: Kugel minus nach unten versetzte Kugel -->
-  <mask id="sickle" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><circle cx="128" cy="128" r="106" fill="#fff"/><circle cx="128" cy="146" r="108" fill="#000"/></mask>
+  <!-- Glass-Logo: ein „B“ (Bookman Old Style Bold Italic, als Pfad – unabhängig von installierten Schriften)
+       aus cleanem Klarglas: fast farbloser Körper, weich beleuchtete Wölbung, feine Lichtkante, zarter Schatten. -->
+  <defs>
+    <filter id="glass" x="-15%" y="-15%" width="130%" height="135%" color-interpolation-filters="sRGB">
+      <!-- Wölbung: weichgezeichnete Form als Höhenkarte, Licht von oben links -->
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="bump"/>
+      <feSpecularLighting in="bump" surfaceScale="8" specularConstant="1.5" specularExponent="24" lighting-color="#ffffff" result="spec">
+        <feDistantLight azimuth="235" elevation="40"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="SourceAlpha" operator="in" result="light"/>
+      <!-- Glaskörper -->
+      <feFlood flood-color="#ffffff" flood-opacity=".18"/><feComposite in2="SourceAlpha" operator="in" result="body"/>
+      <!-- Dicke: dezent dunkler Rand, nach innen auslaufend -->
+      <feMorphology in="SourceAlpha" operator="erode" radius="1.6" result="inner"/>
+      <feGaussianBlur in="inner" stdDeviation="5" result="innerSoft"/>
+      <feComposite in="SourceAlpha" in2="innerSoft" operator="out" result="band"/>
+      <feFlood flood-color="#0b1d4a" flood-opacity=".16"/><feComposite in2="band" operator="in" result="shade"/>
+      <!-- feine Lichtkante -->
+      <feComposite in="SourceAlpha" in2="inner" operator="out" result="edge"/>
+      <feFlood flood-color="#ffffff" flood-opacity=".95"/><feComposite in2="edge" operator="in" result="rim"/>
+      <!-- hauchdünne dunkle Außenkontur: hält die Form auf hellem Grund zusammen, auf dunklem unsichtbar -->
+      <feMorphology in="SourceAlpha" operator="dilate" radius="1.1" result="outer"/>
+      <feComposite in="outer" in2="SourceAlpha" operator="out" result="outline"/>
+      <feFlood flood-color="#0b1d4a" flood-opacity=".32"/><feComposite in2="outline" operator="in" result="contour"/>
+      <!-- zarter Schatten -->
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5"/><feOffset dy="5" result="sh"/>
+      <feFlood flood-color="#0a1a40" flood-opacity=".2"/><feComposite in2="sh" operator="in" result="dropAll"/>
+      <!-- nur neben dem Glas: unter dem Buchstaben soll der echte Hintergrund durchscheinen, nicht der Schatten -->
+      <feComposite in="dropAll" in2="SourceAlpha" operator="out" result="drop"/>
+      <feMerge>
+        <feMergeNode in="drop"/><feMergeNode in="contour"/><feMergeNode in="body"/><feMergeNode in="shade"/><feMergeNode in="light"/><feMergeNode in="rim"/>
+      </feMerge>
+    </filter>
   </defs>
-
-  <!-- Ring hinten -->
-  <g transform="rotate(-30 128 128)">
-    <ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#8cc4ff" stroke-width="12" clip-path="url(#back)" stroke-opacity="0.5"/>
-    <g transform="translate(0 -4.5)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.4" clip-path="url(#back)" stroke-opacity=".45"/></g>
-  </g>
-
-  <!-- Kugel -->
-  <g mask="url(#gap)">
-    <circle cx="128" cy="128" r="110" fill="url(#ball)"/>
-    <g clip-path="url(#sphere)">
-      <circle cx="128" cy="128" r="110" fill="url(#glow)"/>
-      <circle cx="128" cy="128" r="110" fill="url(#edge)"/>
-      <rect x="18" y="18" width="220" height="80" fill="url(#crescent)" mask="url(#sickle)"/>
-    </g>
-    <circle cx="128" cy="128" r="109" fill="none" stroke="url(#rim)" stroke-width="2.5"/>
-  </g>
-
-  <!-- Ring vorne: Glasröhre mit Lichtkanten oben und unten -->
-  <g transform="rotate(-30 128 128)">
-    <ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#8cc4ff" stroke-width="12" clip-path="url(#front)" stroke-opacity="0.7"/>
-    <g transform="translate(0 -4.6)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.6" clip-path="url(#front)" stroke-opacity=".95"/></g>
-    <g transform="translate(0 4.6)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.2" clip-path="url(#front)" stroke-opacity=".45"/></g>
-  </g>
+  <path filter="url(#glass)" d="M52.4 41.4L59.2 11.3L165.3 11.3Q197.7 11.3 213.4 17.2Q229.2 23.0 237.6 34.4Q246 45.8 246 60.1L246 60.1Q246 78.0 234.2 92.4Q222.5 106.8 196.0 116.3L196.0 116.3Q210.5 121.3 218.2 127.6Q225.9 133.8 230.0 142.3Q234.0 150.8 234.0 160.3L234.0 160.3Q234.0 173.7 227.1 186.6Q220.1 199.5 206.1 209.8Q192.1 220.1 175.3 223.5L175.3 223.5Q151.4 228.7 118.4 228.7L118.4 228.7L10.0 228.7L16.7 198.6L22.3 198.6Q34.9 198.6 39.8 195.9Q44.6 193.1 46.9 183.0L46.9 183.0L75.1 58.9Q76.4 53.4 76.4 50.6L76.4 50.6Q76.4 45.1 72.8 43.0L72.8 43.0Q70.3 41.4 61.6 41.4L61.6 41.4L52.4 41.4ZM130.9 45.6L118.4 99.7L139.3 99.7Q158.5 99.7 165.0 98.3L165.0 98.3Q177.0 95.6 184.3 87.4Q191.6 79.1 191.6 67.7L191.6 67.7Q191.6 56.8 183.8 51.2Q176.1 45.6 155.5 45.6L155.5 45.6L130.9 45.6ZM137.7 131.0L111.3 131.0L99.4 182.2Q98.2 187.5 98.2 189.7L98.2 189.7Q98.2 192.5 100.0 193.8L100.0 193.8Q101.4 194.7 109.1 194.7L109.1 194.7L126.8 194.7Q146.6 194.7 156.5 190.3Q166.4 186.0 172.8 176.6Q179.2 167.3 179.2 157.2L179.2 157.2Q179.2 148.7 175.0 142.7Q170.8 136.6 163.0 133.8Q155.2 131.0 137.7 131.0L137.7 131.0Z"/>
 </svg>

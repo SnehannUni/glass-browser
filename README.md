@@ -35,7 +35,7 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
-| `assets/icon.svg` | Logo (gläserner Planet mit Ring); daraus erzeugt: `assets/glass.ico` |
+| `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
 | `build.rs` | bettet das Icon und die Programminfos in die Exe ein |
 
 Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter `%LOCALAPPDATA%\GlassBrowser`.
