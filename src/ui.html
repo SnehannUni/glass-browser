@@ -171,6 +171,43 @@
   body.start .engine { width: 46px; height: 46px; }
   body.start .engine img { width: 24px; height: 24px; border-radius: 5px; }
   .engine-row .check { margin-left: auto; color: var(--blue); }
+  /* Startbildschirm: Der Rand des Logos öffnet sich zu einem Ring aus allen Anbietern; der gewählte sitzt
+     oben genau an der Stelle des Knopfs. Wählt man einen anderen, dreht sich der Ring, bis er oben steht. */
+  #wheel {
+    --slot: 46px; --orbit: 78px; --rot: 0deg; /* --orbit = WHEEL_ORBIT im Skript */
+    position: fixed; z-index: 11; width: calc(2 * var(--orbit) + var(--slot) + 10px); aspect-ratio: 1;
+    display: none; transform-origin: 50% calc(var(--slot) / 2 + 5px);
+  }
+  #wheel.open { display: block; }
+  body.wheel-open #btn-engine { opacity: 0; }
+  #wheel .ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    -webkit-mask: radial-gradient(circle, transparent calc(var(--orbit) - var(--slot) / 2 - 5.5px), #000 calc(var(--orbit) - var(--slot) / 2 - 4.5px));
+  }
+  /* Innenkante des Rings (die Maske schneidet die Glanzkante dort weg); in der Mitte steht der Name */
+  #wheel .hole {
+    position: absolute; inset: calc(var(--slot) + 10px); border-radius: 50%; pointer-events: none;
+    box-shadow: 0 0 0 .5px rgba(255, 255, 255, .22), 0 0 10px rgba(0, 0, 0, .18);
+    display: grid; place-items: center; font-size: 13px; font-weight: 500; color: var(--label-2);
+  }
+  /* feste Markierung oben: hier steht der gewählte Anbieter */
+  #wheel .pick {
+    position: absolute; left: calc(50% - var(--slot) / 2); top: 5px; width: var(--slot); height: var(--slot); border-radius: 50%;
+    background: rgba(255, 255, 255, .2); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .35), 0 1px 4px rgba(0, 0, 0, .2);
+    pointer-events: none;
+  }
+  #wheel .spin { position: absolute; inset: 0; pointer-events: none; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
+  #wheel .slot {
+    position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
+    border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
+    /* auf die Umlaufbahn setzen, dann zurückdrehen: die Logos bleiben beim Drehen aufrecht */
+    transform: rotate(var(--a)) translateY(calc(-1 * var(--orbit))) rotate(calc(-1 * var(--a) - var(--rot)));
+    transition: transform .7s var(--spring), background-color .2s;
+  }
+  #wheel.instant :is(.spin, .slot) { transition: none; }
+  #wheel .slot img { width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
+  #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .1); }
+  #wheel .slot:active img { transform: scale(1.15); }
   /* Werbeblocker: Schild + Anzahl blockierter Anfragen; ausgeschaltet durchgestrichen und blass */
   .shield { height: 24px; min-width: 28px; padding: 0 7px; display: flex; gap: 4px; color: var(--label-2); font-size: 11px;
             font-variant-numeric: tabular-nums; }
@@ -461,6 +498,7 @@
   <div id="dropzone" class="glass"></div>
 
   <div id="suggest" class="glass"></div>
+  <div id="wheel"><div class="glass ring"></div><div class="hole"></div><div class="pick"></div><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
@@ -991,12 +1029,14 @@
     else if (!url) refreshSuggest('');
   });
   input.addEventListener('blur', () => {
+    closeWheel();
     closeSuggest();
     slide(false);
     renderAddress();
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && wheel.classList.contains('open')) closeWheel();
+    else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
     } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && suggestions.length) {
       e.preventDefault();
@@ -1093,7 +1133,7 @@
       } catch { /* offline: einfach keine Vorschläge */ }
     }, isRelated ? 0 : 90);
   }
-  input.addEventListener('input', () => refreshSuggest(input.value));
+  input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); });
 
   // Auswahl des Suchanbieters: erscheint an der Stelle der Vorschläge (gleiche Glasliste, gleiche Aussparung
   // über Webseiten). Tippen oder eine Auswahl bringt die Vorschläge zurück.
@@ -1128,9 +1168,83 @@
   engineBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation(); // Feld bleibt fokussiert (sonst führe es in der Leiste wieder ein)
     if (!editing()) window.focusAddress();
-    if (engineMenu && suggestBox.classList.contains('open')) { engineMenu = false; refreshSuggest(input.value); }
+    if (document.body.classList.contains('start')) { if (wheel.classList.contains('open')) closeWheel(); else openWheel(); }
+    else if (engineMenu && suggestBox.classList.contains('open')) { engineMenu = false; refreshSuggest(input.value); }
     else showEngineMenu();
   });
+
+  // Startbildschirm: Anbieter-Rad statt Liste. Der Ring hängt unter dem Knopf, der gewählte Anbieter sitzt oben.
+  const wheel = $('wheel'), wheelSpin = wheel.querySelector('.spin'), wheelName = wheel.querySelector('.hole');
+  const WHEEL_ORBIT = 78, STEP = 360 / ENGINES.length;
+  let wheelRot = 0, wheelTimer = 0;
+  const slots = ENGINES.map((e, i) => {
+    const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'slot';
+    slot.title = e.name;
+    slot.style.setProperty('--a', `${i * STEP}deg`);
+    slot.append(engineImg(e));
+    slot.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault(); ev.stopPropagation(); // Fokus bleibt im Feld
+      clearTimeout(wheelTimer);
+      if (e === engine) { closeWheel(); return; }
+      setEngine(e);
+      turnWheel();
+      wheelTimer = setTimeout(closeWheel, 750); // erst hineindrehen lassen, dann schließen
+    });
+    wheelSpin.append(slot);
+    return slot;
+  });
+  // Auf den gewählten Anbieter drehen – immer den kürzeren Weg
+  function turnWheel() {
+    const target = -ENGINES.indexOf(engine) * STEP;
+    wheelRot += ((((target - wheelRot) % 360) + 540) % 360) - 180;
+    wheel.style.setProperty('--rot', `${wheelRot}deg`);
+    wheelName.textContent = engine.name;
+    slots.forEach((s, i) => s.classList.toggle('on', ENGINES[i] === engine));
+  }
+  function openWheel() {
+    closeSuggest();
+    clearTimeout(wheelTimer);
+    wheel.getAnimations().forEach((a) => a.cancel());
+    delete wheel.dataset.closing;
+    wheel.classList.add('open', 'instant');
+    // Mittelpunkt des Rings eine Umlaufbahn unter dem Knopf: so liegt der oberste Platz genau auf ihm
+    const r = layoutRect(engineBtn);
+    const cx = r.left + engineBtn.offsetWidth / 2, cy = r.top + engineBtn.offsetHeight / 2 + WHEEL_ORBIT;
+    Object.assign(wheel.style, { left: `${cx - wheel.offsetWidth / 2}px`, top: `${cy - wheel.offsetHeight / 2}px` });
+    turnWheel();
+    requestAnimationFrame(() => requestAnimationFrame(() => wheel.classList.remove('instant')));
+    document.body.classList.add('wheel-open');
+    // Aufklappen aus dem Knopf heraus: der Ring wächst vom obersten Platz aus und dreht sich dabei ein Stück ein
+    wheel.animate([{ opacity: 0, transform: 'scale(.24) rotate(-50deg)' }, { opacity: 1, transform: 'none' }],
+      { duration: 550, easing: 'cubic-bezier(.3, 1.3, .45, 1)' });
+  }
+  function closeWheel() {
+    clearTimeout(wheelTimer);
+    if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
+    wheel.dataset.closing = '1';
+    document.body.classList.remove('wheel-open');
+    wheel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.24) rotate(-50deg)' }],
+      { duration: 260, easing: 'cubic-bezier(.4, 0, .7, .2)' }).finished.then(() => {
+      delete wheel.dataset.closing;
+      wheel.classList.remove('open');
+      if (editing() && !suggestBox.classList.contains('open')) refreshSuggest(input.value);
+    }, () => {}); // abgebrochen, weil der Ring gleich wieder aufgeht
+  }
+  // Mausrad über dem Ring: einen Anbieter weiterdrehen
+  wheel.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    clearTimeout(wheelTimer);
+    const n = ENGINES.length, i = ENGINES.indexOf(engine);
+    setEngine(ENGINES[(i + Math.sign(e.deltaY) + n) % n]);
+    turnWheel();
+  }, { passive: false });
+  wheel.addEventListener('pointerdown', (e) => e.preventDefault()); // Klick auf den Ring: Fokus bleibt im Feld
+  // Klick daneben schließt den Ring
+  document.addEventListener('pointerdown', (e) => {
+    if (wheel.classList.contains('open') && !wheel.contains(e.target) && !engineBtn.contains(e.target)) closeWheel();
+  }, true);
   renderEngine();
 
   const SECTION = { history: 'Zuletzt gesucht', suggest: 'Vorschläge', related: 'Ähnliche Suchen' };
@@ -1399,6 +1513,7 @@
   // FLIP: alte Position messen, Layout umschalten, dann von der alten Form zur neuen federn.
   function setStartMode(start) {
     if (document.body.classList.contains('start') === start) return;
+    closeWheel();
     const from = address.getBoundingClientRect();
     // Größe springt sofort (die Bewegung macht die Animation unten) – sonst liefe zusätzlich der Breiten-Übergang
     address.style.transition = 'none';
