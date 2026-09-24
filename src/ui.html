@@ -181,11 +181,12 @@
   #wheel.open { display: block; }
   body.wheel-open #btn-engine { opacity: 0; }
   #wheel .spin { position: absolute; inset: 0; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
+  @property --off { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
   #wheel .slot {
     position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
     border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
-    /* auf die Umlaufbahn setzen (Platz 0 links), dann zurückdrehen: die Logos bleiben beim Drehen aufrecht */
-    transform: rotate(calc(var(--a) - 90deg)) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--rot)));
+    /* auf die Umlaufbahn setzen (Platz 0 links, --off = Aus-/Eindrehen), dann zurückdrehen: die Logos bleiben aufrecht */
+    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot)));
     transition: transform .7s var(--spring), background-color .2s;
   }
   /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
@@ -1188,7 +1189,7 @@
     wheel.style.setProperty('--rot', `${wheelRot}deg`);
     slots.forEach((s, i) => {
       s.classList.toggle('on', i === sel);
-      s.style.zIndex = n - Math.min((i - sel + n) % n, (sel - i + n) % n);
+      s.style.zIndex = n - ((i - sel + n) % n);
     });
   }
   function openWheel() {
@@ -1206,25 +1207,19 @@
     document.body.classList.add('wheel-open');
     moveSlots(true);
   }
-  // Aus- und Einfahren: Jeder Kreis gleitet aus dem Knopf nach rechts auf seinen Platz (und zurück),
-  // die dem Knopf nächsten zuerst. Der gewählte bleibt, wo er ist – er liegt ja schon auf dem Knopf.
+  // Aus- und Eindrehen, beides im Uhrzeigersinn: Eingefahren liegen alle Kreise gestapelt unter dem gewählten.
+  // Beim Öffnen fächern sie sich auf der Umlaufbahn auf ihre Plätze, beim Schließen drehen sie weiter,
+  // bis sie wieder unter ihm liegen. Alle kommen gleichzeitig an; der gewählte bleibt, wo er ist.
   function moveSlots(out) {
-    const b = engineBtn.getBoundingClientRect();
-    const bx = b.left + b.width / 2, by = b.top + b.height / 2;
-    // `translate` wirkt im gedrehten Rad – den Weg zum Knopf also um die Raddrehung zurückdrehen
-    const rad = (-wheelRot * Math.PI) / 180, cos = Math.cos(rad), sin = Math.sin(rad);
     const n = ENGINES.length, sel = ENGINES.indexOf(engine);
     return Promise.all(slots.map((s, i) => {
-      const k = Math.min((i - sel + n) % n, (sel - i + n) % n); // Abstand zum Knopf in Plätzen
-      if (!k) return null;
-      const r = s.getBoundingClientRect();
-      const dx = bx - (r.left + r.width / 2), dy = by - (r.top + r.height / 2);
-      // eingefahren liegt jeder Kreis voll sichtbar unter dem gewählten – ein Stapel, kein Ausblenden
-      const home = { translate: `${dx * cos - dy * sin}px ${dx * sin + dy * cos}px` };
-      const place = { translate: '0px 0px' };
+      const j = (i - sel + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
+      if (!j) return null;
       return out
-        ? s.animate([home, place], { duration: 520, delay: (k - 1) * 45, easing: 'cubic-bezier(.3, 1.25, .45, 1)', fill: 'backwards' }).finished
-        : s.animate([place, home], { duration: 230, delay: (n / 2 - k) * 30, easing: 'cubic-bezier(.4, 0, .7, .2)', fill: 'forwards' }).finished;
+        ? s.animate([{ '--off': `${-j * STEP}deg` }, { '--off': '0deg' }],
+          { duration: 650, easing: 'cubic-bezier(.3, 1.15, .45, 1)', fill: 'backwards' }).finished
+        : s.animate([{ '--off': '0deg' }, { '--off': `${(n - j) * STEP}deg` }],
+          { duration: 380, easing: 'cubic-bezier(.45, 0, .6, 1)', fill: 'forwards' }).finished;
     }));
   }
   function closeWheel() {
