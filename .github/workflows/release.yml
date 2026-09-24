@@ -1,0 +1,52 @@
+# Baut bei jedem Push auf main die fertige Glass.exe und veröffentlicht sie als Release „build-<Nummer>“.
+# Glass prüft dieses Release beim Start und bietet neuere Versionen im Update-Modal an (src/update.rs).
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      # Build-Nummer, die in die Exe eingebaut wird – daran erkennt Glass neuere Versionen
+      GLASS_BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Bauen
+        run: cargo build --release --locked
+
+      - name: Lizenzen der Bibliotheken
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
+
+      - name: Dateien fürs Release
+        shell: pwsh
+        run: Copy-Item target/release/glass-browser.exe Glass.exe
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Glass Build ${{ github.run_number }}
+          body: ${{ github.event.head_commit.message }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: |
+            Glass.exe
+            THIRD_PARTY_LICENSES.html
+            LICENSE

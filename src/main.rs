@@ -2,6 +2,7 @@
 
 mod blocker;
 mod suggest;
+mod update;
 
 use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc};
@@ -47,6 +48,10 @@ enum UserEvent {
     Blocked(u32),
     /// Eine Webseite fragt nach CSS zum Ausblenden von Werbeflächen (JSON aus content.js).
     Cosmetic(u32, String),
+    /// Auf GitHub gibt es eine neuere Version (Build-Nummer, Änderungen, Download-Adresse).
+    UpdateAvailable(u32, String, String),
+    /// Update installiert (Glass beendet sich, die neue Version startet) oder Fehlermeldung.
+    UpdateDone(Result<(), String>),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -105,6 +110,8 @@ struct Browser {
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32)>,
     split: Option<Split>,
+    /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
+    update: Option<(u32, String, String)>,
 }
 
 impl Browser {
@@ -456,6 +463,14 @@ impl Browser {
         self.sync_ui();
     }
 
+    /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
+    fn show_update(&self) {
+        if let Some((build, notes, _)) = &self.update {
+            let info = json!({ "build": build, "current": update::current_build(), "notes": notes });
+            let _ = self.ui.evaluate_script(&format!("window.showUpdate?.({info})"));
+        }
+    }
+
     fn focus_address(&self) {
         let _ = self.ui.focus();
         let _ = self.ui.evaluate_script("window.focusAddress()");
@@ -475,6 +490,16 @@ impl Browser {
             "ready" => {
                 self.sync_ui();
                 self.sync_geometry();
+                self.show_update();
+            }
+            // Update-Modal: „Jetzt installieren“ – Download und Austausch laufen im Hintergrund
+            "update_install" => {
+                if let Some((_, _, url)) = self.update.clone() {
+                    let proxy = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        let _ = proxy.send_event(UserEvent::UpdateDone(update::install(&url)));
+                    });
+                }
             }
             "new_tab" => self.new_tab(None, false),
             // Schutzschild im Adressfeld: Werbeblocker für die Seite des aktiven Tabs an/aus, dann neu laden
@@ -579,6 +604,15 @@ impl Browser {
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address") {
                     return self.command(&cmd, &Value::Null);
                 }
+            }
+            UserEvent::UpdateAvailable(build, notes, url) => {
+                self.update = Some((build, notes, url));
+                self.show_update();
+            }
+            // Erfolgreich: beenden, die neue Version wartet schon darauf
+            UserEvent::UpdateDone(Ok(())) => return false,
+            UserEvent::UpdateDone(Err(msg)) => {
+                let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
@@ -965,6 +999,8 @@ fn style_frame(window: &Window) {
 
 
 fn main() -> wry::Result<()> {
+    // Nach einem Update zuerst auf die alte Instanz warten – beide dürfen WebView2 nicht gleichzeitig öffnen.
+    let args = update::startup(std::env::args().skip(1).collect());
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -1018,10 +1054,28 @@ fn main() -> wry::Result<()> {
         })
         .build(&window)?;
 
-    let mut browser =
-        Browser { window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy, fullscreen: false, overlay: None, split: None, hover: None };
+    // Auf Updates prüfen: kurz nach dem Start, danach alle 6 Stunden (nur Builds aus GitHub Actions)
+    if update::current_build().is_some() {
+        let p_update = proxy.clone();
+        std::thread::spawn(move || {
+            let mut offered = 0;
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            loop {
+                if let Some(r) = update::check().filter(|r| r.build > offered) {
+                    offered = r.build;
+                    let _ = p_update.send_event(UserEvent::UpdateAvailable(r.build, r.notes, r.url));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+            }
+        });
+    }
+
+    let mut browser = Browser {
+        window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
+        fullscreen: false, overlay: None, split: None, hover: None, update: None,
+    };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
-    let start_urls: Vec<String> = std::env::args().skip(1).map(|a| resolve_input(&a)).collect();
+    let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
     if start_urls.is_empty() {
         browser.new_tab(None, false);
     }

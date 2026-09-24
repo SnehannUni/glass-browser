@@ -289,6 +289,39 @@
     padding: 6px; border-radius: 18px; backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
   #favs.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
+
+  /* ---------- Update-Modal ---------- */
+  #update {
+    position: fixed; z-index: 30; left: 50%; top: 50%; width: 360px; margin: -110px 0 0 -180px;
+    display: none; padding: 18px 18px 14px; border-radius: 22px;
+    backdrop-filter: blur(24px) saturate(1.5) brightness(.75);
+  }
+  #update.open { display: block; animation: pop-in .5s var(--spring); }
+  .up-head { display: flex; gap: 12px; align-items: center; }
+  .up-head > svg {
+    width: 36px; height: 36px; padding: 8px; border-radius: 12px; flex: none; color: #fff;
+    background: linear-gradient(180deg, #4ea3ff, #1f6fe8); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35);
+  }
+  #up-title { font-size: 15px; font-weight: 600; }
+  #up-version { margin-top: 2px; color: var(--label-2); font-size: 12px; }
+  #up-notes {
+    margin: 14px 0 0; max-height: 110px; overflow-y: auto; white-space: pre-line; line-height: 1.45;
+    color: var(--label-2); font-size: 12.5px;
+  }
+  #up-notes:empty { display: none; }
+  #up-error { margin-top: 10px; color: #ff8a80; font-size: 12.5px; line-height: 1.4; }
+  #up-error:empty { display: none; }
+  .up-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .up-btn {
+    height: 30px; padding: 0 14px; border-radius: 15px; font-weight: 600; font-size: 12.5px;
+    background: rgba(255, 255, 255, .1); transition: background-color .2s, transform .45s var(--spring);
+  }
+  .up-btn:is(:hover, .vh) { background: rgba(255, 255, 255, .18); }
+  .up-btn:active { transform: scale(1.06); transition-duration: .12s; }
+  .up-btn.primary { background: linear-gradient(180deg, #4ea3ff, #1f6fe8); color: #fff; }
+  .up-btn.primary:is(:hover, .vh) { background: linear-gradient(180deg, #62afff, #2a7af0); }
+  .up-btn:disabled { opacity: .6; transform: none; }
+  .up-btn .spinner { display: inline-block; vertical-align: -2px; margin-right: 7px; width: 12px; height: 12px; }
   .fv-head { padding: 6px 10px 6px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
   .fv { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 8px 0 10px; border-radius: 12px; }
   .fv:is(:hover, .vh) { background: rgba(255, 255, 255, .1); }
@@ -396,6 +429,23 @@
 
   <div id="suggest" class="glass"></div>
   <div id="favs" class="glass"></div>
+
+  <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
+  <div id="update" class="glass" role="dialog" aria-labelledby="up-title">
+    <div class="up-head">
+      <svg viewBox="0 0 16 16"><path d="M8 2.2v8.2M4.7 7.2 8 10.5l3.3-3.3"/><path d="M3 12.8h10"/></svg>
+      <div>
+        <div id="up-title">Neues Update verfügbar</div>
+        <div id="up-version"></div>
+      </div>
+    </div>
+    <div id="up-notes"></div>
+    <div id="up-error"></div>
+    <div class="up-actions">
+      <button class="up-btn" id="up-later">Später</button>
+      <button class="up-btn primary" id="up-install">Jetzt installieren</button>
+    </div>
+  </div>
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs id="filters"></defs></svg>
 
@@ -990,6 +1040,7 @@
   // Layoutwerte statt getBoundingClientRect, damit die Einblend-Animation nicht mitgemessen wird.
   function reportOverlay() {
     const open = suggestBox.classList.contains('open');
+    if (!open && upBox.classList.contains('open')) { reportUpdateOverlay(); return; } // das Modal bleibt ausgespart
     send('overlay', {
       rect: open ? { x: parseFloat(suggestBox.style.left), y: parseFloat(suggestBox.style.top),
                      w: suggestBox.offsetWidth, h: suggestBox.offsetHeight, r: 18 } : null,
@@ -1116,9 +1167,43 @@
     if (!favPanel.classList.contains('open')) return;
     favPanel.classList.remove('open');
     favBtn.classList.remove('open');
-    if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
+    if (upBox.classList.contains('open')) reportUpdateOverlay();
+    else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
   }
   const closeFavoritesSoon = () => { clearTimeout(favTimer); favTimer = setTimeout(closeFavorites, 250); };
+
+  // ---------- Update-Modal (Rust meldet ein neueres Release von GitHub) ----------
+  const upBox = $('update'), upInstall = $('up-install');
+  let upDismissed = 0; // „Später“ gilt bis zum nächsten Start bzw. bis eine noch neuere Version kommt
+  // Über einer Webseite liegt das Modal nur sichtbar, wenn Rust es aus deren Region ausspart
+  const reportUpdateOverlay = () => send('overlay', { rect: {
+    x: upBox.offsetLeft, y: upBox.offsetTop, w: upBox.offsetWidth, h: upBox.offsetHeight, r: 22 } });
+  window.showUpdate = ({ build, current, notes }) => {
+    if (build <= upDismissed || upBox.classList.contains('open')) return;
+    input.blur(); closeSuggest(); closeFavorites();
+    $('up-version').textContent = `Build ${build} ist da – du hast Build ${current}.`;
+    // Aus der Commit-Nachricht nur die ersten Zeilen (Mitautoren-Zeilen weglassen)
+    $('up-notes').textContent = notes.split('\n').filter((l) => !/^co-authored-by/i.test(l.trim())).join('\n').trim().slice(0, 600);
+    $('up-error').textContent = '';
+    upInstall.disabled = false; upInstall.textContent = 'Jetzt installieren';
+    upBox.classList.add('open');
+    requestAnimationFrame(reportUpdateOverlay);
+    upBox.dataset.build = build;
+  };
+  const closeUpdate = () => { upBox.classList.remove('open'); send('overlay', { rect: null }); };
+  $('up-later').addEventListener('click', () => { upDismissed = Number(upBox.dataset.build) || 0; closeUpdate(); });
+  upInstall.addEventListener('click', () => {
+    upInstall.disabled = true;
+    upInstall.innerHTML = '<span class="spinner"></span>Wird installiert …';
+    $('up-error').textContent = '';
+    send('update_install');
+  });
+  window.updateFailed = (msg) => {
+    upInstall.disabled = false; upInstall.textContent = 'Erneut versuchen';
+    $('up-error').textContent = `Update fehlgeschlagen: ${msg}`;
+    requestAnimationFrame(reportUpdateOverlay);
+  };
+  addEventListener('resize', () => { if (upBox.classList.contains('open')) reportUpdateOverlay(); });
   favBtn.addEventListener('pointerenter', openFavorites);
   favBtn.addEventListener('pointerleave', closeFavoritesSoon);
   favBtn.addEventListener('click', () => (favPanel.classList.contains('open') ? closeFavorites() : openFavorites()));

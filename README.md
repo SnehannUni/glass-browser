@@ -39,3 +39,15 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `build.rs` | bettet das Icon und die Programminfos in die Exe ein |
 
 Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter `%LOCALAPPDATA%\GlassBrowser`.
+
+## Updates
+
+Jeder Push auf `main` baut über GitHub Actions (`.github/workflows/release.yml`) die fertige `Glass.exe` und
+veröffentlicht sie als Release `build-<Nummer>`. Glass prüft beim Start und danach alle 6 Stunden das neueste
+Release und bietet neuere Versionen in einem Update-Modal an; „Jetzt installieren“ tauscht die Exe aus und
+startet Glass neu. Lokal gebaute Versionen haben keine Build-Nummer und prüfen nicht auf Updates.
+
+## Lizenz
+
+MIT – siehe `LICENSE`. Die Lizenzen der verwendeten Bibliotheken liegen jedem Release als
+`THIRD_PARTY_LICENSES.html` bei (erzeugt mit `cargo about`).

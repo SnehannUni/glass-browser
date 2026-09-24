@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Glass – Lizenzen der Bibliotheken</title>
+<style>
+  body { font: 14px/1.5 "Segoe UI", system-ui, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h2 { margin-top: 36px; } li { margin: 2px 0; }
+  pre { white-space: pre-wrap; background: #f5f5f7; padding: 14px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Glass – Lizenzen der verwendeten Bibliotheken</h1>
+<p>Glass selbst steht unter der MIT-Lizenz (siehe LICENSE). Diese Bibliotheken sind in <code>Glass.exe</code> enthalten:</p>
+<ul>
+{{#each overview}}  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}</ul>
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p>Verwendet von:
+{{#each used_by}}  <a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a>{{#unless @last}},{{/unless}}
+{{/each}}</p>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>
