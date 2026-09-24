@@ -8,9 +8,9 @@
     --chrome: 42px;   /* kommt als chromeHeight aus main.rs */
     --margin: 4px;    /* = MARGIN in main.rs */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
-    --label: rgba(255, 255, 255, .92);
-    --label-2: rgba(235, 235, 245, .6);
-    --label-3: rgba(235, 235, 245, .32);
+    --label: rgba(255, 255, 255, .97);
+    --label-2: rgba(255, 255, 255, .82);
+    --label-3: rgba(255, 255, 255, .6);
     --blue: #0a84ff;
     --violet: #bf9dff; /* Kennfarbe für privates Surfen */
     --spring: cubic-bezier(.32, 1.5, .44, 1);
@@ -27,7 +27,18 @@
     height: 100%; overflow: hidden; background: transparent; color: var(--label);
     font: 13px/1.25 var(--font); letter-spacing: -.01em;
     user-select: none; -webkit-user-select: none; -webkit-font-smoothing: antialiased;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, .35); /* lesbar auf hellem Wallpaper, ohne Flächen-Tönung */
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .45); /* lesbar auf hellem Wallpaper, ohne Flächen-Tönung */
+  }
+  /* Liegt unter einer Glasfläche sehr heller Hintergrund, schaltet updateInk() sie auf dunkle Schrift um */
+  .ink-dark {
+    --label: rgba(14, 16, 24, .94); --label-2: rgba(14, 16, 24, .76); --label-3: rgba(14, 16, 24, .56);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, .35);
+  }
+  .ink-dark svg { filter: drop-shadow(0 1px 1px rgba(255, 255, 255, .3)); }
+  /* Adressfeld in dunkler Leiste über hellem Grund – oder umgekehrt: eigene Wahl statt der geerbten */
+  .ink-light {
+    --label: rgba(255, 255, 255, .97); --label-2: rgba(255, 255, 255, .82); --label-3: rgba(255, 255, 255, .6);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .45);
   }
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
   /* line-height: normal – sonst schneidet das Feld die Unterlängen (g, p, y) ab */
@@ -624,6 +635,7 @@
     ctx.filter = `blur(${4 * dpr}px) saturate(1.05) brightness(.72)`;
     ctx.drawImage(wallImg, (W - iw) / 2 - pad, (H - ih) / 2 - pad, iw + 2 * pad, ih + 2 * pad);
     wall.classList.add('ready');
+    scheduleInk();
   }
   function placeWall() {
     if (geo) wall.style.transform = `translate3d(${geo.mx - geo.x}px, ${geo.my - geo.y}px, 0)`;
@@ -632,7 +644,50 @@
     geo = g;
     bakeWall();
     placeWall();
+    scheduleInk();
   };
+
+  // ---------- Schriftfarbe je nach Hintergrund ----------
+  // Glass zeichnet das Wallpaper selbst hinter das Glas – also lässt sich messen, wie hell es unter jeder
+  // Glasfläche ist. Wäre dunkle Schrift dort besser lesbar als helle, bekommt die Fläche .ink-dark.
+  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#private-note'];
+  const probe = document.createElement('canvas');
+  probe.width = 24; probe.height = 8;
+  const probeCtx = probe.getContext('2d', { willReadFrequently: true });
+  const linear = (v) => (v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+  // Mittlere relative Leuchtdichte hinter dem Element – so, wie das Glas sie zeigt (abgedunkelt, leicht aufgehellt)
+  function backdropLuminance(el) {
+    const r = el.getBoundingClientRect(), c = wall.getBoundingClientRect();
+    if (!r.width || !r.height || !c.width || !wall.classList.contains('ready')) return null;
+    const k = wall.width / c.width;
+    probeCtx.clearRect(0, 0, probe.width, probe.height);
+    probeCtx.drawImage(wall, (r.left - c.left) * k, (r.top - c.top) * k, r.width * k, r.height * k, 0, 0, probe.width, probe.height);
+    const d = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const [R, G, B] = [d[i], d[i + 1], d[i + 2]].map((v) => linear((v * .82 * .92 + 255 * .08) / 255));
+      sum += .2126 * R + .7152 * G + .0722 * B;
+    }
+    return sum / (d.length / 4);
+  }
+  // Ab etwa 0,2 ist dunkle Schrift kontrastreicher als weiße; Umschaltpunkte auseinander, damit nichts flackert
+  function updateInk() {
+    for (const sel of INK) {
+      const el = document.querySelector(sel);
+      if (!el || !el.offsetWidth) continue;
+      const lum = backdropLuminance(el);
+      if (lum == null) continue;
+      const dark = el.classList.contains('ink-dark') ? lum > .17 : lum > .22;
+      el.classList.toggle('ink-dark', dark);
+      // das Adressfeld steckt in der Leiste: eigene Wahl auch dann, wenn die Leiste anders entschieden hat
+      if (sel === '#address') el.classList.toggle('ink-light', !dark);
+    }
+  }
+  let inkFrame = 0;
+  function scheduleInk() {
+    if (!inkFrame) inkFrame = requestAnimationFrame(() => { inkFrame = 0; updateInk(); });
+  }
+  addEventListener('resize', scheduleInk);
 
   // ---------- Tabs ----------
   function makeTab(tab) {
@@ -873,6 +928,7 @@
     address.classList.remove('resizing');
     lens(address);
     placeSuggest();
+    scheduleInk();
   };
   address.addEventListener('transitionend', slideDone);
   address.addEventListener('transitioncancel', slideDone);
@@ -1040,6 +1096,7 @@
     Object.assign(suggestBox.style, { left: `${r.left}px`, top: `${r.bottom + 8}px`, width: `${r.width}px` });
     suggestBox.classList.add('open');
     reportOverlay();
+    scheduleInk();
   }
 
   function markSelected() {
@@ -1163,6 +1220,7 @@
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
     send('overlay', { rect: { x: parseFloat(favPanel.style.left), y: parseFloat(favPanel.style.top),
                               w: favPanel.offsetWidth, h: favPanel.offsetHeight, r: 18 } });
+    scheduleInk();
   }
   function openFavorites() {
     clearTimeout(favTimer);
@@ -1248,6 +1306,8 @@
     document.body.classList.toggle('searching', !start && editing());
     const to = address.getBoundingClientRect();
     requestAnimationFrame(() => { address.style.transition = ''; });
+    scheduleInk();
+    setTimeout(scheduleInk, 700);
     if (!from.width) return;
     address.animate([
       { transformOrigin: '0 0', transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})` },
