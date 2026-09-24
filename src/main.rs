@@ -8,8 +8,8 @@ use std::{cell::RefCell, rc::Rc};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
-    platform::windows::{WindowBuilderExtWindows, WindowExtWindows},
-    window::{ResizeDirection, Theme, Window, WindowBuilder},
+    platform::windows::{IconExtWindows, WindowBuilderExtWindows, WindowExtWindows},
+    window::{Icon, ResizeDirection, Theme, Window, WindowBuilder},
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
@@ -968,8 +968,12 @@ fn main() -> wry::Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
+    // Icon aus der Exe (Ressource 1, eingebettet von build.rs) – Windows wählt je Stelle die passende Größe
+    let icon = |px: u32| Icon::from_resource(1, Some(tao::dpi::PhysicalSize::new(px, px))).ok();
     let window = WindowBuilder::new()
         .with_title("Glass")
+        .with_window_icon(icon(32))
+        .with_taskbar_icon(icon(256))
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 820.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(480.0, 320.0))
         .with_decorations(false)

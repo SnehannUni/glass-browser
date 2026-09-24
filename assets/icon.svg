@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Glass-Logo: gläserner Planet mit Ring (Variante H, aufgehellt). Das Glas entsteht nur durch Licht an den Kanten;
+       der vordere Ring stanzt eine Lücke in die Kugel. --><defs>
+  <linearGradient id="ball" x1=".3" y1="0" x2=".7" y2="1"><stop offset="0" stop-color="#5fadff"/><stop offset="1" stop-color="#2b62e6"/></linearGradient>
+  <!-- Brechung: zum Rand hin heller -->
+  <radialGradient id="edge" cx=".5" cy=".5" r=".5"><stop offset=".72" stop-color="#fff" stop-opacity="0"/><stop offset=".95" stop-color="#fff" stop-opacity=".16"/><stop offset="1" stop-color="#fff" stop-opacity=".34"/></radialGradient>
+  <!-- Licht, das durch die Kugel fällt und unten wieder austritt -->
+  <radialGradient id="glow" cx=".5" cy=".92" r=".55"><stop offset="0" stop-color="#b3ecff" stop-opacity=".75"/><stop offset="1" stop-color="#b3ecff" stop-opacity="0"/></radialGradient>
+  <!-- Lichtkante: oben links hell, Mitte aus, unten rechts ein Rest -->
+  <linearGradient id="rim" x1=".15" y1=".05" x2=".85" y2=".95"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset=".42" stop-color="#fff" stop-opacity=".08"/><stop offset=".72" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".7"/></linearGradient>
+  <linearGradient id="crescent" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <clipPath id="sphere"><circle cx="128" cy="128" r="110"/></clipPath>
+  <clipPath id="back"><rect x="-60" y="-60" width="376" height="188"/></clipPath>
+  <clipPath id="front"><rect x="-60" y="128" width="376" height="188"/></clipPath>
+  <!-- Lücke, die der vordere Ring in die Kugel stanzt -->
+  <mask id="gap" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><rect width="256" height="256" fill="#fff"/>
+    <g transform="rotate(-30 128 128)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#000" stroke-width="24" clip-path="url(#front)" /></g></mask>
+  <!-- schmale Glanzsichel oben: Kugel minus nach unten versetzte Kugel -->
+  <mask id="sickle" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><circle cx="128" cy="128" r="106" fill="#fff"/><circle cx="128" cy="146" r="108" fill="#000"/></mask>
+  </defs>
+
+  <!-- Ring hinten -->
+  <g transform="rotate(-30 128 128)">
+    <ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#8cc4ff" stroke-width="12" clip-path="url(#back)" stroke-opacity="0.5"/>
+    <g transform="translate(0 -4.5)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.4" clip-path="url(#back)" stroke-opacity=".45"/></g>
+  </g>
+
+  <!-- Kugel -->
+  <g mask="url(#gap)">
+    <circle cx="128" cy="128" r="110" fill="url(#ball)"/>
+    <g clip-path="url(#sphere)">
+      <circle cx="128" cy="128" r="110" fill="url(#glow)"/>
+      <circle cx="128" cy="128" r="110" fill="url(#edge)"/>
+      <rect x="18" y="18" width="220" height="80" fill="url(#crescent)" mask="url(#sickle)"/>
+    </g>
+    <circle cx="128" cy="128" r="109" fill="none" stroke="url(#rim)" stroke-width="2.5"/>
+  </g>
+
+  <!-- Ring vorne: Glasröhre mit Lichtkanten oben und unten -->
+  <g transform="rotate(-30 128 128)">
+    <ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#8cc4ff" stroke-width="12" clip-path="url(#front)" stroke-opacity="0.7"/>
+    <g transform="translate(0 -4.6)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.6" clip-path="url(#front)" stroke-opacity=".95"/></g>
+    <g transform="translate(0 4.6)"><ellipse cx="128" cy="128" rx="130" ry="30" fill="none" stroke="#fff" stroke-width="1.2" clip-path="url(#front)" stroke-opacity=".45"/></g>
+  </g>
+</svg>

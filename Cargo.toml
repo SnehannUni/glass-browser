@@ -21,3 +21,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[build-dependencies]
+# Icon und Versionsinfos in die Exe einbetten (build.rs)
+winresource = "0.1"
