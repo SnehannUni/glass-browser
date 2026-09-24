@@ -188,8 +188,8 @@
     transform: rotate(calc(var(--a) - 90deg)) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--rot)));
     transition: transform .7s var(--spring), background-color .2s;
   }
-  /* der gewählte liegt oben auf dem Stapel: die anderen fahren unter ihm heraus und wieder hinein */
-  #wheel .slot.on { z-index: 1; background-color: rgba(255, 255, 255, .22); }
+  /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
+  #wheel .slot.on { background-color: rgba(255, 255, 255, .22); }
   #wheel.instant :is(.spin, .slot) { transition: none; }
   #wheel .slot img { width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
   #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .14); }
@@ -1183,10 +1183,13 @@
   });
   // Auf den gewählten Anbieter drehen – immer im Uhrzeigersinn
   function turnWheel() {
-    const target = -ENGINES.indexOf(engine) * STEP;
+    const n = ENGINES.length, sel = ENGINES.indexOf(engine), target = -sel * STEP;
     wheelRot += (((target - wheelRot) % 360) + 360) % 360;
     wheel.style.setProperty('--rot', `${wheelRot}deg`);
-    slots.forEach((s, i) => s.classList.toggle('on', ENGINES[i] === engine));
+    slots.forEach((s, i) => {
+      s.classList.toggle('on', i === sel);
+      s.style.zIndex = n - Math.min((i - sel + n) % n, (sel - i + n) % n);
+    });
   }
   function openWheel() {
     closeSuggest();
@@ -1216,8 +1219,9 @@
       if (!k) return null;
       const r = s.getBoundingClientRect();
       const dx = bx - (r.left + r.width / 2), dy = by - (r.top + r.height / 2);
-      const home = { translate: `${dx * cos - dy * sin}px ${dx * sin + dy * cos}px`, scale: .5, opacity: 0 };
-      const place = { translate: '0px 0px', scale: 1, opacity: 1 };
+      // eingefahren liegt jeder Kreis voll sichtbar unter dem gewählten – ein Stapel, kein Ausblenden
+      const home = { translate: `${dx * cos - dy * sin}px ${dx * sin + dy * cos}px` };
+      const place = { translate: '0px 0px' };
       return out
         ? s.animate([home, place], { duration: 520, delay: (k - 1) * 45, easing: 'cubic-bezier(.3, 1.25, .45, 1)', fill: 'backwards' }).finished
         : s.animate([place, home], { duration: 230, delay: (n / 2 - k) * 30, easing: 'cubic-bezier(.4, 0, .7, .2)', fill: 'forwards' }).finished;
