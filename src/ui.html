@@ -9,8 +9,8 @@
     --margin: 4px;    /* = MARGIN in main.rs */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
     --label: rgba(255, 255, 255, .92);
-    --label-2: rgba(240, 240, 248, .8);  /* kräftig genug auch auf hellem Wallpaper */
-    --label-3: rgba(235, 235, 245, .55);
+    --label-2: rgba(235, 235, 245, .6);
+    --label-3: rgba(235, 235, 245, .32);
     --blue: #0a84ff;
     --violet: #bf9dff; /* Kennfarbe für privates Surfen */
     --spring: cubic-bezier(.32, 1.5, .44, 1);
@@ -48,7 +48,7 @@
     position: relative; isolation: isolate;
     background: linear-gradient(180deg, rgba(255, 255, 255, .11), rgba(255, 255, 255, .04));
     /* Ohne JS-Linse; lens() ersetzt das durch Lichtbrechung + Blur */
-    backdrop-filter: blur(6px) saturate(1.5) brightness(.7);
+    backdrop-filter: blur(6px) saturate(1.5) brightness(.82);
     box-shadow:
       inset 0 0 0 .5px rgba(255, 255, 255, .14),
       inset 0 -10px 18px -12px rgba(255, 255, 255, .16),
@@ -256,9 +256,8 @@
   /* ---------- Suchvorschläge ---------- */
   #suggest {
     position: fixed; z-index: 20; display: none; padding: 6px; border-radius: 18px;
-    /* stärker verwischt und dunkler getönt als die übrigen Gläser: viel Text muss auch auf hellem Wallpaper lesbar sein */
-    background: linear-gradient(180deg, rgba(24, 26, 36, .38), rgba(18, 20, 28, .46));
-    backdrop-filter: blur(22px) saturate(1.3) brightness(.62);
+    /* gleiches Glas wie überall, aber stärker verwischt (ohne Linse), damit viel Text ruhig lesbar bleibt */
+    backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
   #suggest.open { display: block; animation: drop-in .4s var(--spring); }
   @keyframes drop-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
@@ -287,9 +286,7 @@
   /* Ausklappende Liste der Favoriten */
   #favs {
     position: fixed; z-index: 20; display: none; width: 320px; max-height: 60vh; overflow-y: auto;
-    padding: 6px; border-radius: 18px;
-    background: linear-gradient(180deg, rgba(24, 26, 36, .38), rgba(18, 20, 28, .46));
-    backdrop-filter: blur(22px) saturate(1.3) brightness(.62);
+    padding: 6px; border-radius: 18px; backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
   #favs.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
 
@@ -571,7 +568,7 @@
     const old = el.dataset.lensId && document.getElementById(el.dataset.lensId);
     el.dataset.lensId = id;
     // leicht abdunkeln statt aufhellen: Text im Glas bleibt auf jedem Wallpaper lesbar
-    el.style.backdropFilter = `url(#${id}) blur(3px) saturate(1.5) brightness(.7)`;
+    el.style.backdropFilter = `url(#${id}) blur(3px) saturate(1.5) brightness(.82)`;
     // alten Filter erst entfernen, wenn der neue sicher gezeichnet ist
     if (old) requestAnimationFrame(() => requestAnimationFrame(() => old.remove()));
   }
