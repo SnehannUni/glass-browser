@@ -31,7 +31,19 @@ const MARGIN: f64 = 4.0;
 const CONTENT_RADIUS: f64 = 4.0;
 /// Abstand zwischen den beiden Seiten einer geteilten Ansicht – zugleich Griff zum Verschieben.
 const SPLIT_GAP: f64 = 4.0;
-const SEARCH_URL: &str = "https://www.google.com/search?q=";
+/// Suchanbieter im Adressfeld (Kennung aus ui.html → Adresse, an die der Suchbegriff angehängt wird).
+/// Bei den KI-Chats übernimmt die Seite den Text aus `?q=` und schickt ihn direkt ab.
+const SEARCH_ENGINES: &[(&str, &str)] = &[
+    ("google", "https://www.google.com/search?q="),
+    ("chatgpt", "https://chatgpt.com/?q="),
+    ("claude", "https://claude.ai/new?q="),
+    ("perplexity", "https://www.perplexity.ai/search?q="),
+    ("copilot", "https://copilot.microsoft.com/?q="),
+];
+
+fn search_url(engine: &str) -> &'static str {
+    SEARCH_ENGINES.iter().find(|(id, _)| *id == engine).unwrap_or(&SEARCH_ENGINES[0]).1
+}
 
 enum UserEvent {
     Ui(String),
@@ -537,7 +549,10 @@ impl Browser {
             }
             "next_tab" => self.cycle(1),
             "prev_tab" => self.cycle(-1),
-            "navigate" if !value.trim().is_empty() => self.navigate_to(resolve_input(value)),
+            "navigate" if !value.trim().is_empty() => {
+                let engine = msg["engine"].as_str().unwrap_or("google");
+                self.navigate_to(resolve_input(value, search_url(engine)));
+            }
             "back" => self.go_back(),
             "forward" => self.go_forward(),
             "reload" => {
@@ -879,7 +894,7 @@ fn set_adblock_flag(webview: &WebView, slot: &ScriptSlot) {
 }
 
 /// Adresse, Hostname oder Suchbegriff → URL.
-fn resolve_input(input: &str) -> String {
+fn resolve_input(input: &str, search: &str) -> String {
     let s = input.trim();
     if s.contains("://") || s.starts_with("about:") || s.starts_with("data:") {
         return s.to_owned();
@@ -893,7 +908,7 @@ fn resolve_input(input: &str) -> String {
             return format!("https://{s}");
         }
     }
-    format!("{SEARCH_URL}{}", url_encode(s))
+    format!("{search}{}", url_encode(s))
 }
 
 fn url_encode(s: &str) -> String {
@@ -1075,7 +1090,7 @@ fn main() -> wry::Result<()> {
         fullscreen: false, overlay: None, split: None, hover: None, update: None,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
-    let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
+    let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a, search_url("google"))).collect();
     if start_urls.is_empty() {
         browser.new_tab(None, false);
     }
