@@ -171,6 +171,34 @@
   body.start .engine { width: 46px; height: 46px; }
   body.start .engine img { width: 24px; height: 24px; border-radius: 5px; }
   .engine-row .check { margin-left: auto; color: var(--blue); }
+  /* Startbildschirm: Aus dem Logo klappt ein Kreis aus Anbietern nach rechts auf, jeder in seiner eigenen
+     Glaskugel. Der gewählte sitzt links an der Stelle des Knopfs; wählt man einen anderen, dreht er sich dorthin. */
+  #wheel {
+    --slot: 46px; --orbit: 78px; --rot: 0deg; /* --orbit = WHEEL_ORBIT im Skript */
+    position: fixed; z-index: 11; width: calc(2 * var(--orbit) + var(--slot) + 10px); aspect-ratio: 1;
+    display: none; pointer-events: none;
+  }
+  #wheel.open { display: block; }
+  body.wheel-open #btn-engine { opacity: 0; }
+  /* Knopf und oberster Kreis blenden weich ineinander über (siehe openWheel/closeWheel) */
+  body.start #btn-engine { transition: transform .45s var(--spring), background-color .2s, opacity .18s; }
+  #wheel .spin { position: absolute; inset: 0; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
+  @property --off { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  #wheel .slot {
+    position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
+    border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
+    /* auf die Umlaufbahn setzen (Platz 0 links, --off = Aus-/Eindrehen), dann zurückdrehen: die Logos bleiben aufrecht */
+    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot)));
+    transition: transform .7s var(--spring), background-color .2s;
+    /* ohne Schlagschatten: gestapelt würden sich die Schatten aufaddieren */
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 -10px 18px -12px rgba(255, 255, 255, .16);
+  }
+  /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
+  #wheel .slot.on { background-color: rgba(255, 255, 255, .22); }
+  #wheel.instant :is(.spin, .slot) { transition: none; }
+  #wheel .slot img { width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
+  #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .14); }
+  #wheel .slot:active img { transform: scale(1.15); }
   /* Werbeblocker: Schild + Anzahl blockierter Anfragen; ausgeschaltet durchgestrichen und blass */
   .shield { height: 24px; min-width: 28px; padding: 0 7px; display: flex; gap: 4px; color: var(--label-2); font-size: 11px;
             font-variant-numeric: tabular-nums; }
@@ -461,6 +489,7 @@
   <div id="dropzone" class="glass"></div>
 
   <div id="suggest" class="glass"></div>
+  <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
@@ -991,12 +1020,14 @@
     else if (!url) refreshSuggest('');
   });
   input.addEventListener('blur', () => {
+    closeWheel();
     closeSuggest();
     slide(false);
     renderAddress();
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && wheel.classList.contains('open')) closeWheel();
+    else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
     } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && suggestions.length) {
       e.preventDefault();
@@ -1093,7 +1124,7 @@
       } catch { /* offline: einfach keine Vorschläge */ }
     }, isRelated ? 0 : 90);
   }
-  input.addEventListener('input', () => refreshSuggest(input.value));
+  input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); });
 
   // Auswahl des Suchanbieters: erscheint an der Stelle der Vorschläge (gleiche Glasliste, gleiche Aussparung
   // über Webseiten). Tippen oder eine Auswahl bringt die Vorschläge zurück.
@@ -1128,9 +1159,129 @@
   engineBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation(); // Feld bleibt fokussiert (sonst führe es in der Leiste wieder ein)
     if (!editing()) window.focusAddress();
-    if (engineMenu && suggestBox.classList.contains('open')) { engineMenu = false; refreshSuggest(input.value); }
+    if (document.body.classList.contains('start')) { if (wheel.classList.contains('open')) closeWheel(); else openWheel(); }
+    else if (engineMenu && suggestBox.classList.contains('open')) { engineMenu = false; refreshSuggest(input.value); }
     else showEngineMenu();
   });
+
+  // Startbildschirm: Anbieter-Rad statt Liste. Es klappt nach rechts auf, der gewählte Anbieter sitzt links am Knopf.
+  const wheel = $('wheel'), wheelSpin = wheel.querySelector('.spin');
+  const WHEEL_ORBIT = 78, STEP = 360 / ENGINES.length;
+  let wheelRot = 0, wheelTimer = 0;
+  const slots = ENGINES.map((e, i) => {
+    const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'glass slot';
+    slot.title = e.name;
+    slot.style.setProperty('--a', `${i * STEP}deg`);
+    slot.append(engineImg(e));
+    slot.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault(); ev.stopPropagation(); // Fokus bleibt im Feld
+      closeWheel(e === engine ? undefined : e); // der neue dreht sich beim Eindrehen über den bisherigen
+    });
+    wheelSpin.append(slot);
+    return slot;
+  });
+  // Auf den gewählten Anbieter drehen – immer im Uhrzeigersinn
+  function turnWheel() {
+    const n = ENGINES.length, sel = ENGINES.indexOf(engine), target = -sel * STEP;
+    wheelRot += (((target - wheelRot) % 360) + 360) % 360;
+    wheel.style.setProperty('--rot', `${wheelRot}deg`);
+    slots.forEach((s, i) => {
+      s.classList.toggle('on', i === sel);
+      s.style.zIndex = n - ((i - sel + n) % n);
+    });
+  }
+  function openWheel() {
+    closeSuggest();
+    clearTimeout(wheelTimer);
+    slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
+    delete wheel.dataset.closing;
+    wheel.classList.add('open', 'instant');
+    // Mittelpunkt des Rads eine Umlaufbahn rechts vom Knopf: so liegt der linke Platz genau auf ihm
+    const r = layoutRect(engineBtn);
+    const cx = r.left + engineBtn.offsetWidth / 2 + WHEEL_ORBIT, cy = r.top + engineBtn.offsetHeight / 2;
+    Object.assign(wheel.style, { left: `${cx - wheel.offsetWidth / 2}px`, top: `${cy - wheel.offsetHeight / 2}px` });
+    turnWheel();
+    requestAnimationFrame(() => requestAnimationFrame(() => wheel.classList.remove('instant')));
+    document.body.classList.add('wheel-open');
+    slots[ENGINES.indexOf(engine)].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180 });
+    moveSlots(true);
+    if (!maskFrame) maskFrame = requestAnimationFrame(maskSlots);
+  }
+  // Die Kreise sind aus Glas, also durchscheinend: Wo einer über einem anderen liegt, wäre die Fläche doppelt so
+  // dicht. Darum spart jeder Kreis genau den Teil aus, den ein höher liegender verdeckt – ein Stapel wirkt dann
+  // wie ein einzelner Kreis, auch während die anderen darunter hervor- oder hineindrehen.
+  let maskFrame = 0;
+  function maskSlots() {
+    maskFrame = 0;
+    if (!wheel.classList.contains('open')) { slots.forEach((s) => { s.style.mask = ''; }); return; }
+    const rects = slots.map((s) => s.getBoundingClientRect());
+    slots.forEach((s, i) => {
+      const r = rects[i], half = r.width / 2, z = +s.style.zIndex;
+      const holes = [];
+      rects.forEach((q, k) => {
+        const dx = q.left - r.left, dy = q.top - r.top;
+        if (+slots[k].style.zIndex <= z || Math.hypot(dx, dy) >= r.width) return;
+        holes.push(`radial-gradient(circle at ${half + dx}px ${half + dy}px, transparent ${half - .25}px, #000 ${half + .5}px)`);
+      });
+      s.style.mask = holes.join(', ');
+      s.style.maskComposite = 'intersect';
+    });
+    maskFrame = requestAnimationFrame(maskSlots);
+  }
+  // Aus- und Eindrehen in einem Schwung, beides im Uhrzeigersinn: Das Rad dreht sich als Ganzes.
+  // Öffnen: die Kreise lösen sich nacheinander vom Stapel unter dem gewählten, der am weitesten reist zuerst.
+  // Schließen: jeder Kreis, der links am Knopf ankommt, bleibt dort liegen – unter dem bisherigen Anbieter,
+  // nur ein neu gewählter (`pick`) legt sich obendrauf.
+  function moveSlots(out, pick = -1) {
+    const n = ENGINES.length, from = ENGINES.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
+    return Promise.all(slots.map((s, i) => {
+      const j = (i - from + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
+      s.style.zIndex = i === pick ? n + 1 : n - j;
+      if (pick >= 0) s.classList.toggle('on', i === pick);
+      if (!j) return null;
+      const deg = (k) => ({ '--off': `${k * STEP}deg` });
+      if (out) {
+        return s.animate([{ ...deg(-j), offset: 0 }, { ...deg(-j), offset: (last - j) / last }, { ...deg(0), offset: 1 }],
+          { duration: 750, easing: 'cubic-bezier(.3, 1.1, .45, 1)', fill: 'backwards' }).finished;
+      }
+      const d = n - j; // so viele Plätze bis zum Knopf
+      return s.animate([{ ...deg(0), offset: 0 }, { ...deg(d), offset: d / last }, { ...deg(d), offset: 1 }],
+        { duration: 650, easing: 'cubic-bezier(.45, 0, .4, 1)', fill: 'forwards' }).finished;
+    }));
+  }
+  function closeWheel(pick) {
+    clearTimeout(wheelTimer);
+    if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
+    wheel.dataset.closing = '1';
+    const moving = moveSlots(false, pick ? ENGINES.indexOf(pick) : -1);
+    if (pick) setEngine(pick);
+    // Knopf erst zeigen, wenn alles eingedreht ist – sonst läge er schon mit dem neuen Logo unter dem Stapel
+    moving.then(() => {
+      document.body.classList.remove('wheel-open');
+      return slots[ENGINES.indexOf(engine)].animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }).finished;
+    }).then(() => {
+      delete wheel.dataset.closing;
+      wheel.classList.remove('open');
+      slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
+      if (editing() && !suggestBox.classList.contains('open')) refreshSuggest(input.value);
+    }, () => {}); // abgebrochen, weil das Rad gleich wieder aufgeht
+  }
+  // Mausrad über dem Rad: einen Platz im Uhrzeigersinn weiterdrehen (von unten rückt der nächste nach)
+  wheel.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    clearTimeout(wheelTimer);
+    const n = ENGINES.length, i = ENGINES.indexOf(engine);
+    if (!e.deltaY) return;
+    setEngine(ENGINES[(i - 1 + n) % n]);
+    turnWheel();
+  }, { passive: false });
+  wheel.addEventListener('pointerdown', (e) => e.preventDefault()); // Klick auf das Rad: Fokus bleibt im Feld
+  // Klick daneben schließt das Rad
+  document.addEventListener('pointerdown', (e) => {
+    if (wheel.classList.contains('open') && !wheel.contains(e.target) && !engineBtn.contains(e.target)) closeWheel();
+  }, true);
   renderEngine();
 
   const SECTION = { history: 'Zuletzt gesucht', suggest: 'Vorschläge', related: 'Ähnliche Suchen' };
@@ -1399,6 +1550,7 @@
   // FLIP: alte Position messen, Layout umschalten, dann von der alten Form zur neuen federn.
   function setStartMode(start) {
     if (document.body.classList.contains('start') === start) return;
+    closeWheel();
     const from = address.getBoundingClientRect();
     // Größe springt sofort (die Bewegung macht die Animation unten) – sonst liefe zusätzlich der Breiten-Übergang
     address.style.transition = 'none';
