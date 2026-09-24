@@ -31,6 +31,8 @@ const UI_URL: &str = "http://glass.localhost/";
 const TOOLBAR_HEIGHT: f64 = 42.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
+/// So lange gleiten die Seiten, wenn die Leiste oben aus- oder einfährt (gleich wie --chrome-slide in ui.html).
+const CHROME_SLIDE: std::time::Duration = std::time::Duration::from_millis(380);
 /// Konzentrisch zur Fensterecke (--radius = 8 px in ui.html, wie Windows 11): 8 − MARGIN.
 const CONTENT_RADIUS: f64 = 4.0;
 /// Abstand zwischen den beiden Seiten einer geteilten Ansicht – zugleich Griff zum Verschieben.
@@ -98,6 +100,22 @@ struct Split {
 /// Logisches Rechteck (x, y, Breite, Höhe).
 type Area = [f64; 4];
 
+/// Kurve der Gleitbewegung, dieselbe wie `cubic-bezier(.4, 0, .2, 1)` für --chrome-slide in ui.html:
+/// sanft anfahren, weich auslaufen. Zu Zeitanteil `t` den Weganteil suchen (Newton auf der x-Kurve).
+fn chrome_ease(t: f64) -> f64 {
+    let (x1, y1, x2, y2) = (0.4, 0.0, 0.2, 1.0);
+    let bezier = |a: f64, b: f64, s: f64| 3.0 * a * s * (1.0 - s).powi(2) + 3.0 * b * s * s * (1.0 - s) + s.powi(3);
+    let mut s = t;
+    for _ in 0..8 {
+        let dx = 3.0 * x1 * (1.0 - s).powi(2) + 6.0 * (x2 - x1) * s * (1.0 - s) + 3.0 * (1.0 - x2) * s * s;
+        if dx.abs() < 1e-6 {
+            break;
+        }
+        s = (s - (bezier(x1, x2, s) - t) / dx).clamp(0.0, 1.0);
+    }
+    bezier(y1, y2, s)
+}
+
 fn to_rect([x, y, w, h]: Area) -> Rect {
     Rect { position: LogicalPosition::new(x, y).into(), size: LogicalSize::new(w.max(0.0), h.max(0.0)).into() }
 }
@@ -151,6 +169,10 @@ struct Browser {
     resize_preview: Option<(u64, bool)>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
+    /// Die Oberfläche hat die Leiste oben ausgeblendet: Webseiten reichen dann bis an den oberen Rand.
+    chrome_hidden: bool,
+    /// Die Seiten gleiten gerade nach oben oder unten: Beginn, Oberkante vorher und nachher.
+    chrome_slide: Option<(std::time::Instant, f64, f64)>,
 }
 
 impl Browser {
@@ -163,11 +185,43 @@ impl Browser {
         TOOLBAR_HEIGHT
     }
 
-    /// Fläche für Webseiten unter der Toolbar.
-    fn content_area(&self) -> Area {
+    /// Fläche für Webseiten unter der Toolbar. Ist die Leiste ausgeblendet, bleibt oben nur der Rand frei –
+    /// fährt die Maus dorthin, holt die Oberfläche die Leiste zurück.
+    fn resting_area(&self) -> Area {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-        let top = self.chrome_height();
+        let top = if self.chrome_hidden { MARGIN } else { self.chrome_height() };
         [MARGIN, top, size.width - 2.0 * MARGIN, size.height - top - MARGIN]
+    }
+
+    /// Wie `resting_area`, nur mitten im Gleiten: Dann hat die Seite schon ihre volle Höhe und wird nur
+    /// verschoben – so muss Chromium nicht in jedem Bild neu umbrechen. Was unten übersteht, schneidet das Fenster ab.
+    fn content_area(&self) -> Area {
+        let Some((start, from, to)) = self.chrome_slide else { return self.resting_area() };
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let t = (start.elapsed().as_secs_f64() / CHROME_SLIDE.as_secs_f64()).min(1.0);
+        // Nicht auf ganze Pixel runden: wry rechnet in physische Pixel um, sonst wären die Schritte ungleich groß
+        [MARGIN, from + (to - from) * chrome_ease(t), size.width - 2.0 * MARGIN, size.height - 2.0 * MARGIN]
+    }
+
+    /// Ein Bild der Gleitbewegung: die sichtbaren Seiten nur verschieben, am Ende regulär auslegen.
+    /// Die Ereignisschleife läuft dabei ungebremst; DwmFlush wartet auf das nächste Bild des Bildschirms –
+    /// so kommt genau eine Position pro Bild an (ein 16-ms-Timer träfe bei 15,6-ms-Auflösung oft nur jedes zweite).
+    fn slide_chrome(&mut self) {
+        let Some((start, ..)) = self.chrome_slide else { return };
+        unsafe { windows_sys::Win32::Graphics::Dwm::DwmFlush() };
+        if start.elapsed() >= CHROME_SLIDE {
+            self.chrome_slide = None;
+            self.layout();
+            return;
+        }
+        if self.resize_preview.is_some() {
+            return;
+        }
+        for (i, area) in self.panes() {
+            if let Some(wv) = &self.tabs[i].webview {
+                let _ = wv.set_bounds(to_rect(area));
+            }
+        }
     }
 
     fn split_of(&self, id: u32) -> Option<&Split> {
@@ -176,6 +230,10 @@ impl Browser {
 
     /// Welche Tabs gerade sichtbar sind und wo: einer, oder zwei nebeneinander bei geteilter Ansicht.
     fn panes(&self) -> Vec<(usize, Area)> {
+        self.panes_in(self.content_area())
+    }
+
+    fn panes_in(&self, [x, y, w, h]: Area) -> Vec<(usize, Area)> {
         let Some(active) = self.tabs.get(self.active) else { return Vec::new() };
         if active.home {
             return Vec::new();
@@ -184,7 +242,6 @@ impl Browser {
             let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
             return vec![(self.active, [0.0, 0.0, size.width, size.height])];
         }
-        let [x, y, w, h] = self.content_area();
         if let Some(split) = self.split_of(active.id) {
             if let (Some(l), Some(r)) = (self.index_of(split.left), self.index_of(split.right)) {
                 let lw = ((w - SPLIT_GAP) * split.ratio).round();
@@ -379,9 +436,11 @@ impl Browser {
             "maximized": self.window.is_maximized(),
             "focused": self.window.is_focused(),
             "chromeHeight": self.chrome_height(),
+            "chromeHidden": self.chrome_hidden,
             "tabbar": self.show_tabbar(),
             "split": self.split.as_ref().map(|s| json!({ "left": s.left, "right": s.right, "ratio": s.ratio })),
-            "panes": self.panes().iter().map(|(i, [x, y, w, h])| json!({ "id": self.tabs[*i].id, "x": x, "y": y, "w": w, "h": h })).collect::<Vec<_>>(),
+            // Zielposition auch mitten im Gleiten – die Oberfläche animiert ihre Rahmen selbst dorthin
+            "panes": self.panes_in(self.resting_area()).iter().map(|(i, [x, y, w, h])| json!({ "id": self.tabs[*i].id, "x": x, "y": y, "w": w, "h": h })).collect::<Vec<_>>(),
         });
         let _ = self.ui.evaluate_script(&format!("window.render({state})"));
     }
@@ -407,8 +466,12 @@ impl Browser {
 
     fn close_tab(&mut self, id: u32) -> bool {
         let Some(idx) = self.index_of(id) else { return true };
+        // Der letzte Tab schließt nicht das Fenster, sondern macht einem leeren Platz – zurück zum Startbildschirm.
         if self.tabs.len() == 1 {
-            return false;
+            if !self.show_tabbar() {
+                return true; // schon auf dem Startbildschirm
+            }
+            self.new_tab(None, false);
         }
         // Schließt man eine Seite der geteilten Ansicht, bleibt die andere allein stehen.
         if self.split_of(id).is_some() {
@@ -554,7 +617,7 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
-        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay") {
+        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "chrome_hidden") {
             if let Some((token, _)) = self.resize_preview.take() {
                 self.layout();
                 let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
@@ -700,6 +763,16 @@ impl Browser {
             "split_ratio" => {
                 if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
                     split.ratio = r.clamp(0.2, 0.8);
+                    self.layout();
+                    self.sync_ui();
+                }
+            }
+            "chrome_hidden" => {
+                let hidden = msg["value"].as_bool().unwrap_or(false);
+                if hidden != self.chrome_hidden {
+                    let from = self.content_area()[1]; // mitten in einer Gleitbewegung: von dort aus weiter
+                    self.chrome_hidden = hidden;
+                    self.chrome_slide = Some((std::time::Instant::now(), from, self.resting_area()[1]));
                     self.layout();
                     self.sync_ui();
                 }
@@ -1269,6 +1342,7 @@ fn main() -> wry::Result<()> {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: None, split: None, resize_preview: None, hover: None, update: None,
+        chrome_hidden: false, chrome_slide: None,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
@@ -1284,13 +1358,19 @@ fn main() -> wry::Result<()> {
         // (Vordergrund statt is_focused(): Hat eine Webseite den Fokus, gilt das Hauptfenster für tao als unfokussiert.)
         let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
             == browser.window.hwnd() as *mut core::ffi::c_void;
-        *control_flow = if foreground {
+        // Gleitet die Leiste gerade, läuft die Schleife ohne Pause – den Takt gibt DwmFlush vor (`slide_chrome`).
+        *control_flow = if browser.chrome_slide.is_some() {
+            ControlFlow::Poll
+        } else if foreground {
             ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(16))
         } else {
             ControlFlow::Wait
         };
         match event {
-            Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. }) => browser.poll_hover(),
+            Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. } | tao::event::StartCause::Poll) => {
+                browser.slide_chrome();
+                browser.poll_hover();
+            }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
