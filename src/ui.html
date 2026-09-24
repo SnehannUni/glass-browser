@@ -15,6 +15,8 @@
     --violet: #bf9dff; /* Kennfarbe für privates Surfen */
     --spring: cubic-bezier(.32, 1.5, .44, 1);
     --ease: cubic-bezier(.25, .8, .25, 1);
+    /* Leiste oben aus-/einfahren – Dauer und Kurve wie CHROME_SLIDE in main.rs, sonst laufen Seite und Leiste auseinander */
+    --chrome-slide: .38s cubic-bezier(.4, 0, .2, 1);
     --control-hover: rgba(255, 255, 255, .12);
     --control-pressed: rgba(255, 255, 255, .2);
     --address-width: 58px;
@@ -58,6 +60,8 @@
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
   /* line-height: normal – sonst schneidet das Feld die Unterlängen (g, p, y) ab */
   input { font: inherit; line-height: normal; color: inherit; background: none; border: 0; outline: none; min-width: 0; user-select: text; }
+  /* Markierter Text wie mattes Glas statt Windows-Blau */
+  input::selection { background: rgba(255, 255, 255, .24); color: var(--label); }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75;
         stroke-linecap: round; stroke-linejoin: round; flex: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .3)); }
 
@@ -115,7 +119,10 @@
     --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
     height: 42px; display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr;
     align-items: center; gap: 10px; padding: 0 12px 0 16px;
+    transition: transform var(--chrome-slide), opacity var(--chrome-slide);
   }
+  /* Ausgeblendet schiebt die Webseite die Leiste nach oben weg (42 − 4 px Rand) – ihre Unterkante bleibt an der Seite */
+  body.chrome-hidden #toolbar { transform: translateY(-38px); opacity: 0; }
   /* Eine Zeile in drei Teilen: links Ampel + Vor/Zurück, in der Mitte die Tabs, rechts Adressfeld und Knöpfe.
      Die beiden Seiten sind gleich breit – so stehen die Tabs in der Fenstermitte, solange sie Platz haben. */
   /* kein min-width: 0 – die Seiten behalten ihren Platz, schrumpfen müssen die Tabs */
@@ -198,18 +205,17 @@
   .address.editing #addr-input { opacity: 1; }
   #btn-reload { min-width: 28px; height: 24px; color: var(--label-2); }
   body:not(.start) .address:not(.editing) :is(#addr-search, #btn-reload) { width: 24px; min-width: 24px; flex: none; }
-  /* Suchanbieter: Logo rechts im Feld, ein Klick zeigt die Auswahl (in der Vorschlagsliste) */
+  /* Suchanbieter: nur auf dem Startbildschirm, Logo rechts im Feld – ein Klick öffnet das Anbieter-Rad.
+     In der Leiste gibt es keine Auswahl, dort sucht immer Google (searchEngine im Skript). */
   .engine {
     width: 26px; height: 26px; min-width: 26px; padding: 0; border-radius: 50%; display: grid; place-items: center;
     background: rgba(255, 255, 255, .12); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .22), 0 1px 3px rgba(0, 0, 0, .18);
   }
   .engine img { width: 15px; height: 15px; border-radius: 3px; }
-  .engine-row img { width: 16px; height: 16px; border-radius: 4px; flex: none; }
   .engine:is(:hover, .vh) { background: rgba(255, 255, 255, .2); }
-  body:not(.start) .address:not(.editing) #btn-engine { display: none; }
+  body:not(.start) #btn-engine { display: none; }
   body.start .engine { width: 46px; height: 46px; }
   body.start .engine img { width: 24px; height: 24px; border-radius: 5px; }
-  .engine-row .check { margin-left: auto; color: var(--blue); }
   /* Startbildschirm: Aus dem Logo klappt ein Kreis aus Anbietern nach rechts auf, jeder in seiner eigenen
      Glaskugel. Der gewählte sitzt links an der Stelle des Knopfs; wählt man einen anderen, dreht er sich dorthin. */
   #wheel {
@@ -989,6 +995,8 @@
     renderEngine();
     renderAddress();
   }
+  // Gewählt wird nur auf dem Startbildschirm; in der Leiste oben sucht immer Google
+  const searchEngine = () => (document.body.classList.contains('start') ? engine : ENGINES[0]);
 
   function searchQuery(url) {
     const u = parse(url);
@@ -999,7 +1007,8 @@
     const tab = activeTab();
     const url = tab?.url || '';
     const query = searchQuery(url);
-    const placeholder = tab?.private ? `Privat: ${engine.hint}` : engine.hint;
+    const { hint } = searchEngine();
+    const placeholder = tab?.private ? `Privat: ${hint}` : hint;
     input.placeholder = placeholder;
     address.title = editing() || document.body.classList.contains('start') ? '' : 'Suchen oder Adresse eingeben (Strg+L)';
     if (!editing()) input.value = query || url;
@@ -1102,8 +1111,9 @@
     const value = input.value.trim();
     if (!value) return;
     // Prompts an KI-Chats merken (Google-Suchen erkennt recordSearches an der Ergebnis-URL)
-    if (engine.id !== 'google' && !activeTab()?.private && !looksLikeUrl(value)) remember(engine.id, value);
-    send('navigate', { value, engine: engine.id });
+    const choice = searchEngine();
+    if (choice.id !== 'google' && !activeTab()?.private && !looksLikeUrl(value)) remember(choice.id, value);
+    send('navigate', { value, engine: choice.id });
     input.blur();
   });
 
@@ -1171,8 +1181,8 @@
     const q = text.trim(), lower = q.toLowerCase();
     // Privat: frühere Suchen nicht anzeigen – der private Tab soll wie ein unbeschriebenes Blatt wirken
     const past = (activeTab()?.private ? [] : q
-      ? historyOf(engine.id).filter((h) => h.toLowerCase().includes(lower) && h.toLowerCase() !== lower).slice(0, 3)
-      : historyOf(engine.id).slice(0, 6)
+      ? historyOf(searchEngine().id).filter((h) => h.toLowerCase().includes(lower) && h.toLowerCase() !== lower).slice(0, 3)
+      : historyOf(searchEngine().id).slice(0, 6)
     ).map((text) => ({ text, kind: 'history' }));
     const seq = ++suggestSeq;
     // Ohne passende frühere Suchen nur ausblenden – closeSuggest() würde die folgende Google-Anfrage verwerfen
@@ -1192,45 +1202,14 @@
   }
   input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); });
 
-  // Auswahl des Suchanbieters: erscheint an der Stelle der Vorschläge (gleiche Glasliste, gleiche Aussparung
-  // über Webseiten). Tippen oder eine Auswahl bringt die Vorschläge zurück.
-  let engineMenu = false;
-  function showEngineMenu() {
-    suggestSeq++; clearTimeout(suggestTimer); // laufende Google-Vorschläge nicht darüberlegen
-    suggestions = []; selected = -1;
-    const head = document.createElement('div');
-    head.className = 'sg-head';
-    head.textContent = 'Suchen mit';
-    const rows = ENGINES.map((e) => {
-      const row = document.createElement('div');
-      row.className = 'sg engine-row';
-      const label = document.createElement('span');
-      label.className = 'sg-text';
-      label.textContent = e.name;
-      row.append(engineImg(e), label);
-      if (e === engine) row.insertAdjacentHTML('beforeend', svg('check', 'check'));
-      row.addEventListener('pointerdown', (ev) => {
-        ev.preventDefault(); // Fokus bleibt im Feld
-        setEngine(e);
-        engineMenu = false;
-        refreshSuggest(input.value);
-      });
-      return row;
-    });
-    suggestBox.replaceChildren(head, ...rows);
-    engineMenu = true;
-    suggestPending = true;
-    placeSuggest();
-  }
+  // Den Anbieter wählt man nur auf dem Startbildschirm; in der Leiste gibt es den Knopf nicht (dort sucht immer Google)
   engineBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault(); e.stopPropagation(); // Feld bleibt fokussiert (sonst führe es in der Leiste wieder ein)
+    e.preventDefault(); e.stopPropagation(); // Feld bleibt fokussiert
     if (!editing()) window.focusAddress();
-    if (document.body.classList.contains('start')) { if (wheel.classList.contains('open')) closeWheel(); else openWheel(); }
-    else if (engineMenu && suggestBox.classList.contains('open')) { engineMenu = false; refreshSuggest(input.value); }
-    else showEngineMenu();
+    if (wheel.classList.contains('open')) closeWheel(); else openWheel();
   });
 
-  // Startbildschirm: Anbieter-Rad statt Liste. Es klappt nach rechts auf, der gewählte Anbieter sitzt links am Knopf.
+  // Startbildschirm: Anbieter-Rad. Es klappt nach rechts auf, der gewählte Anbieter sitzt links am Knopf.
   const wheel = $('wheel'), wheelSpin = wheel.querySelector('.spin');
   const WHEEL_ORBIT = 78, STEP = 360 / ENGINES.length;
   let wheelRot = 0, wheelTimer = 0;
@@ -1375,7 +1354,7 @@
         rm.innerHTML = svg('close');
         rm.addEventListener('pointerdown', (e) => {
           e.preventDefault(); e.stopPropagation(); // Fokus bleibt im Feld, nicht suchen
-          forget(engine.id, item.text);
+          forget(searchEngine().id, item.text);
           refreshSuggest(typed, related);
         });
         row.append(rm);
@@ -1432,7 +1411,6 @@
     suggestions = [];
     selected = -1;
     suggestPending = false;
-    engineMenu = false;
     if (!suggestBox.classList.contains('open')) return;
     suggestBox.classList.remove('open');
     reportOverlay();
@@ -1591,6 +1569,7 @@
   // Das Licht verfolgt auch die Position über Webseiten. Nur echte UI-Treffer erhalten .vh.
   let vhover = [];
   window.hoverAt = (x, y, overUI = true) => {
+    chromeHover(y);
     window.GroupHover.at(x, y, overUI);
     trackLight(x, y);
     const el = x == null || !overUI ? null : document.elementFromPoint(x, y);
@@ -1629,13 +1608,20 @@
   const activeSplit = () =>
     state.split && [state.split.left, state.split.right].includes(state.active) ? state.split : null;
 
-  function renderPanes() {
+  // `from`: bisherige Rahmen, wenn die Leiste oben gerade aus- oder einfährt – dann gleiten sie mit der Seite mit
+  function renderPanes(from = null) {
     if (resizeDrag) return;
     const panes = (state.panes || []).filter((p) => hasPage(p.id));
     $('panes').replaceChildren(...panes.map((p) => {
       const el = document.createElement('div');
       el.className = `pane${p.id === state.active ? ' focus' : ''}`;
       Object.assign(el.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
+      const old = from?.find((o) => o.id === p.id);
+      if (old && old.y !== p.y) {
+        const [dur, ...curve] = getComputedStyle(document.documentElement).getPropertyValue('--chrome-slide').trim().split(' ');
+        el.animate([{ top: `${old.y}px`, height: `${old.h}px` }, { top: `${p.y}px`, height: `${p.h}px` }],
+          { duration: parseFloat(dur) * 1000, easing: curve.join(' ') });
+      }
       return el;
     }));
     const split = panes.length === 2;
@@ -1739,11 +1725,45 @@
   // Doppelklick in die Lücke: wieder 50 : 50
   divider.addEventListener('dblclick', () => send('split_ratio', { value: 0.5 }));
 
+  // ---------- Leiste oben automatisch ausblenden ----------
+  // Nach ein paar Sekunden Ruhe auf einer Webseite verschwindet die Leiste, die Seite reicht dann bis an den Rand
+  // (Rust: chrome_hidden). Zurück kommt sie über den oberen Fensterrand, Strg+L/T/Tab oder wenn eine Seite lädt.
+  const CHROME_IDLE = 3500, REVEAL_ZONE = 6;
+  let chromeHidden = false, chromeTimer = 0, pointerY = null;
+  const chromeBusy = () => !activeTab()?.page || document.body.classList.contains('start') || editing()
+    || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
+    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || (pointerY != null && pointerY < state.chromeHeight); // Maus ruht auf der Leiste
+  function setChromeHidden(hidden) {
+    if (hidden === chromeHidden) return;
+    chromeHidden = hidden;
+    document.body.classList.toggle('chrome-hidden', hidden);
+    send('chrome_hidden', { value: hidden });
+  }
+  // Leiste zeigen und den Countdown neu starten; solange etwas offen ist, wird später erneut geprüft
+  function showChrome() {
+    setChromeHidden(false);
+    clearTimeout(chromeTimer);
+    chromeTimer = setTimeout(function idle() {
+      if (chromeBusy()) chromeTimer = setTimeout(idle, CHROME_IDLE);
+      else setChromeHidden(true);
+    }, CHROME_IDLE);
+  }
+  // Mausposition von hoverAt: ausgeblendet reicht der obere Rand, eingeblendet hält jede Bewegung auf der Leiste sie offen
+  function chromeHover(y) {
+    pointerY = y;
+    if (y != null && y < (chromeHidden ? REVEAL_ZONE : state.chromeHeight)) showChrome();
+  }
+  input.addEventListener('focus', showChrome);
+  input.addEventListener('blur', showChrome);
+
   // ---------- Zustand aus Rust ----------
   window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
+    const wasLoading = !switched && !!activeTab()?.loading;
+    const slideFrom = !!next.chromeHidden !== !!state.chromeHidden ? state.panes : null; // Leiste fährt aus/ein
     state = next;
     if (opened && engine !== ENGINES[0]) { engine = ENGINES[0]; renderEngine(); } // neuer Tab → immer Google
     document.documentElement.style.setProperty('--chrome', `${state.chromeHeight}px`);
@@ -1760,9 +1780,14 @@
     setStartMode(!hasPage && !activeTab()?.url);
     recordSearches();
     renderTabs();
-    renderPanes();
+    renderPanes(slideFrom);
     renderAddress();
     if (switched && !hasPage && !activeTab()?.url) window.focusAddress();
+    // Tabwechsel, neuer Tab oder eine Seite beginnt zu laden → Leiste zeigen; Startbildschirm → immer sichtbar
+    if (!hasPage) setChromeHidden(false);
+    else if (switched || (activeTab()?.loading && !wasLoading)) showChrome();
+    // Nach einem Neuladen der Oberfläche kennt Rust womöglich noch den alten Zustand
+    if (!!state.chromeHidden !== chromeHidden) send('chrome_hidden', { value: chromeHidden });
   };
 
   // ---------- Bedienung ----------
