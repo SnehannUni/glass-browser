@@ -508,6 +508,8 @@
 
   /* ---------- Privates Surfen ---------- */
   .private-btn { margin-left: 0; } /* nicht wie „+“ an den Nachbarn heranrücken */
+  /* Nur auf dem Startbildschirm; auf einer Seite öffnet Strg+Umschalt+N einen privaten Tab */
+  body:not(.start) .private-btn { display: none; }
   .private-btn svg { width: 15px; height: 15px; }
   /* Aktiver Tab ist privat: Knopf leuchtet, Adressfeld und Tab bekommen einen violetten Schimmer */
   body.private .private-btn { color: var(--violet); background-image: linear-gradient(180deg, rgba(175, 130, 255, .3), rgba(130, 90, 255, .14)); }
