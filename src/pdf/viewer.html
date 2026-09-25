@@ -1,0 +1,94 @@
+<!doctype html>
+<!-- Glass-PDF-Viewer. pdf.rs setzt {{TITLE}} (Dateiname), {{DOC}} (einmalige Adresse der PDF-Bytes) und
+     {{WALL}} (geheime Adresse des Wallpapers für diesen Tab) ein. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="http://glass-pdf.localhost/pdf_viewer.css">
+<link rel="stylesheet" href="http://glass-pdf.localhost/viewer.css">
+<script type="module" src="http://glass-pdf.localhost/viewer.mjs"></script>
+</head>
+<body data-doc="{{DOC}}" data-wall="{{WALL}}" data-name="{{TITLE}}">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs id="filters"></defs>
+  <symbol id="i-sidebar" viewBox="0 0 16 16"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2.4"/><path d="M6 2.6v10.8"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="m4.5 9.5 3.5-3.5 3.5 3.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.5 8h9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"/></symbol>
+  <symbol id="i-fit-width" viewBox="0 0 16 16"><path d="M2 8h12M4.4 5.6 2 8l2.4 2.4M11.6 5.6 14 8l-2.4 2.4"/></symbol>
+  <symbol id="i-fit-page" viewBox="0 0 16 16"><rect x="3.6" y="1.8" width="8.8" height="12.4" rx="1.6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.3 9.7A5.6 5.6 0 0 1 6.3 2.7a5.6 5.6 0 1 0 7 7Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.4v1.4M8 13.2v1.4M1.4 8h1.4M13.2 8h1.4M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1"/></symbol>
+  <symbol id="i-print" viewBox="0 0 16 16"><path d="M4.6 5.8V2h6.8v3.8M4.6 11.8H3a1.2 1.2 0 0 1-1.2-1.2V7a1.2 1.2 0 0 1 1.2-1.2h10A1.2 1.2 0 0 1 14.2 7v3.6a1.2 1.2 0 0 1-1.2 1.2h-1.6"/><path d="M4.6 9.4h6.8V14H4.6z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2v8.4M4.8 7.4 8 10.6l3.2-3.2M2.6 13.6h10.8"/></symbol>
+  <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></symbol>
+</svg>
+
+<!-- Das Wallpaper, deckungsgleich mit dem Desktop (Lage kommt aus main.rs, sync_pdf_walls) -->
+<canvas id="wall"></canvas>
+
+<aside id="sidebar" class="glass" data-lens aria-label="Seitenleiste">
+  <div id="sidebar-tabs" class="segmented" hidden>
+    <button data-view="thumbs" class="on">Seiten</button>
+    <button data-view="outline">Inhalt</button>
+  </div>
+  <div id="thumbs" class="sidebar-view"></div>
+  <nav id="outline" class="sidebar-view" hidden></nav>
+</aside>
+
+<div id="container" tabindex="-1"><div id="viewer" class="pdfViewer"></div></div>
+
+<!-- .well: Unterlage mit dem Stück Wallpaper hinter der Kapsel – das Glas bricht das Hintergrundbild, nicht das PDF darunter -->
+<div id="find" class="well" hidden><div class="glass capsule" data-lens data-button-group>
+  <label class="field" data-group-skip>
+    <svg><use href="#i-search"/></svg>
+    <input id="find-input" placeholder="Im Dokument suchen" spellcheck="false" autocomplete="off">
+    <span id="find-count"></span>
+  </label>
+  <button class="key" id="find-prev" title="Vorheriger Treffer (Umschalt+Eingabe)"><svg><use href="#i-up"/></svg></button>
+  <button class="key" id="find-next" title="Nächster Treffer (Eingabe)"><svg><use href="#i-down"/></svg></button>
+  <button class="key" id="find-close" title="Schließen (Esc)"><svg><use href="#i-close"/></svg></button>
+</div></div>
+
+<!-- Unten über dem PDF schwebend, wie die Leiste oben in Glass: einzelne Glas-Kapseln statt einer langen Zeile -->
+<nav id="dock" aria-label="PDF-Werkzeuge">
+  <div class="well round"><button class="glass round" id="toggle-sidebar" title="Seitenleiste" data-lens><svg><use href="#i-sidebar"/></svg></button></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="prev-page" title="Vorherige Seite (←)"><svg><use href="#i-up"/></svg></button>
+    <label class="pages" data-group-skip><input id="page" inputmode="numeric" aria-label="Seite" value="1"><span id="page-count">/ –</span></label>
+    <button class="key" id="next-page" title="Nächste Seite (→)"><svg><use href="#i-down"/></svg></button>
+  </div></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="zoom-out" title="Verkleinern (Strg −)"><svg><use href="#i-minus"/></svg></button>
+    <button class="key zoom" id="zoom-value" title="Auf 100 %">100 %</button>
+    <button class="key" id="zoom-in" title="Vergrößern (Strg +)"><svg><use href="#i-plus"/></svg></button>
+    <button class="key" id="fit" title="An Breite anpassen"><svg><use href="#i-fit-width"/></svg></button>
+  </div></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="search" title="Suchen (Strg F)"><svg><use href="#i-search"/></svg></button>
+    <button class="key" id="theme" title="Dunkle Seiten"><svg><use href="#i-moon"/></svg></button>
+    <button class="key" id="print" title="Drucken (Strg P)"><svg><use href="#i-print"/></svg></button>
+    <button class="key" id="download" title="Herunterladen (Strg S)"><svg><use href="#i-download"/></svg></button>
+  </div></div>
+</nav>
+
+<div id="status" class="glass" data-lens>
+  <div class="spinner"></div>
+  <p id="status-text">PDF wird geöffnet …</p>
+  <form id="password" hidden>
+    <input id="password-input" type="password" placeholder="Passwort" autocomplete="off">
+    <button type="submit">Öffnen</button>
+  </form>
+</div>
+
+<div id="print-pages" aria-hidden="true"></div>
+
+<!-- Dieselben Glas-Bausteine wie die Oberfläche: Glanzkante, Lichtbrechung, wandernde Hover-Fläche -->
+<script src="http://glass-pdf.localhost/glass-rim.js"></script>
+<script src="http://glass-pdf.localhost/glass-lens.js"></script>
+<script src="http://glass-pdf.localhost/group-hover.js"></script>
+</body>
+</html>
