@@ -89,6 +89,7 @@ try {
   assert.equal(geometry.right, 5); assert.equal(geometry.gap, 0);
   assert.equal(geometry.slot, 'Example', 'active tab sits in the address field');
   assert.deepEqual(geometry.listed, ['2'], 'active tab leaves the tab list');
+  assert.equal(await evaluate(`document.getElementById('btn-private').offsetWidth`), 0, 'private button hidden on a web page');
   assert.deepEqual(geometry.close, [3, 3, 3]);
   await writeFile('target/ui-smoke/toolbar.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   console.log('Spacing verified');
@@ -188,10 +189,10 @@ try {
   await delay(40);
   assert.notEqual(await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`), firstLight);
   assert.equal(await evaluate(`document.querySelectorAll('.vh').length`), 0);
-  await evaluate(`{const r=document.getElementById('btn-private').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
-  assert.equal(await evaluate(`document.getElementById('btn-private').classList.contains('vh')`), true);
-  await evaluate(`{const r=document.getElementById('btn-private').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,false)}`);
-  assert.equal(await evaluate(`document.getElementById('btn-private').classList.contains('vh')`), false);
+  await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
+  assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), true);
+  await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,false)}`);
+  assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), false);
   await delay(40);
   const lastLight = await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`);
   await evaluate(`hoverAt(null)`);
@@ -279,6 +280,7 @@ try {
   await delay(700);
   const screenshot = await call('Page.captureScreenshot');
   await writeFile('target/ui-smoke/start.png', Buffer.from(screenshot.data, 'base64'));
+  assert.ok(await evaluate(`document.getElementById('btn-private').offsetWidth > 0`), 'private button visible on the start screen');
   const startGeometry = await evaluate(`(()=>{const input=document.getElementById('addr-input'),icon=document.querySelector('#addr-search svg'),box=document.getElementById('address').getBoundingClientRect(),a=icon.getBoundingClientRect(),b=input.getBoundingClientRect();return {left:a.left-box.left,gap:b.left-a.right,iconCenter:a.top+a.height/2,inputCenter:b.top+b.height/2}})()`);
   assert.equal(startGeometry.left,startGeometry.gap,'equal spacing on both sides of the search icon');
   assert.equal(startGeometry.inputCenter,startGeometry.iconCenter-1,'optical text alignment');
