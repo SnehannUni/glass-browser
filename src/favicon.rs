@@ -68,3 +68,15 @@ pub fn watch(web: &ICoreWebView2, changed: impl Fn(String) + 'static) -> windows
     let mut token = 0;
     unsafe { view.add_FaviconChanged(&handler, &mut token) }
 }
+
+// Content is untrusted. Only bounded decoded PNGs may cross into browser chrome.
+pub fn valid_page_icon(icon: &str) -> bool {
+    if icon.is_empty() { return true; }
+    let Some(data) = icon.strip_prefix("data:image/png;base64,") else { return false; };
+    if data.len() > 512 * 1024 { return false; }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else { return false; };
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" { return false; }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+    let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+    (1..=256).contains(&width) && (1..=256).contains(&height)
+}
