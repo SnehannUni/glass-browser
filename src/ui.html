@@ -976,13 +976,14 @@
   // ---------- Suchanbieter (Rust kennt dieselben Kennungen: SEARCH_ENGINES in main.rs) ----------
   const favicon = (domain) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
   const ENGINES = [
-    { id: 'google', name: 'Google', icon: favicon('google.com'), hint: 'Suchbegriff oder Websitename eingeben' },
-    { id: 'chatgpt', name: 'ChatGPT', icon: favicon('chatgpt.com'), hint: 'ChatGPT fragen oder Website eingeben' },
-    { id: 'claude', name: 'Claude', icon: favicon('claude.ai'), hint: 'Claude fragen oder Website eingeben' },
+    // `origin`: wohin die Suche führt (wie SEARCH_ENGINES in main.rs) – dorthin wärmt warmUp() die Verbindung vor
+    { id: 'google', name: 'Google', origin: 'https://www.google.com', icon: favicon('google.com'), hint: 'Suchbegriff oder Websitename eingeben' },
+    { id: 'chatgpt', name: 'ChatGPT', origin: 'https://chatgpt.com', icon: favicon('chatgpt.com'), hint: 'ChatGPT fragen oder Website eingeben' },
+    { id: 'claude', name: 'Claude', origin: 'https://claude.ai', icon: favicon('claude.ai'), hint: 'Claude fragen oder Website eingeben' },
     // Gemini, Kimi und Z.ai nehmen keinen Prompt über die Adresse an – Glass tippt ihn dort ein (prompt.js)
-    { id: 'gemini', name: 'Gemini', icon: favicon('gemini.google.com'), hint: 'Gemini fragen oder Website eingeben' },
-    { id: 'kimi', name: 'Kimi', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
-    { id: 'zai', name: 'Z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
+    { id: 'gemini', name: 'Gemini', origin: 'https://gemini.google.com', icon: favicon('gemini.google.com'), hint: 'Gemini fragen oder Website eingeben' },
+    { id: 'kimi', name: 'Kimi', origin: 'https://www.kimi.ai', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
+    { id: 'zai', name: 'Z.ai', origin: 'https://chat.z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
   ];
   // Jeder neue Tab beginnt mit Google (siehe window.render) – die Wahl wird deshalb nicht gespeichert
   let engine = ENGINES[0];
@@ -1091,6 +1092,7 @@
     // Leeres Feld → letzte Suchen; auf einer Google-Ergebnisseite → ähnliche Suchen
     if (query) refreshSuggest(query, true);
     else if (!url) refreshSuggest('');
+    warmUp('');
   });
   input.addEventListener('blur', () => {
     closeWheel();
@@ -1200,9 +1202,40 @@
           .map((text) => ({ text, kind: isRelated ? 'related' : 'suggest' }));
         showSuggest([...past, ...more]);
       } catch { /* offline: einfach keine Vorschläge */ }
-    }, isRelated ? 0 : 90);
+    }, isRelated ? 0 : 50);
   }
-  input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); });
+  input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); warmUp(input.value); });
+
+  // ---------- Verbindung vorwärmen ----------
+  // Wie die Adressleiste von Chrome: schon beim Tippen DNS, TCP und TLS zum Ziel aufbauen, damit der Seitenaufruf
+  // nach Enter nicht erst darauf wartet. Die Tabs teilen sich Profil und Verbindungen mit der Oberfläche.
+  // Chromium schließt ungenutzte Verbindungen nach etwa 10 s – danach darf dasselbe Ziel erneut vorgewärmt werden.
+  const warmed = new Map();
+  let warmTimer = 0;
+  function warmUp(text) {
+    clearTimeout(warmTimer);
+    if (activeTab()?.private) return; // private Eingaben sollen nicht über das normale Profil ins Netz
+    const v = text.trim(), search = searchEngine().origin;
+    let origin = search;
+    if (looksLikeUrl(v)) {
+      try {
+        const url = new URL(/^[a-z][\w+.-]*:\/\//i.test(v) ? v : `https://${v}`);
+        origin = /^https?:$/.test(url.protocol) ? url.origin : '';
+      } catch { origin = ''; }
+    }
+    if (!origin) return;
+    // Adressen erst, wenn das Tippen kurz ruht – sonst gingen DNS-Anfragen an „githu.co“ & Co.
+    warmTimer = setTimeout(() => {
+      const now = Date.now();
+      if (now - (warmed.get(origin) || 0) < 10000) return;
+      warmed.set(origin, now);
+      document.querySelector(`link[rel=preconnect][href="${origin}"]`)?.remove();
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = origin;
+      document.head.append(link);
+    }, origin === search ? 0 : 250);
+  }
 
   // Den Anbieter wählt man nur auf dem Startbildschirm; in der Leiste gibt es den Knopf nicht (dort sucht immer Google)
   engineBtn.addEventListener('pointerdown', (e) => {
