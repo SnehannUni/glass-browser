@@ -9,7 +9,7 @@ mod favicon;
 mod resize_preview;
 
 use serde_json::{json, Value};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
@@ -37,6 +37,8 @@ const CHROME_SLIDE: std::time::Duration = std::time::Duration::from_millis(380);
 const CONTENT_RADIUS: f64 = 4.0;
 /// Abstand zwischen den beiden Seiten einer geteilten Ansicht – zugleich Griff zum Verschieben.
 const SPLIT_GAP: f64 = 4.0;
+/// So lange darf ein Tab unsichtbar sein, bevor er schlafen geht (`sleep_idle_tabs`).
+const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const PROMPT_JS: &str = include_str!("prompt.js");
 
 /// Wie ein Suchanbieter den Text bekommt.
@@ -85,6 +87,8 @@ enum UserEvent {
     UpdateAvailable(u32, String, String),
     /// Update installiert (Glass beendet sich, die neue Version startet) oder Fehlermeldung.
     UpdateDone(Result<(), String>),
+    /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
+    SleepTabs,
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -140,6 +144,8 @@ struct Tab {
     home: bool,
     /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`).
     pending_prompt: Option<String>,
+    /// Seit wann die Seite ausgeblendet ist (`None`: gerade sichtbar). Siehe `sleep_idle_tabs`.
+    hidden_since: Cell<Option<Instant>>,
 }
 
 impl Tab {
@@ -284,17 +290,49 @@ impl Browser {
             match panes.iter().find(|(p, _)| *p == i) {
                 Some((_, area)) => {
                     let _ = wv.set_bounds(to_rect(*area));
+                    // Weckt einen schlafenden Tab automatisch wieder auf (WebView2: IsVisible = true).
                     let _ = wv.set_visible(true);
                     let _ = wv.set_memory_usage_level(MemoryUsageLevel::Normal);
+                    tab.hidden_since.set(None);
                 }
                 None => {
                     let _ = wv.set_visible(false);
+                    if tab.hidden_since.get().is_none() {
+                        tab.hidden_since.set(Some(Instant::now()));
+                    }
                     // Hintergrund-Tabs: Chromium darf Caches verwerfen und spart RAM.
                     let _ = wv.set_memory_usage_level(MemoryUsageLevel::Low);
                 }
             }
         }
         self.round_content_views();
+    }
+
+    /// Legt Tabs schlafen, die seit `SLEEP_AFTER` unsichtbar sind: Skripte und Timer stehen still, der Renderer
+    /// gibt Speicher frei und kostet keine CPU mehr. Die Seite bleibt erhalten und wacht beim Anzeigen sofort auf.
+    /// Tabs, die gerade Ton abspielen (Musik, Video im Hintergrund), bleiben wach.
+    fn sleep_idle_tabs(&self) {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_3, ICoreWebView2_8};
+        use windows::core::Interface;
+        for tab in &self.tabs {
+            let (Some(wv), Some(since)) = (&tab.webview, tab.hidden_since.get()) else { continue };
+            if since.elapsed() < SLEEP_AFTER {
+                continue;
+            }
+            let core = wv.webview();
+            let mut audio = windows::core::BOOL::default();
+            if let Ok(wv8) = core.cast::<ICoreWebView2_8>() {
+                let _ = unsafe { wv8.IsDocumentPlayingAudio(&mut audio) };
+            }
+            if audio.as_bool() {
+                continue;
+            }
+            // Schläft der Tab schon, meldet TrySuspend einfach Erfolg – ein eigener Merker ist nicht nötig.
+            if let Ok(wv3) = core.cast::<ICoreWebView2_3>() {
+                let done = webview2_com::TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
+                let _ = unsafe { wv3.TrySuspend(&done) };
+            }
+        }
     }
 
     /// Rundet die Webseiten-Ansichten ab (im Vollbild eckig). Jede WebView ist ein eigenes Kindfenster,
@@ -458,7 +496,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None) });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -816,6 +854,7 @@ impl Browser {
             UserEvent::UpdateDone(Err(msg)) => {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
+            UserEvent::SleepTabs => self.sleep_idle_tabs(),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -1325,8 +1364,10 @@ fn main() -> wry::Result<()> {
         .with_browser_accelerator_keys(false)
         // Wrys Standard-Argumente beibehalten; zusätzlich immer das ganze Bild neu zeichnen: Bei Teil-Neuzeichnungen
         // liest die Glas-Linse (SVG-Filter im backdrop-filter) sonst ihr eigenes altes Bild ein → flackernde Geisterschrift.
+        // Verbindungen und DNS-Cache nicht nach Webseite trennen: Nur so kann ein Tab die Verbindung nutzen, die die
+        // Oberfläche beim Tippen vorgewärmt hat (warmUp in ui.html). Gemessen: DNS + TLS 0 statt ~60 ms. Cookies bleiben getrennt.
         .with_additional_browser_args(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --ui-disable-partial-swap",
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,PartitionConnectionsByNetworkIsolationKey,SplitHostCacheByNetworkIsolationKey --ui-disable-partial-swap",
         )
         .with_ipc_handler(move |req| {
             if req.uri().to_string() == UI_URL {
@@ -1350,6 +1391,15 @@ fn main() -> wry::Result<()> {
             }
         });
     }
+
+    // Jede Minute nachsehen, ob Hintergrund-Tabs schlafen gehen können (siehe `sleep_idle_tabs`)
+    let p_sleep = proxy.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        if p_sleep.send_event(UserEvent::SleepTabs).is_err() {
+            break;
+        }
+    });
 
     let icloud = autofill::start(proxy.clone());
     let _ = icloud.send(json!({"id": 0, "op": "probe"}));
