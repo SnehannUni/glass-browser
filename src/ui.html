@@ -114,6 +114,12 @@
   }
   .key:disabled { color: var(--label-3); background: none; transform: none; }
 
+  #toolbar-menu { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
+  #toolbar-menu[hidden] { display: none; }
+  #toolbar-pin { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  #toolbar-pin:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
+  #toolbar-pin .check { width: 16px; visibility: hidden; }
+  #toolbar-pin[aria-checked="true"] .check { visibility: visible; }
   /* ---------- Toolbar ---------- */
   #toolbar {
     --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
@@ -581,6 +587,9 @@
   </header>
   </div>
 
+  <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
+    <button id="toolbar-pin" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste dauerhaft anzeigen</button>
+  </div>
   <main id="stage">
   </main>
 
@@ -1959,13 +1968,57 @@
   // ---------- Leiste oben automatisch ausblenden ----------
   // Nach ein paar Sekunden Ruhe auf einer Webseite verschwindet die Leiste, die Seite reicht dann bis an den Rand
   // (Rust: chrome_hidden). Zurück kommt sie über den oberen Fensterrand, Strg+L/T/Tab oder wenn eine Seite lädt.
+  const TOOLBAR_PIN_KEY = 'glass.toolbarPinned';
+  let toolbarPinned = false;
+  try { toolbarPinned = localStorage.getItem(TOOLBAR_PIN_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
+  const toolbarMenu = $('toolbar-menu'), toolbarPin = $('toolbar-pin');
+  toolbarPin.setAttribute('aria-checked', String(toolbarPinned));
+  function closeToolbarMenu() {
+    if (toolbarMenu.hidden) return;
+    toolbarMenu.hidden = true;
+    send('overlay', { rect: null });
+    showChrome();
+  }
+  $('toolbar').addEventListener('contextmenu', (e) => {
+    if (e.target.closest('button, input, form, .tab, .capsule, a, [role="button"]')) return;
+    if (document.body.classList.contains('modal')) return;
+    e.preventDefault();
+    input.blur(); closeSuggest(); closeFavorites();
+    toolbarMenu.hidden = false;
+    const x = Math.max(4, Math.min(e.clientX, innerWidth - toolbarMenu.offsetWidth - 4));
+    const y = Math.max(4, Math.min(e.clientY, innerHeight - toolbarMenu.offsetHeight - 4));
+    Object.assign(toolbarMenu.style, { left: `${x}px`, top: `${y}px` });
+    send('overlay', { rect: { x, y, w: toolbarMenu.offsetWidth, h: toolbarMenu.offsetHeight, r: 12 } });
+    showChrome();
+    toolbarPin.focus({ preventScroll: true });
+  });
+  toolbarPin.addEventListener('click', () => {
+    toolbarPinned = !toolbarPinned;
+    toolbarPin.setAttribute('aria-checked', String(toolbarPinned));
+    try { localStorage.setItem(TOOLBAR_PIN_KEY, String(toolbarPinned)); } catch { /* Sitzungseinstellung */ }
+    closeToolbarMenu();
+    toolbarPin.blur();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!toolbarMenu.contains(e.target)) closeToolbarMenu();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (toolbarMenu.hidden) return;
+    if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault(); e.stopImmediatePropagation(); closeToolbarMenu();
+      $('btn-reload').focus({ preventScroll: true });
+    }
+  }, true);
+  window.addEventListener('blur', closeToolbarMenu);
+  window.addEventListener('resize', closeToolbarMenu);
   const CHROME_IDLE = 3500, REVEAL_ZONE = 6;
   let chromeHidden = false, chromeTimer = 0, pointerY = null;
-  const chromeBusy = () => !activeTab()?.page || document.body.classList.contains('start') || editing()
+  const chromeBusy = () => toolbarPinned || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
     || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
     || (pointerY != null && pointerY < state.chromeHeight); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
+    hidden = hidden && !toolbarPinned;
     if (hidden === chromeHidden) return;
     chromeHidden = hidden;
     document.body.classList.toggle('chrome-hidden', hidden);
@@ -1975,6 +2028,7 @@
   function showChrome() {
     setChromeHidden(false);
     clearTimeout(chromeTimer);
+    if (toolbarPinned) return;
     chromeTimer = setTimeout(function idle() {
       if (chromeBusy()) chromeTimer = setTimeout(idle, CHROME_IDLE);
       else setChromeHidden(true);
