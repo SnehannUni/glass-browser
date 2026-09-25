@@ -229,11 +229,13 @@
   body.start #btn-engine { transition: transform .45s var(--spring), background-color .2s, opacity .18s; }
   #wheel .spin { position: absolute; inset: 0; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
   @property --off { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  @property --travel-scale { syntax: "<number>"; inherits: false; initial-value: 1; }
+  @property --arrival-scale { syntax: "<number>"; inherits: true; initial-value: 1; }
   #wheel .slot {
     position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
     border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
     /* auf die Umlaufbahn setzen (Platz 0 links, --off = Aus-/Eindrehen), dann zurückdrehen: die Logos bleiben aufrecht */
-    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot)));
+    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot))) scale(calc(var(--arrival-scale) * var(--travel-scale)));
     transition: transform .7s var(--spring), background-color .2s;
     /* ohne Schlagschatten: gestapelt würden sich die Schatten aufaddieren */
     box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 -10px 18px -12px rgba(255, 255, 255, .16);
@@ -241,7 +243,7 @@
   /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
   #wheel .slot.on { background-color: rgba(255, 255, 255, .22); }
   #wheel.instant :is(.spin, .slot) { transition: none; }
-  #wheel .slot img { width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
+  #wheel .slot img { scale: calc(1 / var(--arrival-scale)); width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
   #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .14); }
   #wheel .slot:active img { transform: scale(1.15); }
   /* Werbeblocker: Schild + Anzahl blockierter Anfragen; ausgeschaltet durchgestrichen und blass */
@@ -1240,7 +1242,7 @@
   function openWheel() {
     closeSuggest();
     clearTimeout(wheelTimer);
-    slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
+    slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
     delete wheel.dataset.closing;
     wheel.classList.add('open', 'instant');
     // Mittelpunkt des Rads eine Umlaufbahn rechts vom Knopf: so liegt der linke Platz genau auf ihm
@@ -1263,12 +1265,12 @@
     if (!wheel.classList.contains('open')) { slots.forEach((s) => { s.style.mask = ''; }); return; }
     const rects = slots.map((s) => s.getBoundingClientRect());
     slots.forEach((s, i) => {
-      const r = rects[i], half = r.width / 2, z = +s.style.zIndex;
+      const r = rects[i], half = r.width / 2, scale = r.width / s.offsetWidth, z = +s.style.zIndex;
       const holes = [];
       rects.forEach((q, k) => {
-        const dx = q.left - r.left, dy = q.top - r.top;
-        if (+slots[k].style.zIndex <= z || Math.hypot(dx, dy) >= r.width) return;
-        holes.push(`radial-gradient(circle at ${half + dx}px ${half + dy}px, transparent ${half - .25}px, #000 ${half + .5}px)`);
+        const radius = q.width / 2, dx = q.left + radius - r.left - half, dy = q.top + radius - r.top - half;
+        if (+slots[k].style.zIndex <= z || Math.hypot(dx, dy) >= half + radius) return;
+        holes.push(`radial-gradient(circle at ${(half + dx) / scale}px ${(half + dy) / scale}px, transparent ${(radius - .25) / scale}px, #000 ${(radius + .5) / scale}px)`);
       });
       s.style.mask = holes.join(', ');
       s.style.maskComposite = 'intersect';
@@ -1281,6 +1283,7 @@
   // nur ein neu gewählter (`pick`) legt sich obendrauf.
   function moveSlots(out, pick = -1) {
     const n = ENGINES.length, from = ENGINES.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
+    const tuckedScale = matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : .82;
     return Promise.all(slots.map((s, i) => {
       const j = (i - from + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
       s.style.zIndex = i === pick ? n + 1 : n - j;
@@ -1288,19 +1291,60 @@
       if (!j) return null;
       const deg = (k) => ({ '--off': `${k * STEP}deg` });
       if (out) {
-        return s.animate([{ ...deg(-j), offset: 0 }, { ...deg(-j), offset: (last - j) / last }, { ...deg(0), offset: 1 }],
+        return s.animate([{ ...deg(-j), '--travel-scale': tuckedScale, offset: 0 }, { ...deg(-j), '--travel-scale': tuckedScale, offset: (last - j) / last }, { ...deg(0), '--travel-scale': 1, offset: 1 }],
           { duration: 750, easing: 'cubic-bezier(.3, 1.1, .45, 1)', fill: 'backwards' }).finished;
       }
       const d = n - j; // so viele Plätze bis zum Knopf
-      return s.animate([{ ...deg(0), offset: 0 }, { ...deg(d), offset: d / last }, { ...deg(d), offset: 1 }],
+      // Nicht gewählte Kugeln samt Logo vor dem Eintauchen verkleinern.
+      // Der gewählte Anbieter behält seinen separaten Ankunfts-Pop.
+      const endScale = i === pick ? 1 : tuckedScale;
+      return s.animate([
+        { ...deg(0), '--travel-scale': 1, offset: 0 },
+        { ...deg(d - .8), '--travel-scale': 1, offset: (d - .8) / last },
+        { ...deg(d), '--travel-scale': endScale, offset: d / last },
+        { ...deg(d), '--travel-scale': endScale, offset: 1 },
+      ],
         { duration: 650, easing: 'cubic-bezier(.45, 0, .4, 1)', fill: 'forwards' }).finished;
     }));
+  }
+  // Logo-Wechsel auf die Ankunft des neuen Kreises abstimmen, auch bei kurzen Wegen.
+  function swapWheelIcon(from, to) {
+    const n = slots.length, j = (to - from + n) % n;
+    if (!j || matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+    const progress = (n - j) / (n - 1);
+    // moveSlots nutzt cubic-bezier(.45, 0, .4, 1): Wegfortschritt in Zeit zurückrechnen.
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 16; i++) {
+      const t = (lo + hi) / 2;
+      if (t * t * (3 - 2 * t) < progress) lo = t; else hi = t;
+    }
+    const t = (lo + hi) / 2;
+    const arrival = 650 * (3 * (1 - t) ** 2 * t * .45 + 3 * (1 - t) * t * t * .4 + t ** 3);
+    const oldIcon = slots[from].querySelector('img'), newIcon = slots[to].querySelector('img');
+    const shrink = oldIcon.animate([
+      { transform: 'scale(1)', opacity: 1 },
+      { transform: 'scale(.15)', opacity: 0 },
+    ], { delay: Math.max(0, arrival - 105), duration: 95, easing: 'ease-in', fill: 'forwards' });
+    const pop = newIcon.animate([
+      { transform: 'scale(1)', offset: 0 },
+      { transform: 'scale(1.18)', offset: .38 },
+      { transform: 'scale(1)', offset: 1 },
+    ], { delay: Math.max(0, arrival - 45), duration: 230, easing: 'ease-out', fill: 'both' });
+    // Nur die Glaskugel vergrößern: der Mittelpunkt bleibt auf der Umlaufbahn,
+    // und der separate Logo-Pop wird nicht zusätzlich mitskaliert.
+    const glassPop = slots[to].animate([
+      { '--arrival-scale': 1, offset: 0 },
+      { '--arrival-scale': 1.08, offset: .38 },
+      { '--arrival-scale': 1, offset: 1 },
+    ], { delay: Math.max(0, arrival - 45), duration: 230, easing: 'ease-out', fill: 'both' });
+    return Promise.all([shrink.finished, pop.finished, glassPop.finished]);
   }
   function closeWheel(pick) {
     clearTimeout(wheelTimer);
     if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
     wheel.dataset.closing = '1';
-    const moving = moveSlots(false, pick ? ENGINES.indexOf(pick) : -1);
+    const from = ENGINES.indexOf(engine), to = pick ? ENGINES.indexOf(pick) : -1;
+    const moving = Promise.all([moveSlots(false, to), to >= 0 ? swapWheelIcon(from, to) : Promise.resolve()]);
     if (pick) setEngine(pick);
     // Knopf erst zeigen, wenn alles eingedreht ist – sonst läge er schon mit dem neuen Logo unter dem Stapel
     moving.then(() => {
@@ -1309,7 +1353,7 @@
     }).then(() => {
       delete wheel.dataset.closing;
       wheel.classList.remove('open');
-      slots.forEach((s) => s.getAnimations().forEach((a) => a.cancel()));
+      slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
       if (editing() && !suggestBox.classList.contains('open')) refreshSuggest(input.value);
     }, () => {}); // abgebrochen, weil das Rad gleich wieder aufgeht
   }
@@ -1318,7 +1362,7 @@
     e.preventDefault();
     clearTimeout(wheelTimer);
     const n = ENGINES.length, i = ENGINES.indexOf(engine);
-    if (!e.deltaY) return;
+    if (!e.deltaY || wheel.dataset.closing) return;
     setEngine(ENGINES[(i - 1 + n) % n]);
     turnWheel();
   }, { passive: false });

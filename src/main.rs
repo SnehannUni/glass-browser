@@ -68,6 +68,7 @@ enum UserEvent {
     Content(String),
     Title(u32, String),
     Favicon(u32, String),
+    PageFavicon(u32, String, String),
     ResizeSnapshot(u64, u32, String),
     Load(u32, bool, String),
     /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
@@ -124,6 +125,7 @@ struct Tab {
     id: u32,
     title: String,
     favicon: String,
+    page_favicon: String,
     url: String,
     loading: bool,
     /// Privater Tab: eigenes InPrivate-Profil nur im Arbeitsspeicher (siehe `build_content_webview`).
@@ -425,7 +427,7 @@ impl Browser {
                 let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), t.url.as_str()) };
                 json!({
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
-                    "favicon": if t.home { "" } else { &t.favicon },
+                    "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
                 })
             })
@@ -456,7 +458,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -838,6 +840,14 @@ impl Browser {
                     let _ = self.ui.evaluate_script(&format!("window.setResizeSnapshot?.({token},{id},{})", json!(image)));
                 }
             }
+            UserEvent::PageFavicon(id, source, icon) => {
+                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                    if !tab.private && source == tab.url && favicon::valid_page_icon(&icon) {
+                        tab.page_favicon = icon;
+                        self.sync_ui();
+                    }
+                }
+            }
             UserEvent::Favicon(id, icon) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     tab.favicon = icon;
@@ -868,6 +878,7 @@ impl Browser {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     if loading {
                         tab.blocked = 0;
+                        tab.page_favicon.clear();
                     } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
                         let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
                     }
@@ -958,6 +969,7 @@ fn build_content_webview(
         .with_url(url)
         .with_bounds(bounds)
         .with_devtools(true)
+        .with_initialization_script(if private { "" } else { include_str!("favicon-content.js") })
         .with_initialization_script(CONTENT_JS)
         .with_initialization_script(include_str!("passkey-policy.js"))
         .with_initialization_script(include_str!("autofill-content.js"))
@@ -965,7 +977,10 @@ fn build_content_webview(
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
             let event = if body.starts_with('{') {
-                if serde_json::from_str::<Value>(&body).ok().is_some_and(|v| v.get("autofill").is_some()) {
+                let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
+                if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
+                    UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
+                } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
                 } else { UserEvent::Cosmetic(id, body) }
             } else { UserEvent::Content(body) };
