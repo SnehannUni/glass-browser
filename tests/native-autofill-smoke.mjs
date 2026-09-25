@@ -11,10 +11,12 @@ const listener = createServer();
 await new Promise(r => listener.listen(0, '127.0.0.1', r));
 const port = listener.address().port;
 await new Promise(r => listener.close(r));
-const synthetic = process.argv.includes('--synthetic');
+const unavailable = process.argv.includes('--unavailable');
+const synthetic = process.argv.includes('--synthetic') || unavailable;
 const adapterPath = resolve('target/release/icloud/bridge.mjs');
 const original = synthetic ? await readFile(adapterPath) : null;
 if (synthetic) await writeFile(adapterPath, `import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',async line=>{const q=JSON.parse(line);if(q.op==='list')await new Promise(r=>setTimeout(r,800));const data=q.op==='list'?{accounts:[{username:'synthetic-user',label:'Test account'}]}:{username:'synthetic-user',password:'synthetic-password'};process.stdout.write(JSON.stringify({id:q.id,data})+'\\n');});`);
+if (unavailable) await writeFile(adapterPath, `import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',async line=>{const q=JSON.parse(line);if(q.op==='list')await new Promise(r=>setTimeout(r,800));const data=q.op==='list'?{accounts:[{username:'synthetic-user',label:'Test account'}]}:{username:'synthetic-user',password:'synthetic-password'};process.stdout.write(JSON.stringify({id:q.id,error:"iCloud-Anbindung nicht verfügbar. Lokales Setup prüfen."})+'\\n');});`);
 const app = spawn(resolve('target/release/glass-browser.exe'), ['about:blank'], {
   windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
@@ -67,6 +69,7 @@ try {
     assert.equal(await page.evaluate(`(async()=>{const credential=await navigator.credentials.create({publicKey:{challenge:new Uint8Array(32),rp:{name:'Glass test'},user:{id:new Uint8Array([1]),name:'test',displayName:'Test'},pubKeyCredParams:[{type:'public-key',alg:-7}]}});const result=await navigator.credentials.get({mediation:'required',publicKey:{challenge:new Uint8Array(32),allowCredentials:[{type:'public-key',id:credential.rawId}]}});return result.id===credential.id})()`),true);
     console.log('PASS: conditional passkey popup disabled; explicit WebAuthn registration/sign-in succeeds.');
   }
+  await ui.evaluate(`window.pickerAppeared=false;new MutationObserver(()=>{if(document.getElementById('password-suggestions'))window.pickerAppeared=true}).observe(document.body,{childList:true,subtree:true})`);
   await page.evaluate(`document.getElementById('user').focus()`);
   if (synthetic) {
     await delay(100);
@@ -74,6 +77,13 @@ try {
     await delay(100);
     await ui.evaluate(`window.testPicker=document.getElementById('password-suggestions')`);
   }
+  if (unavailable) {
+    await delay(2000);
+    await page.evaluate(`document.querySelector('input[type=password]').focus()`);
+    await delay(1000);
+    assert.equal(await ui.evaluate(`window.pickerAppeared || !!document.getElementById('password-suggestions')`), false, 'unavailable iCloud never opens even a loading/error popup');
+    console.log('PASS: unavailable iCloud stays invisible on username and password focus.');
+  } else {
   let result;
   for (let i = 0; i < 250; i++) {
     result = await ui.evaluate(`document.getElementById('password-suggestions')?.textContent || ''`);
@@ -82,7 +92,7 @@ try {
   }
   assert.ok(result.includes(synthetic ? 'synthetic-user' : 'Keine passenden Passwörter'), `Native account picker result: ${result}`);
   if (synthetic) {
-    assert.equal(await ui.evaluate(`window.testPicker===document.getElementById('password-suggestions')`),true,'late results update the existing picker without another field click');
+    assert.equal(await ui.evaluate('window.testPicker'),null,'pending lookup does not show a loading popup');
     // A synthetic click cannot authorize credential filling.
     await ui.evaluate(`document.querySelector('#password-suggestions button').click()`);
     assert.equal(await page.evaluate(`document.querySelector('input[type=password]').value`), '');
@@ -93,6 +103,7 @@ try {
     assert.equal(await page.evaluate(`document.getElementById('user').value`), 'synthetic-user');
     assert.equal(await page.evaluate(`document.querySelector('input[type=password]').value`), 'synthetic-password');
     console.log('PASS: trusted native picker fills synthetic credentials; script-generated click rejected.');
+  }
   }
   await page.evaluate(`document.getElementById('user').blur();document.body.dispatchEvent(new Event('scroll'))`);
   await delay(200);

@@ -83,10 +83,11 @@ impl Browser {
         if values[0] < 0.0 || values[1] < 0.0 || values[0] > width || values[1] > height || values[2] <= 0.0 || values[3] <= 0.0 { return; }
         let origin = format!("https://{}", uri.authority().unwrap());
         self.autofill_seq += 1;
+        self.dismiss_autofill();
         let id = self.autofill_seq;
         self.autofill = Some(Pending { id, tab: tab_id, url, origin, host: host.clone(), token: token.to_owned(),
             x: px + values[0], y: py + values[1] + values[3] + 4.0, accounts: Vec::new(), filling: false });
-        self.show_autofill(Some("iCloud wird verbunden …"));
+        // Passive lookups stay invisible until iCloud returns a usable response.
         let _ = self.icloud.send(json!({ "id": id, "op": "list", "host": host }));
     }
 
@@ -107,7 +108,17 @@ impl Browser {
         if reply["id"].as_u64() == Some(0) { return; }
         if !self.autofill_current() { self.dismiss_autofill(); return; }
         let Some(p) = self.autofill.as_mut().filter(|p| reply["id"].as_u64() == Some(p.id)) else { return };
-        if let Some(error) = reply["error"].as_str() { p.filling = false; self.show_autofill(Some(error)); return; }
+        if let Some(error) = reply["error"].as_str() {
+            // A focused field is not an explicit request to set up or repair iCloud.
+            // Only report failures after the user has selected an account to fill.
+            if p.filling {
+                p.filling = false;
+                self.show_autofill(Some(error));
+            } else {
+                self.dismiss_autofill();
+            }
+            return;
+        }
         if p.filling {
             if let (Some(username), Some(password)) = (reply["data"]["username"].as_str(), reply["data"]["password"].as_str()) {
                 let script = format!("window.__glassAutofillFill?.({}, {}, {}, {})", json!(p.token), json!(p.origin), json!(username), json!(password));
@@ -136,7 +147,8 @@ impl Browser {
         self.autofill_seq += 1;
         p.id = self.autofill_seq;
         p.accounts.clear();
+        let _ = self.ui.evaluate_script("window.hidePasswordSuggestions?.()");
         let _ = self.icloud.send(json!({"id": p.id, "op": "list", "host": p.host}));
-        self.show_autofill(Some("iCloud wird verbunden …"));
+        // Passive lookups stay invisible until iCloud returns a usable response.
     }
 }
