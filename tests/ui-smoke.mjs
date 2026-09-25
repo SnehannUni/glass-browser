@@ -85,11 +85,65 @@ try {
   console.log('UI loaded');
   await evaluate(`window.testState={tabs:[{id:1,title:'Example',url:'https://example.com',page:true,adblock:true},{id:2,title:'Second tab',url:'https://example.org',page:true}],active:1,focused:true,chromeHeight:42,tabbar:true,panes:[]};render(structuredClone(testState));setGeometry({x:0,y:0,mx:0,my:0,mw:1280,mh:820,floating:true})`);
   await delay(700);
-  const geometry = await evaluate(`(() => {const rect=id=>document.querySelector(id).getBoundingClientRect();const a=rect('#address'),s=rect('#addr-search'),r=rect('#btn-reload'),t=rect('.tab'),c=rect('.close');return {left:s.left-a.left,right:a.right-r.right,gap:r.left-s.right,close:[c.left-t.left,c.top-t.top,t.bottom-c.bottom]}})()`);
-  assert.equal(geometry.left, 5); assert.equal(geometry.right, 5); assert.equal(geometry.gap, 0);
+  const geometry = await evaluate(`(() => {const rect=id=>document.querySelector(id).getBoundingClientRect();const a=rect('#address'),s=rect('#btn-star'),r=rect('#btn-reload'),t=rect('.tab:not(.active)'),c=rect('.tab:not(.active) .close');return {right:a.right-r.right,gap:r.left-s.right,close:[c.left-t.left,c.top-t.top,t.bottom-c.bottom],slot:document.querySelector('#addr-tab .title').textContent,listed:[...document.querySelectorAll('.tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id)}})()`);
+  assert.equal(geometry.right, 5); assert.equal(geometry.gap, 0);
+  assert.equal(geometry.slot, 'Example', 'active tab sits in the address field');
+  assert.deepEqual(geometry.listed, ['2'], 'active tab leaves the tab list');
+  assert.equal(await evaluate(`document.getElementById('btn-private').offsetWidth`), 0, 'private button hidden on a web page');
   assert.deepEqual(geometry.close, [3, 3, 3]);
   await writeFile('target/ui-smoke/toolbar.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   console.log('Spacing verified');
+  const swapped = await evaluate(`(()=>{render({...structuredClone(testState),active:2});const r={slot:document.querySelector('#addr-tab .title').textContent,listed:[...document.querySelectorAll('.tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id)};render(structuredClone(testState));return r})()`);
+  assert.deepEqual(swapped, { slot: 'Second tab', listed: ['1'] }, 'previous tab returns to the list, new one moves to the field');
+  const paired = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:1,right:2};render(s);await new Promise(r=>setTimeout(r,600));const d=document.querySelector('.tab.docked'),a=document.getElementById('address').getBoundingClientRect();const pair=()=>({slot:document.querySelector('#addr-tab .title').textContent,docked:d&&d.dataset.id,gap:d&&Math.round(a.right-d.getBoundingClientRect().right),listed:[...document.querySelectorAll('#tabs .tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id),lens:!document.getElementById('lens').classList.contains('off')});const r=[pair()];s.active=2;render(s);await new Promise(r=>setTimeout(r,600));r.push((({gap,...x})=>x)({...pair(),docked:document.querySelector('.tab.docked')?.dataset.id}));render(structuredClone(testState));await new Promise(r=>setTimeout(r,50));r.push(document.querySelectorAll('.tab.docked').length);return r})()`);
+  assert.deepEqual(paired, [
+    { slot: 'Example', docked: '2', gap: 0, listed: ['3'], lens: false },
+    { slot: 'Second tab', docked: '1', listed: ['3'], lens: false },
+    0,
+  ], 'split: active tab in the field, partner inside the same capsule on its right, no tab shown twice; unsplit undocks');
+  // Another tab active: the pair stays combined in the bar (left, right – even if not adjacent in tab order)
+  const grouped = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:3,right:1};s.active=2;render(s);await new Promise(r=>setTimeout(r,600));const t=[...document.querySelectorAll('#tabs .tab')].filter(t=>t.offsetWidth);const [a,b]=[document.querySelector('.pair-left'),document.querySelector('.pair-right')].map(e=>e?.getBoundingClientRect());return {order:t.map(t=>t.dataset.id),touch:!!a&&!!b&&Math.round(b.left-a.right)}})()`);
+  await writeFile('target/ui-smoke/pair-inactive.png', Buffer.from((await call('Page.captureScreenshot', { clip: { x: 0, y: 0, width: 1280, height: 60, scale: 1 } })).data, 'base64'));
+  assert.deepEqual(grouped, { order: ['3', '1'], touch: 0 }, 'inactive pair shown combined as one capsule');
+  // Only one combined pair: "+" moves right next to the field
+  const pairSolo = await evaluate(`(async()=>{const s=structuredClone(testState);s.split={left:1,right:2};render(s);await new Promise(r=>setTimeout(r,1200));const a=document.getElementById('address').getBoundingClientRect(),n=document.getElementById('btn-new').getBoundingClientRect();return {inLeft:!!document.querySelector('.side.left > #btn-new'),gap:Math.round(n.left-a.right)}})()`);
+  assert.deepEqual(pairSolo, { inLeft: true, gap: 6 }, 'single combined pair: "+" sits right next to the field');
+  // Dragging either half of the pair into the middle separates it; the other one stays in the field
+  const drag = async (selector) => {
+    const [x, y] = await evaluate(`(()=>{const r=document.querySelector('${selector}').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`);
+    await evaluate(`messages.length=0`);
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let i = 1; i <= 8; i++) await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + (900 - x) * i / 8, y, button: 'left', buttons: 1 });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 900, y, button: 'left', buttons: 0, clickCount: 1 });
+    return evaluate(`messages.filter(m=>['move_tab','activate','split'].includes(m.cmd)).map(m=>[m.cmd,m.id,m.index])`);
+  };
+  const three = `(()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:1,right:2};render(s)})()`;
+  await evaluate(three); await delay(700);
+  assert.deepEqual(await drag('.tab.docked'), [['move_tab', 2, 1], ['activate', 1, null]], 'partner dragged into the middle: separated, field keeps the active tab');
+  await evaluate(three); await delay(700);
+  assert.deepEqual(await drag('#addr-tab'), [['move_tab', 1, 0], ['activate', 2, null]], 'field tab dragged out: separated, partner moves into the field');
+  await evaluate(`render(structuredClone(testState))`);
+  await delay(700);
+  {
+    await evaluate(`hoverAt(300,2,true)`); await delay(450); // Leiste ist nach 3,5 s Ruhe ausgeblendet
+    const [x, y] = await evaluate(`(()=>{const r=document.querySelector('#addr-tab .title').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`);
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+    assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'click on the tab in the field opens the search');
+    await evaluate(`document.activeElement.blur()`);
+    await delay(700);
+  }
+  // Tabs stay centred in the window, even when the address field makes the left side wider than the right
+  for (const [count, active] of [[5, 1], [5, 5]]) {
+    const offset = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs=Array.from({length:${count}},(_,i)=>({id:i+1,title:'Tab '+(i+1),url:${active}===i+1?'':'https://example.com/'+i,page:${active}!==i+1}));s.active=${active};render(s);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const t=document.getElementById('tabs').getBoundingClientRect(),n=document.getElementById('btn-new').getBoundingClientRect();return (t.left+n.right)/2-innerWidth/2})()`);
+    assert.ok(Math.abs(offset) <= 4, `tabs centred with ${count} tabs, active ${active}: offset ${offset}`);
+  }
+  const solo = await evaluate(`(async()=>{document.activeElement.blur();const s=structuredClone(testState);s.tabs=s.tabs.slice(0,1);render(s);await new Promise(r=>setTimeout(r,1200));const a=document.getElementById('address').getBoundingClientRect(),n=document.getElementById('btn-new').getBoundingClientRect();return {inLeft:!!document.querySelector('.side.left > #btn-new'),gap:Math.round(n.left-a.right)}})()`);
+  assert.deepEqual(solo, { inLeft: true, gap: 6 }, 'single tab: "+" sits right next to the address field');
+  await evaluate(`render(structuredClone(testState))`);
+  assert.equal(await evaluate(`document.getElementById('btn-new').parentElement.id`), 'tabbar', 'second tab: "+" returns to the tab bar');
+  await delay(800); // Startbildschirm → Leiste: das Adressfeld gleitet zurück
+  await delay(500);
   await evaluate(`{
     const style=document.createElement('style');style.id='debug-test-style';
     style.textContent='@keyframes debug-spin {to {transform:rotate(360deg)}} #debug-probe {opacity:1;transition:opacity 10s} #debug-probe::before {content:"test";animation:debug-spin 10s linear infinite}';document.head.append(style);
@@ -113,8 +167,8 @@ try {
   assert.ok(await evaluate(`debugProbe.getAnimations({subtree:true}).every(a=>a.playbackRate===1)`),'disabling restores original speed');
   await evaluate(`debugProbe.getAnimations({subtree:true}).forEach(a=>a.cancel());debugProbe.remove();document.getElementById('debug-test-style').remove()`);
   console.log('PASS: animation debug slows CSS/WAAPI, picks up new animations and restores live playback.');
-  const compact = await evaluate(`(()=>{const a=document.getElementById('address'),s=document.querySelector('#addr-search svg').getBoundingClientRect(),r=document.querySelector('#btn-reload svg').getBoundingClientRect(),box=a.getBoundingClientRect();const b=document.getElementById('addr-search').getBoundingClientRect();hoverAt(b.x+b.width/2,b.y+b.height/2,true);return {left:s.left-box.left,gap:r.left-s.right,right:box.right-r.right,clearance:r.left-(b.right+2)};})()`);
-  assert.ok(Math.abs(compact.left-compact.gap)<=1 && Math.abs(compact.right-compact.gap)<=1,'even optical icon spacing');
+  const compact = await evaluate(`(()=>{const a=document.getElementById('address'),s=document.querySelector('#btn-star svg').getBoundingClientRect(),r=document.querySelector('#btn-reload svg').getBoundingClientRect(),box=a.getBoundingClientRect();const b=document.getElementById('btn-star').getBoundingClientRect();hoverAt(b.x+b.width/2,b.y+b.height/2,true);return {gap:r.left-s.right,right:box.right-r.right,clearance:r.left-(b.right+2)};})()`);
+  assert.ok(Math.abs(compact.right-compact.gap)<=1,'even optical icon spacing');
   assert.ok(compact.clearance>=2,`hover leaves clearance to neighbouring icon: ${JSON.stringify(compact)}`);
   await delay(140);
   const hoverX=()=>evaluate(`new DOMMatrix(getComputedStyle(document.getElementById('address'),'::before').transform).m41`);
@@ -135,10 +189,10 @@ try {
   await delay(40);
   assert.notEqual(await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`), firstLight);
   assert.equal(await evaluate(`document.querySelectorAll('.vh').length`), 0);
-  await evaluate(`{const r=document.getElementById('btn-private').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
-  assert.equal(await evaluate(`document.getElementById('btn-private').classList.contains('vh')`), true);
-  await evaluate(`{const r=document.getElementById('btn-private').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,false)}`);
-  assert.equal(await evaluate(`document.getElementById('btn-private').classList.contains('vh')`), false);
+  await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
+  assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), true);
+  await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,false)}`);
+  assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), false);
   await delay(40);
   const lastLight = await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`);
   await evaluate(`hoverAt(null)`);
@@ -226,6 +280,7 @@ try {
   await delay(700);
   const screenshot = await call('Page.captureScreenshot');
   await writeFile('target/ui-smoke/start.png', Buffer.from(screenshot.data, 'base64'));
+  assert.ok(await evaluate(`document.getElementById('btn-private').offsetWidth > 0`), 'private button visible on the start screen');
   const startGeometry = await evaluate(`(()=>{const input=document.getElementById('addr-input'),icon=document.querySelector('#addr-search svg'),box=document.getElementById('address').getBoundingClientRect(),a=icon.getBoundingClientRect(),b=input.getBoundingClientRect();return {left:a.left-box.left,gap:b.left-a.right,iconCenter:a.top+a.height/2,inputCenter:b.top+b.height/2}})()`);
   assert.equal(startGeometry.left,startGeometry.gap,'equal spacing on both sides of the search icon');
   assert.equal(startGeometry.inputCenter,startGeometry.iconCenter-1,'optical text alignment');
