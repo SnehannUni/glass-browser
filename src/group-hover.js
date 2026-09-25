@@ -8,8 +8,10 @@
   function at(x, y, overUI = true) {
     // Resolve the group first: rounded button corners and the group's padding
     // must not interrupt the moving highlight between neighbouring controls.
-    const group = x == null || !overUI ? null : document.elementFromPoint(x,y)?.closest('[data-button-group]');
-    if (!group || (group.id === 'address' && (group.classList.contains('editing') || document.body.classList.contains('start')))) { clear(); return; }
+    const hit = x == null || !overUI ? null : document.elementFromPoint(x,y);
+    const group = hit?.closest('[data-button-group]');
+    // [data-group-skip]: content inside a group that is not a button zone (the active tab in the address field)
+    if (!group || hit.closest('[data-group-skip]') || (group.id === 'address' && (group.classList.contains('editing') || document.body.classList.contains('start')))) { clear(); return; }
     const buttons = [...group.querySelectorAll(':scope > button.key')]
       .map(button => ({button, rect:button.getBoundingClientRect()}))
       .filter(({rect}) => rect.width > 0 && rect.height > 0);
