@@ -19,6 +19,11 @@ function makePdf(pages) {
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${objects.length} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`);
     kids.push(`${objects.length} 0 R`);
   }
+  const fieldId = objects.length + 1;
+  objects.push('<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Before) /Rect [72 650 220 680] /P 5 0 R /DA (/Helv 12 Tf 0 g) /F 4 >>');
+  objects.push(`<< /Fields [${fieldId} 0 R] /DR << /Font << /Helv 3 0 R >> >> /DA (/Helv 12 Tf 0 g) >>`);
+  objects[0] = objects[0].replace('>>', `/AcroForm ${objects.length} 0 R >>`);
+  objects[4] = objects[4].replace('/Contents', `/Annots [${fieldId} 0 R] /Contents`);
   objects[1] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`;
   let out = '%PDF-1.4\n';
   const offsets = objects.map((body, i) => { const at = out.length; out += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
@@ -33,6 +38,10 @@ const profile = await mkdtemp(resolve('target/pdf-smoke/profile-'));
 const pdf = makePdf(3);
 let pdfRequests = 0;
 const server = createServer((req, res) => {
+  if (req.url === '/attack') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><iframe src="/docs/embedded.pdf" onload="this.dataset.loaded=1"></iframe>'); return;
+  }
   if (req.url.startsWith('/docs/')) {
     pdfRequests++;
     res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': pdf.length });
@@ -91,6 +100,7 @@ try {
   await page.call('Log.enable');
   await viewerReady(page);
 
+  assert.ok(await page('pdfjsLib.GlobalWorkerOptions.workerPort instanceof Worker'), 'PDF rendering uses a real worker');
   assert.equal(await page(`document.title`), 'Bericht.pdf');
   assert.equal(await page(`location.href`), `${origin}/docs/Bericht.pdf`, 'address stays the PDF');
   assert.equal(await page(`document.getElementById('page-count').textContent`), '/ 3');
@@ -132,6 +142,20 @@ try {
   assert.ok(await page(`document.body.classList.contains('dark')`));
   console.log('PASS: thumbnails, zoom and dark pages work.');
 
+  await waitFor(() => page(`!!document.querySelector('input[name="name"]')`), 'form field');
+  const formResult = await page(`(async () => {
+    const field=document.querySelector('input[name="name"]'); field.value='After'; field.dispatchEvent(new Event('input',{bubbles:true})); field.dispatchEvent(new Event('change',{bubbles:true}));
+    let capture; const original=URL.createObjectURL; URL.createObjectURL=function(blob){if(blob.type==='application/pdf')capture=blob;return original.call(this,blob)};
+    const click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};
+    document.getElementById('download').click();
+    for(let i=0;i<100&&!capture;i++)await new Promise(r=>setTimeout(r,20));
+    URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;
+    const saved=await pdfjsLib.getDocument({data:new Uint8Array(await capture.arrayBuffer())}).promise;
+    return {visible:field.value,saved:(await (await saved.getPage(1)).getAnnotations()).map(a=>({name:a.fieldName,value:a.fieldValue}))};
+  })()`);
+  assert.equal(formResult.visible, 'After');
+  assert.equal(formResult.saved[0].value, 'After', 'download preserves edited form value');
+  console.log('PASS: downloaded PDF preserves edited form values.');
   // Neu laden: wieder der Viewer (die Bytes gibt es nur einmal – die Antwort wird erneut abgefangen)
   await page(`location.reload()`);
   await delay(300);
@@ -152,6 +176,12 @@ try {
   const problems = page.events.filter(e => e.method === 'Log.entryAdded' && e.params.entry.level === 'error' && !e.params.entry.url?.endsWith('/favicon.ico')).map(e => `${e.params.entry.text} ${e.params.entry.url || ''}`);
   assert.deepEqual(problems, [], 'no console errors (CSP, loading)');
   console.log('PASS: no CSP or loading errors.');
+  await page(`location.href = ${JSON.stringify(origin + '/attack')}`);
+  await waitFor(() => page(`document.querySelector('iframe')?.dataset.loaded === '1'`), 'PDF iframe loaded');
+  const isolated = await page(`(()=>{const frame=document.querySelector('iframe');try{return {documentHidden:frame.contentDocument===null,readable:!!frame.contentWindow.document.body.dataset.wall}}catch(e){return {documentHidden:frame.contentDocument===null,blocked:e.name}}})()`);
+  assert.equal(isolated.documentHidden, true);
+  assert.equal(isolated.blocked, 'SecurityError', 'website cannot read PDF viewer or wallpaper token');
+  console.log('PASS: same-origin website cannot access embedded viewer secrets.');
 } finally {
   clearTimeout(watchdog);
   sockets.forEach(s => s.close());

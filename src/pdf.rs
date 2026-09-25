@@ -132,10 +132,10 @@ fn paused(core: &ICoreWebView2, docs: &Documents, p: &Value) {
             "responseCode": 200,
             "responseHeaders": [
                 { "name": "Content-Type", "value": "text/html; charset=utf-8" },
-                // Der Viewer läuft im Origin der PDF-Seite: Skripte nur von Glass, nichts Eingebettetes aus dem PDF.
-                // wasm-unsafe-eval für die Bild-Decoder (JPEG 2000, JBIG2), blob: für den Worker von PDF.js.
+                // Opaque sandbox origin: website parents/openers cannot read viewer tokens or the wallpaper.
+                // wasm-unsafe-eval für Bild-Decoder; data: startet den Worker im eigenen opaken Origin.
                 { "name": "Content-Security-Policy", "value": format!(
-                    "default-src 'none'; script-src {HOST} blob: 'wasm-unsafe-eval'; worker-src {HOST} blob:; \
+                    "sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src {HOST} blob: 'wasm-unsafe-eval'; worker-src {HOST} data:; \
                      connect-src {HOST}; style-src {HOST} 'unsafe-inline'; img-src {HOST} blob: data:; \
                      font-src {HOST} blob: data:; base-uri 'none'; form-action 'none'") },
             ],
