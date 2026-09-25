@@ -1,5 +1,5 @@
 // Glass-PDF-Viewer: PDF.js rendert, Oberfläche und Bedienung sind eigen.
-// Läuft im Origin der PDF-Seite (pdf.rs); Skripte und Daten kommen von glass-pdf.localhost aus der Exe.
+// Läuft mit isoliertem Sandbox-Origin (pdf.rs); Skripte und Daten kommen von glass-pdf.localhost aus der Exe.
 const BASE = 'http://glass-pdf.localhost/';
 const $ = (id) => document.getElementById(id);
 const name = document.body.dataset.name;
@@ -7,7 +7,10 @@ const name = document.body.dataset.name;
 const pdfjsLib = await import(BASE + 'pdf.min.mjs');
 globalThis.pdfjsLib = pdfjsLib; // pdf_viewer.mjs erwartet die Bibliothek global
 const { EventBus, PDFLinkService, PDFFindController, PDFViewer, LinkTarget, FindState } = await import(BASE + 'pdf_viewer.mjs');
-pdfjsLib.GlobalWorkerOptions.workerSrc = BASE + 'pdf.worker.min.mjs';
+// A data-URL module worker supports the viewer's opaque sandbox origin. PDF.js's URL-based
+// origin check uses location.href, which still displays the original PDF URL.
+const workerUrl = 'data:text/javascript,' + encodeURIComponent(`import "${BASE}pdf.worker.min.mjs";`);
+pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(workerUrl, { type: 'module' });
 
 // ---------- Glas: Linse, Glanzkante, Wallpaper, Schriftfarbe (wie ui.html) ----------
 window.GlassLens.watch();
@@ -396,7 +399,7 @@ $('theme').onclick = () => {
 };
 
 async function download() {
-  const url = URL.createObjectURL(new Blob([await doc.getData()], { type: 'application/pdf' }));
+  const url = URL.createObjectURL(new Blob([await doc.saveDocument()], { type: 'application/pdf' }));
   Object.assign(document.createElement('a'), { href: url, download: name }).click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
