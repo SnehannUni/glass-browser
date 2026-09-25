@@ -1,0 +1,244 @@
+/* Glass-PDF-Viewer – dieselbe Glassprache wie ui.html: Wallpaper hinter dem Glas, Lichtbrechung (glass-lens.js),
+   Glanzkante zum Mauszeiger (glass-rim.js), wandernde Hover-Fläche (group-hover.js). Werte wie dort. */
+:root {
+  --label: rgba(255, 255, 255, .97);
+  --label-2: rgba(255, 255, 255, .82);
+  --label-3: rgba(255, 255, 255, .6);
+  --blue: #0a84ff;
+  --spring: cubic-bezier(.32, 1.5, .44, 1);
+  --ease: cubic-bezier(.25, .8, .25, 1);
+  --control-hover: rgba(255, 255, 255, .12);
+  --control-pressed: rgba(255, 255, 255, .2);
+  --control-height: 34px;
+  --glass-rim: 1px;
+  --glass-outline: .08;
+  --glass-highlight: .72;
+  --glass-reflection: .22;
+  --sidebar-width: 212px;
+  --gap: 10px;
+  --font: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+/* Ersatz, bis das Wallpaper da ist (oder wenn es keins gibt). Nur auf html: ein Hintergrund auf body läge über #wall. */
+html { background: radial-gradient(120% 90% at 50% 0%, #34353b, #1e1f23 70%); }
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  color: var(--label); font: 13px/1.25 var(--font); letter-spacing: -.01em;
+  -webkit-font-smoothing: antialiased;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+input { font: inherit; line-height: normal; color: inherit; background: none; border: 0; outline: none; min-width: 0; }
+input::selection { background: rgba(255, 255, 255, .24); color: var(--label); }
+svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75;
+      stroke-linecap: round; stroke-linejoin: round; flex: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .3)); }
+/* Kein Schriftschatten im Dokument: die unsichtbare Textebene von PDF.js würde ihn sonst über jeden Buchstaben legen */
+#container { text-shadow: none; }
+.textLayer ::selection { background: rgba(10, 132, 255, .3); }
+
+/* Liegt eine Glasfläche über heller Seite oder hellem Wallpaper: dunkle Schrift (updateInk) */
+.ink-dark {
+  --label: rgba(14, 16, 24, .94); --label-2: rgba(14, 16, 24, .76); --label-3: rgba(14, 16, 24, .56);
+  --control-hover: rgba(0, 0, 0, .08); --control-pressed: rgba(0, 0, 0, .14);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, .35);
+}
+.ink-dark svg { filter: drop-shadow(0 1px 1px rgba(255, 255, 255, .3)); }
+/* Über heller Seite dunkelt das Glas nicht ab (oben in Glass hält das weiße Schrift auf dem Wallpaper lesbar) –
+   sonst wird aus klarem Glas über weißem Papier ein graues Feld */
+.glass.ink-dark:not(.well > .glass) { --glass-brightness: 1; }
+
+/* Unterlage einer schwebenden Kapsel: genau das Stück Wallpaper, das hinter dieser Stelle des Fensters liegt
+   (Bild und Lage setzt placeWells). Das Glas darüber bricht so das Hintergrundbild statt des PDFs. */
+.well {
+  border-radius: calc(var(--control-height) / 2);
+  background: var(--wall-image, #1e1f23) no-repeat;
+  background-size: var(--wall-size, auto);
+}
+.well.round { border-radius: 50%; }
+
+/* ---------- Wallpaper ---------- */
+#wall {
+  position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none;
+  will-change: transform; opacity: 0; transition: opacity .6s var(--ease);
+}
+#wall.ready { opacity: 1; }
+
+/* ---------- Liquid Glass: genau wie .glass in ui.html (Suchfeld auf dem Startbildschirm) ---------- */
+.glass {
+  position: relative; isolation: isolate;
+  background: linear-gradient(180deg, rgba(255, 255, 255, var(--glass-fill-top, .065)), rgba(255, 255, 255, var(--glass-fill-bottom, .025)));
+  /* Ohne Linse; GlassLens ersetzt das durch Lichtbrechung + Blur */
+  backdrop-filter: blur(6px) saturate(1.5) brightness(var(--glass-brightness, .82));
+  box-shadow:
+    inset 0 -10px 18px -14px rgba(255, 255, 255, .08),
+    0 6px 20px -6px rgba(0, 0, 0, .28),
+    0 1px 3px rgba(0, 0, 0, .16);
+  transition: transform .5s var(--spring), background .3s;
+}
+.glass > svg.glass-rim {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+  fill: none; stroke: none; filter: none; overflow: visible;
+}
+.glass-outline { stroke-opacity: var(--glass-outline); }
+.glass-highlights { opacity: var(--rim-proximity, 0); transition: opacity .2s var(--ease); }
+@media (prefers-contrast: more) {
+  .glass { outline: 1px solid var(--label-2); outline-offset: -1px; }
+}
+
+.capsule { height: var(--control-height); border-radius: calc(var(--control-height) / 2); display: flex; align-items: center; padding: 0 5px; }
+.round { width: var(--control-height); height: var(--control-height); border-radius: 50%; display: grid; place-items: center; color: var(--label); }
+.round:hover { background-color: var(--control-hover); }
+.round:active { background-color: var(--control-pressed); }
+.round.on, .key.on { color: var(--blue); }
+
+.key {
+  position: relative; height: 26px; min-width: 30px; border-radius: 13px;
+  display: grid; place-items: center; color: var(--label);
+  transition: opacity .18s var(--ease), color .18s var(--ease);
+}
+.key:disabled { color: var(--label-3); }
+:is(.key, .round, .segmented button):focus-visible { outline: 2px solid var(--label); outline-offset: -2px; }
+
+/* Eine wandernde Hover-Fläche pro Knopfgruppe (group-hover.js), wie in der Leiste oben */
+[data-button-group]::before {
+  content: ''; position: absolute; left: 0; top: 0; pointer-events: none;
+  width: var(--group-width, 28px); height: var(--group-height, 26px); border-radius: 13px;
+  transform: translate(var(--group-x, 3px), var(--group-y, 4px));
+  background: var(--control-hover); opacity: 0;
+  transition: transform 110ms ease-out, width 110ms ease-out, opacity 80ms ease-out;
+}
+[data-button-group].group-hover-on::before { opacity: 1; }
+[data-button-group].group-hover-pressed::before { background: var(--control-pressed); }
+[data-button-group].group-hover-instant::before { transition: none; }
+@media (prefers-reduced-motion: reduce) { [data-button-group]::before { transition: none; } }
+
+/* ---------- Leiste unten ---------- */
+#dock {
+  position: fixed; left: 50%; bottom: 14px; z-index: 10; display: flex; gap: 8px; align-items: center;
+  transform: translateX(-50%); transition: transform .5s var(--spring);
+}
+body.sidebar-open #dock { transform: translateX(calc(-50% + var(--sidebar-width) / 2 + var(--gap) / 2)); }
+/* Kapseln springen nacheinander auf, wie beim Start von Glass */
+#dock > * { animation: pop-in .55s var(--spring) both; }
+#dock > :nth-child(2) { animation-delay: 40ms; }
+#dock > :nth-child(3) { animation-delay: 80ms; }
+#dock > :nth-child(4) { animation-delay: 120ms; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(10px) scale(.7); } }
+
+.pages { display: flex; align-items: center; gap: 3px; padding: 0 4px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+#page {
+  width: 3.4ch; height: 22px; text-align: center; border-radius: 11px; color: var(--label);
+  transition: background-color .18s var(--ease);
+}
+#page:hover { background: var(--control-hover); }
+#page:focus { background: var(--control-pressed); }
+.zoom { min-width: 50px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+
+/* ---------- Suche ---------- */
+#find {
+  position: fixed; top: 12px; right: 12px; z-index: 11; width: min(360px, calc(100% - 24px));
+  animation: drop-in .45s var(--spring) both;
+}
+#find > .glass { padding: 0 5px 0 12px; }
+@keyframes drop-in { from { opacity: 0; transform: translateY(-8px) scale(.97); } }
+#find .field { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; }
+#find .field > svg { color: var(--label-3); }
+#find-input { flex: 1; height: 100%; }
+#find-input::placeholder { color: var(--label-3); }
+#find-count { color: var(--label-3); font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 4px; }
+#find.missing #find-input { color: #ff6961; }
+
+/* ---------- Seitenleiste ---------- */
+#sidebar {
+  position: fixed; left: var(--gap); top: var(--gap); bottom: var(--gap); width: var(--sidebar-width); z-index: 9;
+  border-radius: 18px; display: flex; flex-direction: column; overflow: hidden;
+  transform: translateX(calc(-100% - 2 * var(--gap))); opacity: 0; pointer-events: none;
+  transition: transform .5s var(--spring), opacity .25s var(--ease);
+}
+body.sidebar-open #sidebar { transform: none; opacity: 1; pointer-events: auto; }
+.segmented { position: relative; display: flex; margin: 10px 10px 2px; padding: 2px; border-radius: 10px; background: rgba(0, 0, 0, .18); flex: none; }
+.segmented button { flex: 1; height: 24px; border-radius: 8px; color: var(--label-2); transition: background-color .2s var(--ease), color .2s; }
+.segmented button.on { background: rgba(255, 255, 255, .18); color: var(--label); box-shadow: 0 1px 3px rgba(0, 0, 0, .22); }
+.sidebar-view { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .22) transparent; }
+
+#thumbs { padding: 14px 0 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.thumb { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--label-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.thumb .sheet {
+  width: 120px; background: #fff; border-radius: 4px; overflow: hidden;
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .18), 0 4px 12px -2px rgba(0, 0, 0, .4);
+  transition: box-shadow .2s var(--ease), transform .4s var(--spring);
+}
+.thumb canvas { display: block; width: 100%; height: 100%; }
+.thumb:hover .sheet { transform: translateY(-2px) scale(1.02); }
+.thumb.current { color: var(--label); font-weight: 600; }
+.thumb.current .sheet { box-shadow: 0 0 0 2.5px var(--blue), 0 4px 14px -2px rgba(0, 0, 0, .45); }
+
+#outline { padding: 8px 8px 20px; }
+#outline ul { list-style: none; margin: 0; padding: 0; }
+#outline ul ul { padding-left: 14px; }
+#outline button {
+  display: block; width: 100%; text-align: left; padding: 6px 10px; border-radius: 9px; color: var(--label-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background-color .15s var(--ease);
+}
+#outline button:hover { background: var(--control-hover); color: var(--label); }
+
+/* ---------- Dokument ---------- */
+#container {
+  position: absolute; inset: 0; overflow: auto; outline: none;
+  transition: left .5s var(--spring);
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .3) transparent;
+}
+body.sidebar-open #container { left: calc(var(--sidebar-width) + var(--gap)); }
+/* Oben Luft, unten Platz für die Leiste */
+.pdfViewer { padding: 20px 0 72px; }
+.pdfViewer .page {
+  --page-border: none;
+  margin: 0 auto 16px; border: 0; border-radius: 3px;
+  /* Blätter schweben über dem Wallpaper */
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .2), 0 10px 30px -10px rgba(0, 0, 0, .6), 0 2px 6px rgba(0, 0, 0, .2);
+}
+/* Seite wird noch gezeichnet: kleiner Spinner wie beim Öffnen statt des GIFs von PDF.js */
+.pdfViewer .page.loadingIcon::after {
+  background: none; width: 22px; height: 22px; margin: auto; inset: 0; position: absolute; border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, .12); border-top-color: rgba(0, 0, 0, .45); animation: spin .8s linear infinite;
+}
+/* Dunkle Seiten: Farben umkehren, Farbtöne zurückdrehen – Schrift wird hell, Farben bleiben erkennbar */
+body.dark .pdfViewer .page .canvasWrapper,
+body.dark .thumb canvas { filter: invert(.9) hue-rotate(180deg); }
+body.dark .pdfViewer .page, body.dark .thumb .sheet { background: #1a1a1a; }
+
+/* ---------- Laden, Fehler, Passwort ---------- */
+#status {
+  position: fixed; left: 50%; top: 42%; z-index: 12; translate: -50% -50%;
+  min-width: 240px; max-width: min(420px, calc(100% - 32px)); padding: 22px 26px; border-radius: 22px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+  transition: opacity .3s var(--ease), scale .45s var(--spring);
+  animation: pop-in .5s var(--spring) both;
+}
+#status.done { opacity: 0; scale: .94; pointer-events: none; }
+#status p { margin: 0; color: var(--label-2); line-height: 1.4; }
+#status.error .spinner, #status.asking .spinner { display: none; }
+.spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .18); border-top-color: var(--label);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(1turn); } }
+#password { display: flex; gap: 8px; width: 100%; }
+#password input { flex: 1; height: 32px; padding: 0 14px; border-radius: 16px; background: rgba(255, 255, 255, .1); }
+#password input:focus { background: rgba(255, 255, 255, .16); }
+#password button { height: 32px; padding: 0 16px; border-radius: 16px; background: var(--blue); color: #fff; text-shadow: none; }
+#status .again { height: 30px; padding: 0 16px; border-radius: 15px; background: rgba(255, 255, 255, .14); }
+
+/* ---------- Drucken: nur die vorbereiteten Seitenbilder ---------- */
+#print-pages { display: none; }
+@media print {
+  @page { margin: 0; }
+  html, body { height: auto; overflow: visible; background: none; }
+  body > :not(#print-pages) { display: none !important; }
+  #print-pages { display: block; }
+  #print-pages img { display: block; width: 100%; break-after: page; }
+}

@@ -7,6 +7,7 @@ mod window_frame;
 mod autofill;
 mod favicon;
 mod resize_preview;
+mod pdf;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -89,6 +90,8 @@ enum UserEvent {
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
     SleepTabs,
+    /// Im Tab läuft der PDF-Viewer (pdf.rs) und möchte wissen, wo das Wallpaper hinter ihm liegt.
+    PdfViewer(u32),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -146,6 +149,8 @@ struct Tab {
     pending_prompt: Option<String>,
     /// Seit wann die Seite ausgeblendet ist (`None`: gerade sichtbar). Siehe `sleep_idle_tabs`.
     hidden_since: Cell<Option<Instant>>,
+    /// Zeigt gerade den PDF-Viewer: bekommt die Lage des Wallpapers (`sync_pdf_walls`).
+    pdf_viewer: bool,
 }
 
 impl Tab {
@@ -230,6 +235,25 @@ impl Browser {
                 let _ = wv.set_bounds(to_rect(area));
             }
         }
+        self.sync_pdf_walls();
+    }
+
+    /// Der PDF-Viewer legt das Wallpaper wie die Oberfläche deckungsgleich hinter sein Glas – dazu braucht er
+    /// die Lage seiner Seite auf dem Bildschirm (Fensterposition + Platz der Seite im Fenster) und den Monitor.
+    fn sync_pdf_walls(&self) {
+        let scale = self.window.scale_factor();
+        let pos = self.window.inner_position().unwrap_or_default().to_logical::<f64>(scale);
+        let (mpos, msize) = self
+            .window
+            .current_monitor()
+            .map(|m| (m.position().to_logical::<f64>(scale), m.size().to_logical::<f64>(scale)))
+            .unwrap_or_default();
+        for (i, [x, y, ..]) in self.panes() {
+            let tab = &self.tabs[i];
+            let Some(wv) = tab.webview.as_ref().filter(|_| tab.pdf_viewer) else { continue };
+            let geo = json!({ "x": pos.x + x, "y": pos.y + y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height });
+            let _ = wv.evaluate_script(&format!("window.__glassWall?.({geo})"));
+        }
     }
 
     fn split_of(&self, id: u32) -> Option<&Split> {
@@ -271,6 +295,7 @@ impl Browser {
             .unwrap_or_default();
         let geo = json!({ "x": pos.x, "y": pos.y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height, "floating": floating });
         let _ = self.ui.evaluate_script(&format!("window.setGeometry({geo})"));
+        self.sync_pdf_walls();
     }
 
     /// Positioniert alle Webseiten: sichtbare an ihren Platz, alle anderen ausgeblendet.
@@ -306,6 +331,7 @@ impl Browser {
             }
         }
         self.round_content_views();
+        self.sync_pdf_walls();
     }
 
     /// Legt Tabs schlafen, die seit `SLEEP_AFTER` unsichtbar sind: Skripte und Timer stehen still, der Renderer
@@ -496,7 +522,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None) });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), pdf_viewer: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -855,6 +881,12 @@ impl Browser {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             UserEvent::SleepTabs => self.sleep_idle_tabs(),
+            UserEvent::PdfViewer(id) => {
+                if let Some(i) = self.index_of(id) {
+                    self.tabs[i].pdf_viewer = true;
+                    self.sync_pdf_walls();
+                }
+            }
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -918,6 +950,7 @@ impl Browser {
                     if loading {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
+                        tab.pdf_viewer = false;
                     } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
                         let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
                     }
@@ -1005,7 +1038,7 @@ fn build_content_webview(
     let webview = WebViewBuilder::new()
         .with_environment(ui.environment())
         .with_incognito(private)
-        .with_url(url)
+        // Keine Startadresse: die lädt erst `pdf::intercept`, sobald PDFs abgefangen werden
         .with_bounds(bounds)
         .with_devtools(true)
         .with_initialization_script(if private { "" } else { include_str!("favicon-content.js") })
@@ -1021,6 +1054,8 @@ fn build_content_webview(
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
+                } else if msg.get("pdf").is_some() {
+                    UserEvent::PdfViewer(id)
                 } else { UserEvent::Cosmetic(id, body) }
             } else { UserEvent::Content(body) };
             let _ = p_ipc.send_event(event);
@@ -1081,7 +1116,12 @@ fn build_content_webview(
         };
     }
 
-    watch_requests(&webview, ui, proxy, id, main_nav);
+    let docs = pdf::Documents::default();
+    watch_requests(&webview, ui, proxy, id, main_nav, docs.clone());
+    let (core, first) = (webview.webview(), windows::core::HSTRING::from(url));
+    pdf::intercept(&webview.webview(), docs, move || {
+        let _ = unsafe { core.Navigate(&first) };
+    });
 
     // wry meldet Vollbild nicht weiter – also direkt am WebView2-Ereignis lauschen.
     let p_fs = proxy.clone();
@@ -1107,7 +1147,7 @@ fn build_content_webview(
 
 /// Werbeblocker: jede Anfrage der Seite (auch aus iframes und Service Workern) läuft durch die Filter-Engine;
 /// gesperrte bekommen sofort eine leere 403-Antwort und gehen gar nicht erst ins Netz.
-fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEvent>, id: u32, main_nav: Rc<RefCell<String>>) {
+fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEvent>, id: u32, main_nav: Rc<RefCell<String>>, docs: pdf::Documents) {
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
     use windows::core::{Interface, PWSTR};
     let wv = webview.webview();
@@ -1133,6 +1173,15 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
             let mut uri = PWSTR::null();
             args.Request()?.Uri(&mut uri)?;
             let uri = webview2_com::take_pwstr(uri);
+            // Der PDF-Viewer und seine Dateien kommen aus der Exe (siehe pdf.rs)
+            if let Some((status, mime, body)) = pdf::serve(&docs, &uri, wallpaper) {
+                let stream = windows::Win32::UI::Shell::SHCreateMemStream(Some(&body));
+                let headers = format!("Content-Type: {mime}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store");
+                let reason = if status == 200 { windows::core::w!("OK") } else { windows::core::w!("Not Found") };
+                let response = env.CreateWebResourceResponse(stream.as_ref(), status as i32, reason, &windows::core::HSTRING::from(headers))?;
+                args.SetResponse(&response)?;
+                return Ok(());
+            }
             let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
             args.ResourceContext(&mut context)?;
             let kind = match context {
@@ -1267,6 +1316,7 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
     let (mime, body): (&str, Cow<'static, [u8]>) = match request.uri().path() {
         "/autofill-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("autofill-ui.js"))),
         "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
+        "/glass-lens.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-lens.js"))),
         "/group-hover.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("group-hover.js"))),
         "/animation-debug.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("animation-debug.js"))),
         "/wallpaper" => match wallpaper() {

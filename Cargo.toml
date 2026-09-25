@@ -15,7 +15,7 @@ base64 = "0.22"
 adblock = { version = "0.13", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 # Direkter Zugriff auf WebView2 (z. B. Vollbild-Ereignis); Versionen wie in wry
 webview2-com = "0.38"
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com_StructuredStorage"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_System_Registry", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_Networking_WinHttp", "Win32_System_Threading"] }
 
 [profile.release]

@@ -13,11 +13,14 @@ const autofillUI = await readFile(new URL('../src/autofill-ui.js', import.meta.u
 const groupHover = await readFile(new URL('../src/group-hover.js', import.meta.url));
 const animationDebug = await readFile(new URL('../src/animation-debug.js', import.meta.url));
 const glassRim = await readFile(new URL('../src/glass-rim.js', import.meta.url));
+const glassLens = await readFile(new URL('../src/glass-lens.js', import.meta.url));
 const server = createServer((req, res) => {
   if (req.url === '/animation-debug.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(animationDebug);
   } else if (req.url === '/group-hover.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(groupHover);
+  } else if (req.url === '/glass-lens.js') {
+    res.setHeader('Content-Type', 'text/javascript'); res.end(glassLens);
   } else if (req.url === '/glass-rim.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(glassRim);
   } else if (req.url === '/autofill-ui.js') {
