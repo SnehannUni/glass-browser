@@ -19,7 +19,7 @@
     --chrome-slide: .38s cubic-bezier(.4, 0, .2, 1);
     --control-hover: rgba(255, 255, 255, .12);
     --control-pressed: rgba(255, 255, 255, .2);
-    --address-width: 58px;
+    --address-width: clamp(180px, 20vw, 260px);
     --toolbar-control-height: 30px;
     --toolbar-control-radius: calc(var(--toolbar-control-height) / 2);
     --glass-rim: 1px;
@@ -117,13 +117,15 @@
   /* ---------- Toolbar ---------- */
   #toolbar {
     --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
-    height: 42px; display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr;
+    /* --side (aus balanceSides im Skript): beide Seiten mindestens so breit wie die breitere – sonst gäbe bei vielen
+       Tabs nur die schmale rechte Seite nach, und die Tabs rutschten aus der Mitte */
+    height: 42px; display: grid; grid-template-columns: minmax(var(--side, auto), 1fr) minmax(0, auto) minmax(var(--side, auto), 1fr);
     align-items: center; gap: 10px; padding: 0 12px 0 16px;
     transition: transform var(--chrome-slide), opacity var(--chrome-slide);
   }
   /* Ausgeblendet schiebt die Webseite die Leiste nach oben weg (42 − 4 px Rand) – ihre Unterkante bleibt an der Seite */
   body.chrome-hidden #toolbar { transform: translateY(-38px); opacity: 0; }
-  /* Eine Zeile in drei Teilen: links Ampel + Vor/Zurück, in der Mitte die Tabs, rechts Adressfeld und Knöpfe.
+  /* Eine Zeile in drei Teilen: links Ampel, Vor/Zurück und der aktive Tab (= Adressfeld), in der Mitte die übrigen Tabs, rechts Knöpfe.
      Die beiden Seiten sind gleich breit – so stehen die Tabs in der Fenstermitte, solange sie Platz haben. */
   /* kein min-width: 0 – die Seiten behalten ihren Platz, schrumpfen müssen die Tabs */
   .side { display: flex; align-items: center; gap: 10px; align-self: stretch; }
@@ -170,9 +172,10 @@
 
   /* Platzhalter in der Leiste: so breit wie die eingefahrene Kapsel, damit ausgefahren nichts verrutscht */
   .center { position: relative; width: var(--address-width); align-self: stretch; }
-  /* In der Leiste eingefahren: nur Lupe + Neu laden. Ein Klick fährt das Feld nach links über die Tabs aus. */
+  /* In der Leiste eingefahren: der aktive Tab mit Favicon, Titel, Stern und Neu laden.
+     Ein Klick fährt das Feld nach rechts über die Tabs aus. */
   .address {
-    position: absolute; right: 0; top: calc(50% - var(--toolbar-control-radius)); z-index: 5;
+    position: absolute; left: 0; top: calc(50% - var(--toolbar-control-radius)); z-index: 5;
     width: var(--address-width); padding: 0 5px; gap: 0; cursor: pointer;
     transition: width .5s var(--spring), padding .3s var(--ease), gap .3s var(--ease);
   }
@@ -180,9 +183,26 @@
     width: clamp(280px, 42vw, 580px); padding: 0 3px; gap: 8px; cursor: text;
     background: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .08));
   }
-  /* Stern und Werbeblocker-Schild gibt es nur im ausgefahrenen Feld */
-  .address:not(.editing) :is(#btn-star, #btn-shield) { display: none; }
+  /* Werbeblocker-Schild gibt es nur im ausgefahrenen Feld */
+  .address:not(.editing) #btn-shield { display: none; }
   body:not(.start) .address:not(.editing) #addr-input { position: absolute; width: 0; pointer-events: none; }
+  /* Eingefahren steht der Tab an Stelle von Lupe und Eingabe; beim Suchen und auf dem Startbildschirm umgekehrt */
+  body:not(.start) .address:not(.editing) #addr-search, body.start #addr-tab, .address.editing #addr-tab { display: none; }
+  #addr-tab { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 7px; }
+  #addr-tab .title { flex: 1; min-width: 0; color: var(--label); }
+  #addr-tab.swap > :not(.close) { animation: slot-in .45s var(--spring); }
+  @keyframes slot-in { from { opacity: 0; transform: translateX(10px); } }
+  /* Schließen liegt über dem Favicon (wie bei den Tabs: beim Drüberfahren) */
+  #addr-close { left: 8px; }
+  #addr-tab:is(:hover, .vh) .close { opacity: 1; }
+  #addr-tab:is(:hover, .vh) .fav { opacity: 0; }
+  #addr-tab .fav { transition: opacity .18s var(--ease); }
+  body.private #addr-tab .fav { color: var(--violet); }
+  /* Herausziehen: der Tab löst sich wie ein Tab aus der Leiste vom Feld */
+  #addr-tab.dragging {
+    position: relative; z-index: 30; border-radius: var(--toolbar-control-radius); color: var(--label);
+    background-color: rgba(255, 255, 255, .16); box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
+  }
   /* Solange gesucht wird, treten die Tabs zurück – das Feld liegt über ihnen */
   #tabbar { transition: opacity .25s var(--ease); }
   body.searching #tabbar { opacity: 0; pointer-events: none; }
@@ -204,7 +224,7 @@
   #addr-input::placeholder { color: var(--label-2); }
   .address.editing #addr-input { opacity: 1; }
   #btn-reload { min-width: 28px; height: 24px; color: var(--label-2); }
-  body:not(.start) .address:not(.editing) :is(#addr-search, #btn-reload) { width: 24px; min-width: 24px; flex: none; }
+  body:not(.start) .address:not(.editing) :is(#btn-star, #btn-reload) { width: 24px; min-width: 24px; height: 24px; flex: none; }
   /* Suchanbieter: nur auf dem Startbildschirm, Logo rechts im Feld – ein Klick öffnet das Anbieter-Rad.
      In der Leiste gibt es keine Auswahl, dort sucht immer Google (searchEngine im Skript). */
   .engine {
@@ -274,11 +294,18 @@
     display: grid; place-items: center;
   }
   .tab-new svg { width: 14px; height: 14px; }
+  /* Nur ein Tab offen: „+“ steht direkt neben dem Adressfeld (placeNewTab) und tritt beim Suchen zurück */
+  .side.left > #btn-new { margin-left: -4px; }
+  body.searching .side.left > #btn-new { opacity: 0; pointer-events: none; }
   #lens {
     position: absolute; top: 0; left: 0; height: var(--toolbar-control-height); width: 0; pointer-events: none;
     transition: transform .6s var(--spring), width .6s var(--spring);
   }
   #lens.instant { transition: none; }
+  /* Der aktive Tab steht links im Adressfeld (renderTabList: .in-slot). Ein geteiltes Paar bleibt als Einheit
+     unter der Linse in der Leiste – so lässt es sich wie gewohnt tauschen und wieder trennen. */
+  #lens.off { opacity: 0; }
+  .tab.in-slot { display: none; }
   #lens .glass { position: absolute; inset: 0; border-radius: var(--toolbar-control-radius); }
   #lens.squish .glass { animation: squish .6s var(--spring); }
   @keyframes squish { 30% { transform: scale(1.06, .82); } }
@@ -347,12 +374,35 @@
     background-color: rgba(255, 255, 255, .16); box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
   }
   /* Ablegen auf einem Tab: helle Kante auf der Seite, auf die der gezogene Tab kommt */
-  .tab.drop-left, .tab.drop-right { background-color: rgba(255, 255, 255, .14) !important; color: var(--label); }
-  .tab.drop-left { box-shadow: inset 3px 0 0 rgba(255, 255, 255, .75); }
-  .tab.drop-right { box-shadow: inset -3px 0 0 rgba(255, 255, 255, .75); }
+  :is(.tab, #address).drop-left, :is(.tab, #address).drop-right { background-color: rgba(255, 255, 255, .14) !important; color: var(--label); }
+  :is(.tab, #address).drop-left { box-shadow: inset 3px 0 0 rgba(255, 255, 255, .75); }
+  :is(.tab, #address).drop-right { box-shadow: inset -3px 0 0 rgba(255, 255, 255, .75); }
   /* Geteilten Tab auf freie Stelle ziehen = lösen: die Linse über beiden Tabs zieht sich zurück */
   body.drop-unsplit #lens { opacity: .35; }
   .tab.paired { color: var(--label); }
+  /* Kombiniertes Paar, während ein anderer Tab aktiv ist: eine gemeinsame Kapsel mit Trennlinie */
+  .tab:is(.pair-left, .pair-right) {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .045));
+  }
+  .tab.pair-left { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .tab.pair-right { margin-left: -4px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .tab.pair-right::before {
+    content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 1px; background: rgba(255, 255, 255, .18);
+  }
+  /* Partner einer geteilten Ansicht: Das Adressfeld wird um ihn breiter, er liegt rechts in derselben Kapsel */
+  .center { --dock-width: 150px; }
+  .center.docked { width: calc(var(--address-width) + var(--dock-width)); }
+  .center.docked .address:not(.editing) { width: calc(var(--address-width) + var(--dock-width)); padding-right: calc(var(--dock-width) + 5px); }
+  .tab.docked {
+    position: absolute; right: 0; top: calc(50% - var(--toolbar-control-radius)); z-index: 6; width: var(--dock-width);
+    animation: none; transition: color .25s, background-color .2s, opacity .25s var(--ease);
+  }
+  /* feine Trennlinie zwischen den beiden Hälften */
+  .tab.docked::before {
+    content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 1px; background: rgba(255, 255, 255, .18);
+  }
+  .tab.docked .tab-label { padding: 0 14px 0 30px; }
+  body.searching .tab.docked { opacity: 0; pointer-events: none; }
   body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 
   /* ---------- Suchvorschläge ---------- */
@@ -376,8 +426,7 @@
   .sg-head { padding: 8px 12px 4px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
   .sg-head:first-child { padding-top: 4px; }
   /* ---------- Favoriten ---------- */
-  /* Stern links in der Adresszeile */
-  .address.editing.has-star { padding-left: 3px; }
+  /* Stern rechts in der Adresszeile, neben Neu laden */
   .star { color: var(--label-2); }
   .star:is(:hover, .vh) { color: var(--label); }
   .star.on { color: #ffd60a; }
@@ -499,6 +548,19 @@
       <button class="key" id="btn-back" title="Zurück (Alt+←)"><svg viewBox="0 0 16 16"><path d="M10 2.8 4.8 8l5.2 5.2"/></svg></button>
       <button class="key" id="btn-fwd" title="Vorwärts (Alt+→)"><svg viewBox="0 0 16 16"><path d="M6 2.8 11.2 8 6 13.2"/></svg></button>
     </div>
+    <!-- Der aktive Tab sitzt hier statt in der Tab-Leiste; ein Klick macht ihn zum Suchfeld -->
+    <div class="center" data-drag>
+      <form id="address" class="glass capsule address" data-lens data-button-group>
+        <button type="button" class="key" id="addr-search" title="Suchen (Strg+L)" aria-label="Suche öffnen"><svg class="ic" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg></button>
+        <span id="addr-tab" data-group-skip><button type="button" class="close" id="addr-close" title="Tab schließen (Strg+W)"></button><span class="fav"></span><span class="title"></span></span>
+        <input id="addr-input" spellcheck="false" autocomplete="off" placeholder="Suchbegriff oder Websitename eingeben">
+        <button type="button" class="key shield" id="btn-shield" hidden></button>
+        <button type="button" class="key star" id="btn-star" hidden></button>
+        <button type="button" class="key" id="btn-reload"></button>
+        <button type="button" class="key engine" id="btn-engine"></button>
+        <div class="progress"></div>
+      </form>
+    </div>
     </div>
     <!-- Tabs in der Mitte des Fensters; freie Fläche daneben ist Griff zum Verschieben des Fensters -->
     <nav id="tabbar" data-drag>
@@ -508,17 +570,6 @@
       <button class="glass tab-new" id="btn-new" title="Neuer Tab (Strg+T)" data-lens><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
     </nav>
     <div class="side right">
-    <div class="center" data-drag>
-      <form id="address" class="glass capsule address" data-lens data-button-group>
-        <button type="button" class="key star" id="btn-star" hidden></button>
-        <button type="button" class="key" id="addr-search" title="Suchen (Strg+L)" aria-label="Suche öffnen"><svg class="ic" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg></button>
-        <input id="addr-input" spellcheck="false" autocomplete="off" placeholder="Suchbegriff oder Websitename eingeben">
-        <button type="button" class="key shield" id="btn-shield" hidden></button>
-        <button type="button" class="key" id="btn-reload"></button>
-        <button type="button" class="key engine" id="btn-engine"></button>
-        <div class="progress"></div>
-      </form>
-    </div>
     <div class="glass capsule tools" id="tools" data-lens data-button-group hidden>
       <button class="key" id="btn-unsplit" title="Geteilte Ansicht beenden"><svg viewBox="0 0 16 16"><rect x="2.2" y="3" width="11.6" height="10" rx="2.2"/><path d="M8 3v10"/></svg></button>
     </div>
@@ -810,14 +861,23 @@
     el.innerHTML = `<button class="close" title="Tab schließen (Strg+W)">${svg('close')}</button>
                     <span class="tab-label"><span class="fav"></span><span class="title"></span></span>`;
     el.dataset.id = tab.id;
-    // Kurzer Klick aktiviert (erst beim Loslassen), Ziehen legt den Tab neben einen anderen
+    draggable(el, () => tab.id, () => send('activate', { id: tab.id }));
+    el.addEventListener('auxclick', (e) => { if (e.button === 1) send('close_tab', { id: tab.id }); });
+    el.querySelector('.close').addEventListener('click', () => send('close_tab', { id: tab.id }));
+    return el;
+  }
+
+  // Kurzer Klick (erst beim Loslassen) ruft `click` auf, Ziehen legt den Tab neben einen anderen oder löst ihn.
+  // `idOf` liefert den gezogenen Tab – oder null, wenn gerade nicht gezogen werden darf.
+  function draggable(el, idOf, click) {
     el.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || e.target.closest('.close')) return;
+      const id = idOf();
+      if (e.button !== 0 || e.target.closest('.close') || id == null) return;
       // Partner für das Ablegen auf der Webseite: bei geteiltem Tab die andere Hälfte (→ Seiten tauschen),
       // sonst die gerade sichtbare Seite.
       const split = activeSplit();
-      const partner = split && (split.left === tab.id ? split.right : split.right === tab.id ? split.left : null);
-      tabDrag = { id: tab.id, el, x0: e.clientX, y0: e.clientY, moved: false, base: partner ?? state.active, drop: null };
+      const partner = split && (split.left === id ? split.right : split.right === id ? split.left : null);
+      tabDrag = { id, el, x0: e.clientX, y0: e.clientY, moved: false, base: partner ?? state.active, drop: null };
       el.setPointerCapture(e.pointerId);
     });
     el.addEventListener('pointermove', (e) => {
@@ -835,15 +895,18 @@
       const d = tabDrag;
       if (!d || d.el !== el) return;
       endTabDrag();
-      if (!d.moved) send('activate', { id: tab.id });
+      if (!d.moved) click();
       else if (d.drop?.type === 'tab') send('split', { id: d.id, target: d.drop.id, value: d.drop.side });
       else if (d.drop?.type === 'page') send('split', { id: d.id, target: d.base, value: d.drop.side });
-      else if (d.drop?.type === 'bar') send('move_tab', { id: d.id, index: state.tabs.length - 1 });
+      else if (d.drop?.type === 'bar') {
+        // Aus der Kombination gelöst: Der gezogene Tab kehrt an seinen Platz in der Leiste zurück,
+        // der andere steht (bzw. bleibt) im Adressfeld
+        const index = state.tabs.findIndex((t) => t.id === d.id);
+        send('move_tab', { id: d.id, index });
+        send('activate', { id: d.base });
+      }
     });
     el.addEventListener('pointercancel', endTabDrag);
-    el.addEventListener('auxclick', (e) => { if (e.button === 1) send('close_tab', { id: tab.id }); });
-    el.querySelector('.close').addEventListener('click', () => send('close_tab', { id: tab.id }));
-    return el;
   }
 
   // ---------- Tab ziehen → geteilte Ansicht ----------
@@ -853,8 +916,9 @@
 
   function updateDrop(d, e) {
     const under = document.elementsFromPoint(e.clientX, e.clientY).find((n) => !d.el.contains(n));
-    const tabEl = under?.closest?.('.tab');
-    const targetId = tabEl ? Number(tabEl.dataset.id) : null;
+    // Das eingefahrene Adressfeld steht für den aktiven Tab – auch darauf lässt sich ein Tab ablegen
+    const tabEl = under?.closest?.('.tab, body:not(.start) #address:not(.editing)');
+    const targetId = !tabEl ? null : tabEl === address ? state.active : Number(tabEl.dataset.id);
     const split = activeSplit();
     let drop = null;
     if (tabEl && targetId !== d.id && hasPage(targetId) && hasPage(d.id)) {
@@ -864,8 +928,9 @@
       const partnered = split && [split.left, split.right].includes(d.id) && [split.left, split.right].includes(targetId);
       const side = partnered ? (split.left === d.id ? 'right' : 'left') : e.clientX < r.left + r.width / 2 ? 'left' : 'right';
       drop = { type: 'tab', id: targetId, side };
-    } else if (!tabEl && under?.closest?.('#tabbar') && (split?.left === d.id || split?.right === d.id)) {
-      // Freie Stelle der Tab-Leiste: geteilten Tab wieder lösen
+    } else if (!tabEl && e.clientY < state.chromeHeight && under?.closest?.('#toolbar') && !under.closest('.center')
+               && (state.split?.left === d.id || state.split?.right === d.id)) {
+      // Irgendwo in die Leiste außerhalb des Adressfelds (meist: zurück in die Mitte): geteilten Tab wieder lösen
       drop = { type: 'bar' };
     } else if (!tabEl && e.clientY > state.chromeHeight && d.base !== d.id && hasPage(d.base) && hasPage(d.id)) {
       // Über der Webseite: linke oder rechte Hälfte, je nach Mauszeiger
@@ -878,7 +943,7 @@
     if (key === (d.dropKey || '')) return;
     d.dropKey = key;
     d.drop = drop;
-    tabEls.forEach((t) => {
+    [...tabEls.values(), address].forEach((t) => {
       const hit = drop?.type === 'tab' && t === tabEl;
       t.classList.toggle('drop-left', hit && drop.side === 'left');
       t.classList.toggle('drop-right', hit && drop.side === 'right');
@@ -902,7 +967,7 @@
     d.el.classList.remove('dragging');
     d.el.style.transform = '';
     document.body.classList.remove('tab-dragging');
-    tabEls.forEach((t) => t.classList.remove('drop-left', 'drop-right'));
+    [...tabEls.values(), address].forEach((t) => t.classList.remove('drop-left', 'drop-right'));
     document.body.classList.remove('drop-unsplit');
     if (d.dropKey?.startsWith('page')) showDropzone(null);
   }
@@ -924,36 +989,95 @@
     }
   }
 
+  // Tabs gleiten an ihren neuen Platz, wenn der aktive Tab die Leiste verlässt oder zurückkehrt (FLIP)
+  const TAB_FLIP = { duration: 450, easing: 'cubic-bezier(.3, 1.2, .45, 1)' };
   function renderTabs() {
     const box = $('tabs');
+    const before = new Map();
+    for (const [id, el] of tabEls) if (el.offsetWidth && el !== tabDrag?.el) before.set(id, el.getBoundingClientRect().left);
+    renderTabList(box);
+    for (const [id, el] of tabEls) {
+      const x = before.get(id);
+      if (x == null || !el.offsetWidth) continue;
+      el.getAnimations().forEach((a) => { if (a.id === 'flip') a.cancel(); }); // sonst misst die neue Lage die alte Bewegung mit
+      const dx = x - el.getBoundingClientRect().left;
+      if (Math.abs(dx) > .5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { ...TAB_FLIP, id: 'flip' });
+    }
+  }
+  function renderTabList(box) {
     const ids = new Set(state.tabs.map((t) => t.id));
     for (const [id, el] of tabEls) if (!ids.has(id)) { el.remove(); tabEls.delete(id); }
-    state.tabs.forEach((tab, i) => {
+    // Geteilte Ansicht: Der aktive Tab steht im Adressfeld, sein Partner rechts in derselben Kapsel (kein Tab doppelt)
+    const split = activeSplit(), inBar = !document.body.classList.contains('start');
+    const docked = split && inBar ? (split.left === state.active ? split.right : split.left) : null;
+    center.classList.toggle('docked', docked != null); // Adressfeld wird um den Partner breiter
+    // Ist gerade ein anderer Tab aktiv, steht ein kombiniertes Paar trotzdem als Einheit in der Leiste:
+    // beide nebeneinander (links, rechts wie auf der Seite) an der Stelle des vorderen
+    const grouped = state.split && !split ? state.split : null;
+    const byId = new Map(state.tabs.map((t) => [t.id, t]));
+    const order = grouped
+      ? state.tabs.flatMap((t) => (t.id === grouped.left || t.id === grouped.right)
+        ? (state.tabs.find((u) => u.id === grouped.left || u.id === grouped.right) === t ? [byId.get(grouped.left), byId.get(grouped.right)].filter(Boolean) : [])
+        : [t])
+      : state.tabs;
+    let prev = $('lens');
+    order.forEach((tab) => {
       let el = tabEls.get(tab.id);
       if (!el) { el = makeTab(tab); tabEls.set(tab.id, el); }
       // Nur umhängen, wenn die Reihenfolge nicht stimmt: Neu eingefügte Elemente starten ihre
-      // Einblend-Animation von vorn – sonst blinken beim Tabwechsel alle Namen. (Kind 0 ist die Linse.)
-      const slot = box.children[i + 1];
-      if (slot !== el) box.insertBefore(el, slot || null);
+      // Einblend-Animation von vorn – sonst blinken beim Tabwechsel alle Namen. (Vor den Tabs steht die Linse.)
+      if (tab.id === docked) {
+        if (el.parentElement !== center) center.append(el);
+      } else {
+        if (prev.nextElementSibling !== el) prev.after(el);
+        prev = el;
+      }
+      el.classList.toggle('docked', tab.id === docked);
       el.classList.toggle('active', tab.id === state.active);
+      el.classList.toggle('in-slot', tab.id === state.active && inBar);
       el.classList.toggle('private', !!tab.private);
-      el.classList.toggle('paired', !!activeSplit() && [activeSplit().left, activeSplit().right].includes(tab.id));
+      el.classList.toggle('paired', !!split && [split.left, split.right].includes(tab.id));
+      el.classList.toggle('pair-left', grouped?.left === tab.id);
+      el.classList.toggle('pair-right', grouped?.right === tab.id);
       const title = tab.title || hostOf(tab.url) || 'Neuer Tab';
       const label = el.querySelector('.title');
       if (label.textContent !== title) { label.textContent = title; el.title = title; }
       updateFavicon(el, tab);
     });
+    placeNewTab();
     requestAnimationFrame(placeLens);
+    scheduleSides(); // mehr oder weniger Tabs → Adressfeld schmaler oder breiter
+  }
+
+  // Liste leer (der einzige Tab steht im Adressfeld): „+“ rückt direkt rechts neben das Feld,
+  // statt allein in der Mitte zu stehen. Beim Umziehen gleitet es von der alten an die neue Stelle.
+  function placeNewTab() {
+    const btn = $('btn-new');
+    // (auch bei einem einzigen kombinierten Paar: beide stehen dann im Feld)
+    const solo = !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
+    const home = solo ? document.querySelector('.side.left') : $('tabbar');
+    if (btn.parentElement === home) return;
+    const from = btn.getBoundingClientRect();
+    home.append(btn);
+    balanceSides(); // Seitenbreiten sofort anpassen, damit das Ziel stimmt
+    const to = btn.getBoundingClientRect();
+    if (from.width && to.width) {
+      btn.animate([{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px)` }, { transform: 'none' }], TAB_FLIP);
+    }
   }
 
   function placeLens() {
     const lensEl = $('lens');
     for (const t of tabEls.values()) t.classList.toggle('compact', t.offsetWidth < 96);
-    const el = tabEls.get(state.active);
-    if (!el || !el.offsetWidth) { lastActive = null; lensEl.classList.add('instant'); return; }
-    // Geteilte Ansicht: die Linse umfasst beide Tabs
+    // Die Linse liegt auf den sichtbaren Tabs der aktuellen Ansicht: Ein einzelner aktiver Tab steht links im
+    // Adressfeld (außer auf dem Startbildschirm) – dann gibt es keine; ein geteiltes Paar umfasst sie ganz.
     const split = activeSplit();
-    const [a, b] = split ? [tabEls.get(split.left), tabEls.get(split.right)] : [el, el];
+    const shown = (split ? [split.left, split.right] : [state.active])
+      .map((id) => tabEls.get(id)).filter((t) => t?.offsetWidth && t.parentElement === $('tabs'))
+      .sort((x, y) => x.offsetLeft - y.offsetLeft);
+    lensEl.classList.toggle('off', !shown.length);
+    if (!shown.length) { lastActive = null; lensEl.classList.add('instant'); return; }
+    const [a, b] = [shown[0], shown[shown.length - 1]];
     const key = split ? `split:${split.left}:${split.right}` : state.active;
     if (lastActive !== null && lastActive !== key) {
       lensEl.classList.remove('squish'); void lensEl.offsetWidth; lensEl.classList.add('squish');
@@ -1015,6 +1139,7 @@
     input.placeholder = placeholder;
     address.title = editing() || document.body.classList.contains('start') ? '' : 'Suchen oder Adresse eingeben (Strg+L)';
     if (!editing()) input.value = query || url;
+    renderSlot(tab);
     address.classList.toggle('loading', !!tab?.loading);
     const reload = $('btn-reload');
     reload.innerHTML = svg(tab?.loading ? 'stop' : 'reload');
@@ -1025,6 +1150,31 @@
     renderStar();
     renderShield();
   }
+
+  // ---------- Aktiver Tab im eingefahrenen Adressfeld ----------
+  const slot = $('addr-tab');
+  $('addr-close').innerHTML = svg('close');
+  let slotTab = null;
+  function renderSlot(tab) {
+    const title = tab ? tab.title || hostOf(tab.url) || 'Neuer Tab' : '';
+    const label = slot.querySelector('.title');
+    if (label.textContent !== title) label.textContent = title;
+    if (tab) updateFavicon(slot, tab);
+    // Neuer Tab rückt von den Tabs herüber ins Feld
+    if (tab?.id !== slotTab) {
+      if (slotTab !== null) { slot.classList.remove('swap'); void slot.offsetWidth; slot.classList.add('swap'); }
+      slotTab = tab?.id ?? null;
+    }
+  }
+  slot.addEventListener('animationend', () => slot.classList.remove('swap'));
+  // Herausziehen: auf einen Tab oder die Webseite = kombinieren, in die Leiste = aus der Kombination lösen
+  draggable(slot, () => (editing() || document.body.classList.contains('start') ? null : state.active), () => window.focusAddress());
+  $('addr-close').addEventListener('pointerdown', (e) => e.preventDefault()); // nicht ins Suchfeld wechseln
+  $('addr-close').addEventListener('click', () => send('close_tab', { id: state.active }));
+  // Mittlere Maustaste schließt den Tab, wie in der Tab-Leiste
+  address.addEventListener('auxclick', (e) => {
+    if (e.button === 1 && !editing() && !document.body.classList.contains('start')) send('close_tab', { id: state.active });
+  });
 
   // ---------- Werbeblocker-Schild ----------
   const shield = $('btn-shield');
@@ -1049,7 +1199,10 @@
   };
 
   address.addEventListener('pointerdown', (e) => {
-    if (!e.target.closest('button') && !editing()) { e.preventDefault(); window.focusAddress(); }
+    if (e.button !== 0 || e.target.closest('button') || editing()) return;
+    e.preventDefault();
+    // Der Tab im Feld lässt sich auch herausziehen – er öffnet die Suche erst beim Loslassen (draggable)
+    if (!e.target.closest('#addr-tab')) window.focusAddress();
   });
   $('addr-search').addEventListener('pointerdown', (e) => e.preventDefault());
   $('addr-search').addEventListener('click', () => window.focusAddress());
@@ -1515,7 +1668,6 @@
     const tab = activeTab();
     const on = isFavorite(tab?.url || '');
     star.hidden = !tab?.page;
-    address.classList.toggle('has-star', !!tab?.page);
     star.classList.toggle('on', on);
     star.innerHTML = svg(on ? 'starFill' : 'star');
     star.title = on ? 'Aus den Favoriten entfernen' : 'Zu den Favoriten hinzufügen';
@@ -1923,6 +2075,40 @@
   });
 
   window.addEventListener('resize', () => requestAnimationFrame(placeLens));
+
+  // Tabs in der Fenstermitte: Beide Seiten der Leiste reservieren so viel Platz, wie die breitere braucht
+  const sides = [...document.querySelectorAll('#toolbar > .side')];
+  const contentWidth = (side) => {
+    const kids = [...side.children].filter((k) => k.offsetWidth);
+    const gap = parseFloat(getComputedStyle(side).columnGap) || 0;
+    return kids.reduce((sum, k) => {
+      const cs = getComputedStyle(k);
+      return sum + k.offsetWidth + parseFloat(cs.marginLeft) + parseFloat(cs.marginRight);
+    }, Math.max(0, kids.length - 1) * gap);
+  };
+  // Wird es eng, gibt zuerst das Adressfeld nach (bis ADDRESS_MIN) – erst danach werden die Tabs schmaler.
+  // TAB_WIDTH/TAB_GAP wie .tab und #tabs, TABBAR_EXTRA = „+“ samt Abstand (30 − 10 + 16) und Innenabstand (2 × 10).
+  const TAB_WIDTH = 180, TAB_GAP = 4, TABBAR_EXTRA = 56, ADDRESS_MIN = 160, ADDRESS_MAX = 260;
+  const toolbar = $('toolbar'), center = document.querySelector('.center');
+  let sidesFrame = 0;
+  const balanceSides = () => {
+    sidesFrame = 0;
+    const cs = getComputedStyle(toolbar);
+    const inner = toolbar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2 * parseFloat(cs.columnGap);
+    const n = [...$('tabs').querySelectorAll('.tab')].filter((t) => getComputedStyle(t).display !== 'none').length;
+    const tabsNeed = document.body.classList.contains('multi') ? n * TAB_WIDTH + Math.max(0, n - 1) * TAB_GAP + TABBAR_EXTRA : 0;
+    const fixed = contentWidth(sides[0]) - center.offsetWidth; // linke Seite ohne Adressfeld
+    const dock = center.classList.contains('docked') ? parseFloat(getComputedStyle(center).getPropertyValue('--dock-width')) : 0;
+    const width = Math.round(Math.max(ADDRESS_MIN, Math.min(ADDRESS_MAX, inner * .2, (inner - tabsNeed) / 2 - fixed - dock)));
+    toolbar.style.setProperty('--address-width', `${width}px`);
+    const side = Math.max(fixed + width + dock, contentWidth(sides[1]));
+    toolbar.style.setProperty('--side', `${Math.ceil(side)}px`);
+  };
+  const scheduleSides = () => { if (!sidesFrame) sidesFrame = requestAnimationFrame(balanceSides); };
+  const sidesObserver = new ResizeObserver(scheduleSides);
+  sides.forEach((side) => [...side.children].forEach((k) => sidesObserver.observe(k)));
+  addEventListener('resize', scheduleSides);
+  balanceSides();
   watchLens();
   send('ready');
 })();
