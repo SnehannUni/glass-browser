@@ -14,6 +14,8 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Private Tabs** (Strg+Umschalt+N) – InPrivate-Profil nur im Arbeitsspeicher, strenger Tracking-Schutz
 - **Werbeblocker** – Brave-Filter-Engine mit EasyList, EasyPrivacy, EasyList Germany und uBlock-Listen;
   blendet Werbeflächen aus, entfernt YouTube-Werbung und lässt sich pro Website abschalten
+- **PDF-Viewer** – eigener Viewer auf Basis von PDF.js statt des Edge-Viewers: Vorschaubilder, Inhaltsverzeichnis,
+  Suche, Zoom (auch Strg+Mausrad und Touchpad), dunkle Seiten, Drucken und Herunterladen
 
 ## Bauen
 
@@ -34,9 +36,10 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/ui.html` | Oberfläche (Glas, Tabs, Adressfeld, Vorschläge, Favoriten) |
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
+| `src/pdf.rs`, `src/pdf/` | PDF-Viewer: PDF-Antworten abfangen (DevTools `Fetch`) und Oberfläche; PDF.js liegt in `src/pdf/vendor` |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
-| `build.rs` | bettet das Icon und die Programminfos in die Exe ein |
+| `build.rs` | bettet das Icon, die Programminfos und PDF.js in die Exe ein |
 
 Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter `%LOCALAPPDATA%\GlassBrowser`.
 
@@ -117,4 +120,5 @@ nicht auf Updates – selbst wenn eine Build-Nummer gesetzt ist – und erlauben
 ## Lizenz
 
 MIT – siehe `LICENSE`. Die Lizenzen der verwendeten Bibliotheken liegen jedem Release als
-`THIRD_PARTY_LICENSES.html` bei (erzeugt mit `cargo about`).
+`THIRD_PARTY_LICENSES.html` bei (erzeugt mit `cargo about`). PDF.js (Apache 2.0) bringt seine Lizenz und die
+der Schriften und Bild-Decoder in `src/pdf/vendor` mit.
