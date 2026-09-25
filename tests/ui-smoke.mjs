@@ -183,6 +183,34 @@ try {
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
+  await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
+  await delay(800);
+  const pulseGeometry = await evaluate(`(() => {
+    const wheel = document.getElementById('wheel');
+    const slots = [...wheel.querySelectorAll('.slot')];
+    const selected = slots.findIndex(s => s.classList.contains('on'));
+    const incoming = slots[(selected + slots.length - 1) % slots.length];
+    incoming.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true }));
+    const animations = wheel.getAnimations({subtree:true});
+    animations.forEach(a => { a.pause(); const t=a.effect.getTiming(); a.currentTime=t.delay+Number(t.duration)*.99; });
+    const pulse = incoming.getAnimations().find(a => a.effect.getKeyframes().some(k => '--arrival-scale' in k));
+    const timing = pulse.effect.getTiming();
+    const samples = [0, .15, .38, .6, .85, .99].map(f => {
+      pulse.currentTime = timing.delay + Number(timing.duration) * f;
+      const r = incoming.getBoundingClientRect();
+      return { x:r.x+r.width/2, y:r.y+r.height/2, width:r.width, layout:incoming.offsetWidth };
+    });
+    animations.forEach(a => a.play());
+    return samples;
+  })()`);
+  assert.ok(Math.max(...pulseGeometry.map(r=>r.width)) > pulseGeometry[0].width + 2, 'glass pulse is visible');
+  for (const r of pulseGeometry) {
+    assert.equal(r.layout, pulseGeometry[0].layout, 'glass pulse does not relayout');
+    assert.ok(Math.abs(r.x-pulseGeometry[0].x)<.02 && Math.abs(r.y-pulseGeometry[0].y)<.02, 'glass centre remains fixed throughout pulse');
+  }
+  await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  console.log('PASS: glass arrival pulse keeps its centre and layout size fixed.');
   assert.equal(await value(),'alpha');
   assert.equal(await evaluate('document.activeElement.id'),'addr-input');
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
