@@ -1966,6 +1966,12 @@
     scheduleInk();
     setTimeout(scheduleInk, 700);
     if (!from.width) return;
+    // Leiste links: Der Weg aus der Leiste in die Mitte ist weit und quer – dort nur am neuen Platz einblenden
+    if (sideLeft()) {
+      address.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+        { duration: 260, easing: 'cubic-bezier(.3, 1.25, .45, 1)' });
+      return;
+    }
     address.animate([
       { transformOrigin: '0 0', transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})` },
       { transformOrigin: '0 0', transform: 'none' },
