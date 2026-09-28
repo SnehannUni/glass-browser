@@ -17,9 +17,6 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Auf Webseiten zeichnen** – Stift rechts oben: Stift, Textmarker, Radierer, Farben, Rückgängig (Strg+Z);
   die Zeichnung bleibt pro Adresse gespeichert und erscheint beim nächsten Besuch wieder (privat: nur bis zum Schließen).
   Der Textmarker rastet auf den überstrichenen Text ein und folgt ihm, wenn die Seite anders umbricht
-- **Seiten übersetzen** – Knopf rechts oben, Rechtsklick wählt die Zielsprache; übersetzt an Ort und Stelle
-  (Anmeldung und Links bleiben), auf der ganzen Website bis zum Ausschalten. Nutzt einen inoffiziellen
-  Google-Endpunkt ohne Schlüssel – der Seitentext geht dafür an Google
 
 ## Bauen
 
@@ -41,7 +38,6 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
 | `src/drawing.rs`, `src/drawing-content.js` | Zeichnen auf Webseiten: Speicher je Adresse, Zeichenfläche und Werkzeuge in der Seite |
-| `src/translate.rs`, `src/translate-content.js` | Seiten übersetzen: Anfrage an Google, Text in der Seite ersetzen und wiederherstellen |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
 | `build.rs` | bettet das Icon und die Programminfos in die Exe ein |

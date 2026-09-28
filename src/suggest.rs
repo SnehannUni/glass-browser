@@ -35,17 +35,6 @@ fn session() -> *mut core::ffi::c_void {
 
 /// Einfacher HTTPS-GET (auch für die Filterlisten des Werbeblockers).
 pub fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
-    request(host, "GET", path, None)
-}
-
-/// HTTPS-POST eines Formulars (für die Übersetzung); `None` auch bei einem HTTP-Fehlerstatus.
-/// Längere Wartezeit als die Vorschläge: Google braucht für viel Text ein paar Sekunden.
-pub fn https_post_form(host: &str, path: &str, form: &str) -> Option<Vec<u8>> {
-    request(host, "POST", path, Some(form.as_bytes()))
-}
-
-fn request(host: &str, method: &str, path: &str, form: Option<&[u8]>) -> Option<Vec<u8>> {
-    use windows_sys::Win32::Networking::WinHttp::{WinHttpQueryHeaders, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE};
     unsafe {
         let session = session();
         if session.is_null() {
@@ -57,7 +46,7 @@ fn request(host: &str, method: &str, path: &str, form: Option<&[u8]>) -> Option<
         }
         let request = WinHttpOpenRequest(
             connect,
-            wide(method).as_ptr(),
+            wide("GET").as_ptr(),
             wide(path).as_ptr(),
             std::ptr::null(),
             std::ptr::null(),
@@ -65,28 +54,9 @@ fn request(host: &str, method: &str, path: &str, form: Option<&[u8]>) -> Option<
             WINHTTP_FLAG_SECURE,
         );
         let mut body = Vec::new();
-        let sent = match form {
-            None => !request.is_null() && WinHttpSendRequest(request, std::ptr::null(), 0, std::ptr::null(), 0, 0, 0) != 0,
-            Some(form) => {
-                let headers = wide("Content-Type: application/x-www-form-urlencoded; charset=utf-8");
-                !request.is_null()
-                    && WinHttpSetTimeouts(request, 3000, 3000, 10000, 15000) != 0
-                    && WinHttpSendRequest(request, headers.as_ptr(), u32::MAX, form.as_ptr() as _, form.len() as u32, form.len() as u32, 0) != 0
-            }
-        };
-        let mut ok = sent && WinHttpReceiveResponse(request, std::ptr::null_mut()) != 0;
-        if ok && form.is_some() {
-            let (mut status, mut size) = (0u32, 4u32);
-            let queried = WinHttpQueryHeaders(
-                request,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                std::ptr::null(),
-                &mut status as *mut u32 as _,
-                &mut size,
-                std::ptr::null_mut(),
-            ) != 0;
-            ok = queried && status == 200;
-        }
+        let ok = !request.is_null()
+            && WinHttpSendRequest(request, std::ptr::null(), 0, std::ptr::null(), 0, 0, 0) != 0
+            && WinHttpReceiveResponse(request, std::ptr::null_mut()) != 0;
         if ok {
             let mut chunk = [0u8; 8192];
             loop {
