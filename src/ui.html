@@ -543,7 +543,7 @@
      Startbildschirm (ohne Seite daneben) nicht lose auf dem Wallpaper */
   body.side-left #toolbar {
     position: fixed; left: var(--margin); top: var(--margin); bottom: var(--margin); width: calc(var(--chrome-w) - 2 * var(--margin)); height: auto;
-    display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 4px 8px 8px 8px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 8px;
   }
   /* Liquid Glass als eigene Ebene hinter den Teilen: Lichtkante wie alle .glass-Flächen, dazu Unschärfe und eine
      helle Innenkante. Ohne SVG-Linse: Deren Verzerrungskarte verrutscht, solange die Leiste per transform ein- und
@@ -567,7 +567,7 @@
   body.side-left #toolbar { transition: transform var(--chrome-slide); }
   body.side-left.chrome-hidden #toolbar { transform: translateX(calc(var(--margin) - var(--chrome-w))); opacity: 1; }
   body.side-left .side { align-self: stretch; }
-  body.side-left .side.left { flex-wrap: wrap; row-gap: 12px; min-height: 30px; }
+  body.side-left .side.left { flex-wrap: wrap; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
   body.side-left .lights { margin-left: 4px; }
   body.side-left .nav { margin-left: auto; } /* Vor/Zurück rechts oben, in einer Zeile mit der Ampel */
   /* Startbildschirm: Platz freihalten, sonst rutscht der Tab darunter beim Wechsel zu einer Seite */
