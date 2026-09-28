@@ -31,6 +31,8 @@ const UI_URL: &str = "http://glass.localhost/";
 const TOOLBAR_HEIGHT: f64 = 42.0;
 /// Breite der Leiste, wenn sie links statt oben steht (Rechtsklick auf die Leiste → „Leiste links“).
 const SIDEBAR_WIDTH: f64 = 240.0;
+/// Eingeklappte Leiste links (Rechtsklick → „Leiste einklappen“): nur noch die Logos der Tabs.
+const SIDEBAR_COLLAPSED_WIDTH: f64 = 56.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
 /// Kleinste Fenstergröße: Startbildschirm mit allen Vorschlägen unter dem Suchfeld und dem Anbieter-Rad daneben
@@ -178,8 +180,9 @@ struct Browser {
     fullscreen: bool,
     /// War das Fenster vor dem Vollbild maximiert? Wird beim Verlassen wiederhergestellt.
     was_maximized: bool,
-    /// Offenes Overlay der Oberfläche über der Webseite: x, y, Breite, Höhe, Eckradius (logische px).
-    overlay: Option<[f64; 5]>,
+    /// Offene Overlays der Oberfläche über der Webseite, je Quelle (`key`, sonst „main“): x, y, Breite, Höhe,
+    /// Eckradius (logische px). Die ausgeklappte Leiste links kann z. B. zugleich mit den Vorschlägen offen sein.
+    overlay: Vec<(String, [f64; 5])>,
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
@@ -190,6 +193,8 @@ struct Browser {
     chrome_hidden: bool,
     /// Die Leiste steht links statt oben (Einstellung der Oberfläche, dort gespeichert).
     chrome_left: bool,
+    /// Leiste links ist eingeklappt (nur die Logos der Tabs).
+    chrome_collapsed: bool,
     /// Die Seiten gleiten gerade: Beginn, linke obere Ecke vorher und nachher.
     chrome_slide: Option<(std::time::Instant, [f64; 2], [f64; 2])>,
     /// Tempo der Animationen: 1, in der Zeitlupe der Oberfläche (Strg+Umschalt+F8) 0,05 – sonst glitte die Seite
@@ -201,6 +206,11 @@ impl Browser {
     /// Tabs zeigt die Zeile oben, sobald etwas offen ist – nur bei einem einzigen leeren Tab fehlen sie.
     fn show_tabbar(&self) -> bool {
         self.tabs.len() > 1 || self.tabs.iter().any(|t| t.webview.is_some() || !t.url.is_empty())
+    }
+
+    /// Breite der Leiste links, eingeklappt oder nicht.
+    fn sidebar_width(&self) -> f64 {
+        if self.chrome_collapsed { SIDEBAR_COLLAPSED_WIDTH } else { SIDEBAR_WIDTH }
     }
 
     /// Dauer der Gleitbewegung in Sekunden (in der Zeitlupe entsprechend länger).
@@ -218,7 +228,7 @@ impl Browser {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let (left, top) = match (self.chrome_hidden, self.chrome_left) {
             (true, _) => (MARGIN, MARGIN),
-            (false, true) => (SIDEBAR_WIDTH, MARGIN),
+            (false, true) => (self.sidebar_width(), MARGIN),
             (false, false) => (MARGIN, self.chrome_height()),
         };
         [left, top, size.width - left - MARGIN, size.height - top - MARGIN]
@@ -387,7 +397,7 @@ impl Browser {
                 let mut rc: RECT = std::mem::zeroed();
                 GetClientRect(hwnd, &mut rc);
                 let region = rounded_region(rc.right, rc.bottom, radius);
-                if let Some([x, y, w, h, r]) = self.overlay {
+                for &(_, [x, y, w, h, r]) in &self.overlay {
                     // Overlay-Koordinaten sind Fensterkoordinaten, die Region zählt ab der Webseiten-Ecke.
                     let (x, y) = (x - left, y - top);
                     let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
@@ -502,7 +512,7 @@ impl Browser {
             "chromeHeight": self.chrome_height(),
             "chromeHidden": self.chrome_hidden,
             "chromeLeft": self.chrome_left,
-            "chromeWidth": SIDEBAR_WIDTH,
+            "chromeWidth": self.sidebar_width(),
             "tabbar": self.show_tabbar(),
             "split": self.split.as_ref().map(|s| json!({ "left": s.left, "right": s.right, "ratio": s.ratio })),
             // Zielposition auch mitten im Gleiten – die Oberfläche animiert ihre Rahmen selbst dorthin
@@ -851,8 +861,10 @@ impl Browser {
             // Leiste oben oder links: Die Seiten springen sofort an ihren Platz – die Leiste baut sich ja auch um
             "chrome_side" => {
                 let left = value == "left";
-                if left != self.chrome_left {
+                let collapsed = msg["collapsed"].as_bool().unwrap_or(false);
+                if left != self.chrome_left || collapsed != self.chrome_collapsed {
                     self.chrome_left = left;
+                    self.chrome_collapsed = collapsed;
                     self.chrome_slide = None;
                     self.window.set_min_inner_size(Some(min_size(left)));
                     self.layout();
@@ -861,7 +873,11 @@ impl Browser {
             }
             "overlay" => {
                 let r = &msg["rect"];
-                self.overlay = r.is_object().then(|| ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default()));
+                let key = msg["key"].as_str().unwrap_or("main");
+                self.overlay.retain(|(k, _)| k != key);
+                if r.is_object() {
+                    self.overlay.push((key.to_owned(), ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default())));
+                }
                 self.round_content_views();
             }
             "resize" => {
@@ -1457,8 +1473,8 @@ fn main() -> wry::Result<()> {
     let mut browser = Browser {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, was_maximized: false, overlay: None, split: None, resize_preview: None, hover: None, update: None,
-        chrome_hidden: false, chrome_left: false, chrome_slide: None, animation_rate: 1.0,
+        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
+        chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
