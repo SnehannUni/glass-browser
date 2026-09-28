@@ -7,6 +7,7 @@ mod window_frame;
 mod autofill;
 mod favicon;
 mod resize_preview;
+mod clipboard;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -100,6 +101,10 @@ enum UserEvent {
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
     SleepTabs,
+    /// Neuer Text in der Zwischenablage (aus Glass oder einem anderen Programm).
+    Clipboard(String),
+    /// Eine Webseite meldet Einfügen, Pfeiltaste oder Ende beim Blättern im Verlauf (JSON aus clipboard-content.js).
+    ClipboardPage(u32, String),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -200,6 +205,10 @@ struct Browser {
     /// Tempo der Animationen: 1, in der Zeitlupe der Oberfläche (Strg+Umschalt+F8) 0,05 – sonst glitte die Seite
     /// in normalem Tempo, während die Leiste in Zeitlupe hinterherkriecht.
     animation_rate: f64,
+    /// Die letzten kopierten Texte, neuester zuerst.
+    clips: clipboard::History,
+    /// Gerade offene Liste nach Strg+V.
+    clip: Option<clipboard::Session>,
 }
 
 impl Browser {
@@ -702,6 +711,7 @@ impl Browser {
         if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
+        if cmd == "clip_pick" { self.clip_pick(msg); return true; }
         let id = msg["id"].as_u64().map(|v| v as u32);
         let value = msg["value"].as_str().unwrap_or_default();
         match cmd {
@@ -922,6 +932,13 @@ impl Browser {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             UserEvent::SleepTabs => self.sleep_idle_tabs(),
+            UserEvent::Clipboard(text) => {
+                // Kopien aus einem privaten Tab bleiben aus dem Verlauf
+                if !(self.foreground() && self.tabs.get(self.active).is_some_and(|t| t.private)) {
+                    self.clips.push(text);
+                }
+            }
+            UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -981,6 +998,7 @@ impl Browser {
                     }
                 }
                 if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
+                if loading && self.clip.as_ref().is_some_and(|s| s.tab == id) { self.clip_end(true); }
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     if loading {
                         tab.blocked = 0;
@@ -1079,6 +1097,7 @@ fn build_content_webview(
         .with_initialization_script(CONTENT_JS)
         .with_initialization_script(include_str!("passkey-policy.js"))
         .with_initialization_script(include_str!("autofill-content.js"))
+        .with_initialization_script(include_str!("clipboard-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
@@ -1086,6 +1105,8 @@ fn build_content_webview(
                 let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
                 if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
+                } else if msg.get("clip").is_some() {
+                    UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
                 } else { UserEvent::Cosmetic(id, body) }
@@ -1333,6 +1354,7 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
     use std::borrow::Cow;
     let (mime, body): (&str, Cow<'static, [u8]>) = match request.uri().path() {
         "/autofill-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("autofill-ui.js"))),
+        "/clipboard-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("clipboard-ui.js"))),
         "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
         "/group-hover.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("group-hover.js"))),
         "/animation-debug.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("animation-debug.js"))),
@@ -1468,6 +1490,9 @@ fn main() -> wry::Result<()> {
         }
     });
 
+    let p_clip = proxy.clone();
+    clipboard::watch(move |text| p_clip.send_event(UserEvent::Clipboard(text)).is_ok());
+
     let icloud = autofill::start(proxy.clone());
     let _ = icloud.send(json!({"id": 0, "op": "probe"}));
     let mut browser = Browser {
@@ -1475,6 +1500,7 @@ fn main() -> wry::Result<()> {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
+        clips: clipboard::History::default(), clip: None,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
@@ -1507,6 +1533,7 @@ fn main() -> wry::Result<()> {
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     browser.dismiss_autofill();
+                    browser.clip_end(true);
                     browser.layout();
                     browser.sync_ui();
                     browser.sync_geometry();
