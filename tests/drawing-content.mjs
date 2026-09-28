@@ -20,7 +20,11 @@ const page = () => `<!doctype html><body style="margin:0 0 0 ${layout.left}px;he
   <div style="height:${layout.banner}px"></div><h1>Test</h1>
   <p id=para style="margin-top:500px;font:20px/30px sans-serif">Ein Absatz mit Text zum Markieren, lang genug für einen Strich.</p>
   <input id=field><button id=b onclick="window.__clicked=(window.__clicked||0)+1" style="position:absolute;left:300px;top:300px">Knopf</button>`;
-const server = createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(page()); });
+// Trusted Types wie auf YouTube: Jede innerHTML-Zuweisung im Skript würde hier scheitern
+const server = createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': "require-trusted-types-for 'script'" });
+  res.end(page());
+});
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 
