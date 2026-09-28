@@ -899,9 +899,9 @@ impl Browser {
             }
             // Webseiten dürfen nur Tastenkürzel melden, sonst nichts steuern.
             UserEvent::Content(cmd) => {
-                // Leiste links: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der Webseite ersetzen sie
-                // (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
-                if self.chrome_left && !self.fullscreen {
+                // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
+                // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
+                if (self.chrome_left || self.chrome_hidden) && !self.fullscreen {
                     match cmd.as_str() {
                         "window_drag" => { let _ = self.window.drag_window(); }
                         "window_maximize" => self.window.set_maximized(!self.window.is_maximized()),

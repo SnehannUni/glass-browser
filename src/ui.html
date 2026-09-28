@@ -1991,31 +1991,22 @@
     else if (favPanel.classList.contains('open') && !favBtn.matches(':hover') && !favPanel.matches(':hover')) closeFavoritesSoon();
   };
 
-  // Wechsel Startbildschirm ↔ Seite: das Adressfeld gleitet von der Mitte in die Toolbar (und zurück).
-  // FLIP: alte Position messen, Layout umschalten, dann von der alten Form zur neuen federn.
+  // Wechsel Startbildschirm ↔ Seite: Das Adressfeld wechselt zwischen Mitte und Leiste und blendet dort ein.
   function setStartMode(start) {
     if (document.body.classList.contains('start') === start) return;
     closeWheel();
-    const from = address.getBoundingClientRect();
-    // Größe springt sofort (die Bewegung macht die Animation unten) – sonst liefe zusätzlich der Breiten-Übergang
+    const shown = !!address.offsetWidth;
+    // Größe springt sofort – sonst liefe ein Breiten-Übergang
     address.style.transition = 'none';
     document.body.classList.toggle('start', start);
     document.body.classList.toggle('searching', !start && editing());
-    const to = address.getBoundingClientRect();
     requestAnimationFrame(() => { address.style.transition = ''; });
     scheduleInk();
     setTimeout(scheduleInk, 700);
-    if (!from.width) return;
-    // Leiste links: Der Weg aus der Leiste in die Mitte ist weit und quer – dort nur am neuen Platz einblenden
-    if (sideLeft()) {
-      address.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
-        { duration: 260, easing: 'cubic-bezier(.3, 1.25, .45, 1)' });
-      return;
-    }
-    address.animate([
-      { transformOrigin: '0 0', transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})` },
-      { transformOrigin: '0 0', transform: 'none' },
-    ], { duration: 650, easing: 'cubic-bezier(.3, 1.25, .45, 1)' });
+    if (!shown) return;
+    // Kein Gleiten zwischen Leiste und Mitte (wirkte unruhig): das Feld blendet am neuen Platz kurz ein
+    address.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+      { duration: 260, easing: 'cubic-bezier(.3, 1.25, .45, 1)' });
   }
 
   // ---------- Geteilte Ansicht ----------
@@ -2142,7 +2133,7 @@
 
   // ---------- Leiste oben automatisch ausblenden ----------
   // Nach ein paar Sekunden Ruhe auf einer Webseite verschwindet die Leiste, die Seite reicht dann bis an den Rand
-  // (Rust: chrome_hidden). Zurück kommt sie über den oberen Fensterrand, Strg+L/T/Tab oder wenn eine Seite lädt.
+  // (Rust: chrome_hidden). Zurück kommt sie über den oberen Fensterrand, Strg+L/T/Tab oder beim Wechsel auf eine andere Website.
   const TOOLBAR_PIN_KEY = 'glass.toolbarPinned';
   let toolbarPinned = false;
   try { toolbarPinned = localStorage.getItem(TOOLBAR_PIN_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
@@ -2239,19 +2230,20 @@
 
   // Aufgeklappt über der Seite: Rust schneidet die Leiste aus der Webseite aus – Bild für Bild genau so breit,
   // wie sie gerade ist (auch in der Zeitlupe). Eine feste Aussparung stünde sonst als zweite Ebene vor ihr.
-  let sideOverlayFrame = 0;
+  // Zuletzt gesendet – über alle Durchläufe hinweg: Begänne jeder mit „nichts“, käme das Entfernen der Aussparung
+  // nie bei Rust an (z. B. beim Wechsel nach oben aus der aufgeklappten Leiste)
+  let sideOverlayFrame = 0, sideOverlaySent;
   function reportSideOverlay() {
     cancelAnimationFrame(sideOverlayFrame);
     const radius = parseFloat(getComputedStyle($('sidepanel')).borderTopLeftRadius) || 0;
     const since = performance.now();
-    let sent = null;
     (function follow() {
       const r = toolbar.getBoundingClientRect(), body = document.body.classList;
       // Nur eingeklappt links liegt die Leiste über der Seite; schmal liegt sie daneben – nichts mehr auszusparen.
       // (Oben ist die Leiste fensterbreit: ohne diese Bedingung fehlte der Seite ein Streifen.)
       const over = body.contains('side-collapsed') && (body.contains('side-flyout') || r.right > state.chromeWidth);
       const rect = over ? { x: r.left, y: r.top, w: r.width, h: r.height, r: radius } : null;
-      if (JSON.stringify(rect) !== JSON.stringify(sent)) { send('overlay', { key: 'sidebar', rect }); sent = rect; }
+      if (JSON.stringify(rect) !== JSON.stringify(sideOverlaySent)) { send('overlay', { key: 'sidebar', rect }); sideOverlaySent = rect; }
       // Weiter, solange sie gleitet (der Übergang beginnt erst mit dem nächsten Bild)
       if (toolbar.getAnimations().length || performance.now() - since < 100) sideOverlayFrame = requestAnimationFrame(follow);
     })();
@@ -2345,7 +2337,7 @@
   window.render = (next) => {
     const switched = next.active !== state.active;
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
-    const wasLoading = !switched && !!activeTab()?.loading;
+    const wasHost = switched ? null : hostOf(activeTab()?.url || ''); // Website vor diesem Stand
     const slideFrom = !!next.chromeHidden !== !!state.chromeHidden ? state.panes : null; // Leiste fährt aus/ein
     state = next;
     if (opened && engine !== ENGINES[0]) { engine = ENGINES[0]; renderEngine(); } // neuer Tab → immer Google
@@ -2368,9 +2360,10 @@
     renderPanes(slideFrom);
     renderAddress();
     if (switched && !hasPage && !activeTab()?.url) window.focusAddress();
-    // Tabwechsel, neuer Tab oder eine Seite beginnt zu laden → Leiste zeigen; Startbildschirm → immer sichtbar
+    // Tabwechsel, neuer Tab oder eine andere Website → Leiste zeigen; Startbildschirm → immer sichtbar.
+    // Innerhalb derselben Website (z. B. auf YouTube ein Video öffnen) bleibt sie weg.
     if (!hasPage) setChromeHidden(false);
-    else if (switched || (activeTab()?.loading && !wasLoading)) showChrome();
+    else if (switched || hostOf(activeTab()?.url || '') !== wasHost) showChrome();
     // Nach einem Neuladen der Oberfläche kennt Rust womöglich noch den alten Zustand
     if (!!state.chromeHidden !== chromeHidden) send('chrome_hidden', { value: chromeHidden });
   };
