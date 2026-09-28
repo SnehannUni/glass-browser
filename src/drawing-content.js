@@ -17,15 +17,23 @@
     pen: { width: 3, opacity: 1 },
     marker: { width: 18, opacity: 0.38 },
   };
+  // Je Symbol die Pfade (d-Attribute). Alles wird mit createElement gebaut, nie mit innerHTML: Seiten wie YouTube
+  // erzwingen Trusted Types und blockieren jede HTML-Zuweisung – die Leiste bliebe dort sonst leer.
   const ICONS = {
-    pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
-    marker: '<path d="m9.6 3 3.4 3.4-5.6 5.6H4v-3.4z"/><path d="M4 12l-1.6 1.6H6"/>',
-    eraser: '<path d="m6.8 13.2 7-7a1.4 1.4 0 0 0 0-2L11.9 2.3a1.4 1.4 0 0 0-2 0l-7.6 7.6a1.4 1.4 0 0 0 0 2l1.3 1.3z"/><path d="M6.4 5.8 10.6 10M6.8 13.2H14"/>',
-    undo: '<path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7"/>',
-    clear: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.3c.1.7.6 1.2 1.3 1.2h3c.7 0 1.2-.5 1.3-1.2l.7-8.3"/>',
-    done: '<path d="m3.5 8.4 3 3 6-6.6"/>',
+    pen: ['M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z', 'm10 4 2.3 2.3'],
+    marker: ['m9.6 3 3.4 3.4-5.6 5.6H4v-3.4z', 'M4 12l-1.6 1.6H6'],
+    eraser: ['m6.8 13.2 7-7a1.4 1.4 0 0 0 0-2L11.9 2.3a1.4 1.4 0 0 0-2 0l-7.6 7.6a1.4 1.4 0 0 0 0 2l1.3 1.3z', 'M6.4 5.8 10.6 10M6.8 13.2H14'],
+    undo: ['M5.5 3.5 2.5 6.5l3 3', 'M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7'],
+    clear: ['M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.3c.1.7.6 1.2 1.3 1.2h3c.7 0 1.2-.5 1.3-1.2l.7-8.3'],
+    done: ['m3.5 8.4 3 3 6-6.6'],
   };
-  const icon = (name) => `<svg viewBox="0 0 16 16">${ICONS[name]}</svg>`;
+  function make(tag, attrs = {}, ...children) {
+    const el = tag === 'svg' || tag === 'path' ? document.createElementNS(NS, tag) : document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    el.append(...children);
+    return el;
+  }
+  const icon = (name) => make('svg', { viewBox: '0 0 16 16' }, ...ICONS[name].map((d) => make('path', { d })));
 
   // { t: 'pen'|'marker', c: Farbe, w: Breite, p: [x, y, x, y, …], a: Anker, o: [x, y] Ankerposition beim Zeichnen }
   let strokes = [];
@@ -302,21 +310,32 @@
     }
     host = document.createElement('glass-draw');
     root = host.attachShadow({ mode: 'closed' });
-    root.innerHTML = `<style>${CSS}</style><svg class="ink" xmlns="${NS}"></svg><div class="layer"></div>
-      <div class="bar" role="toolbar" aria-label="Zeichnen">
-        <button data-tool="pen" title="Stift (P)">${icon('pen')}</button>
-        <button data-tool="marker" title="Textmarker (M)">${icon('marker')}</button>
-        <button data-tool="eraser" title="Radierer (E)">${icon('eraser')}</button>
-        <span class="sep"></span>
-        ${COLORS.map((c) => `<button class="dot" data-color="${c}" title="Farbe"><i style="background:${c}"></i></button>`).join('')}
-        <span class="sep"></span>
-        <button data-act="undo" title="Rückgängig (Strg+Z)">${icon('undo')}</button>
-        <button data-act="clear" title="Alles löschen">${icon('clear')}</button>
-        <button class="done" data-act="done" title="Fertig (Esc)">${icon('done')}Fertig</button>
-      </div>`;
-    svg = root.querySelector('svg.ink');
-    layer = root.querySelector('.layer');
-    bar = root.querySelector('.bar');
+    // Konstruierte Stylesheets unterliegen keiner CSP (style-src) – ein <style> nur als Rückfall
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(CSS);
+      root.adoptedStyleSheets = [sheet];
+    } catch {
+      root.append(make('style', {}, CSS));
+    }
+    const dot = (c) => {
+      const i = make('i');
+      i.style.background = c;
+      return make('button', { class: 'dot', 'data-color': c, title: 'Farbe' }, i);
+    };
+    svg = make('svg', { class: 'ink' });
+    layer = make('div', { class: 'layer' });
+    bar = make('div', { class: 'bar', role: 'toolbar', 'aria-label': 'Zeichnen' },
+      make('button', { 'data-tool': 'pen', title: 'Stift (P)' }, icon('pen')),
+      make('button', { 'data-tool': 'marker', title: 'Textmarker (M)' }, icon('marker')),
+      make('button', { 'data-tool': 'eraser', title: 'Radierer (E)' }, icon('eraser')),
+      make('span', { class: 'sep' }),
+      ...COLORS.map(dot),
+      make('span', { class: 'sep' }),
+      make('button', { 'data-act': 'undo', title: 'Rückgängig (Strg+Z)' }, icon('undo')),
+      make('button', { 'data-act': 'clear', title: 'Alles löschen' }, icon('clear')),
+      make('button', { class: 'done', 'data-act': 'done', title: 'Fertig (Esc)' }, icon('done'), 'Fertig'));
+    root.append(svg, layer, bar);
     layer.addEventListener('pointerdown', down);
     layer.addEventListener('pointermove', move);
     layer.addEventListener('pointerup', up);
