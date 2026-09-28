@@ -217,7 +217,8 @@
   /* Startbildschirm: das Adressfeld wandert als große Such-Kapsel in die Fenstermitte */
   body.start .address {
     position: fixed; left: 0; right: 0; margin: 0 auto; top: calc(42vh - 34px);
-    width: min(760px, calc(100vw - 64px)); height: 68px; border-radius: 34px;
+    /* seitlich Platz für das Anbieter-Rad (klappt ~145px rechts über das Feld hinaus); main.rs: MIN_WIDTH */
+    width: min(760px, calc(100vw - 332px)); height: 68px; border-radius: 34px;
     padding: 0 11px 0 26px; gap: 14px; font-size: 19px; z-index: 10; cursor: text; transition: none;
   }
   body.start .address .ic { width: 21px; height: 21px; }
@@ -617,7 +618,7 @@
   #favs.up { transform-origin: bottom left; }
   body.side-left #stage { top: var(--margin); left: var(--chrome-w); }
   /* Startbildschirm: Such-Kapsel und Hinweis stehen in der Mitte der freien Fläche rechts der Leiste */
-  body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 64px)); }
+  body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 332px)); }
 
 
   html.resize-n, html.resize-s { cursor: ns-resize; }
@@ -1739,6 +1740,14 @@
     reportOverlay();
     scheduleInk();
   }
+  // Offene Liste folgt dem Feld, wenn sich das Fenster (und damit Lage oder Breite des Felds) ändert
+  function followSuggest() {
+    if (!suggestBox.classList.contains('open')) return;
+    suggestPending = true;
+    placeSuggest();
+  }
+  addEventListener('resize', followSuggest);
+  new ResizeObserver(followSuggest).observe(address);
 
   function markSelected() {
     suggestBox.querySelectorAll('.sg').forEach((row, i) => row.classList.toggle('sel', i === selected));
