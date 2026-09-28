@@ -462,6 +462,11 @@
   .star { color: var(--label-2); }
   .star:is(:hover, .vh) { color: var(--label); }
   .star.on { color: #ffd60a; }
+  /* Rechts oben: Werkzeuge für die aktuelle Seite (Zeichnen) */
+  #page-tools > .key { color: var(--label-2); }
+  #page-tools > .key:is(:hover, .vh) { color: var(--label); }
+  #page-tools > .key.on { color: #0a84ff; }
+  #page-tools > .key.pop svg { animation: star-pop .5s var(--spring); }
   .star.pop svg { animation: star-pop .5s var(--spring); }
   @keyframes star-pop { 40% { transform: scale(1.45) rotate(-12deg); } }
   /* Knopf ganz rechts oben */
@@ -727,6 +732,9 @@
       <button class="glass tab-new" id="btn-new" title="Neuer Tab (Strg+T)" data-lens><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
     </nav>
     <div class="side right">
+    <div class="glass capsule tools" id="page-tools" data-lens data-button-group hidden>
+      <button class="key" id="btn-draw"></button>
+    </div>
     <div class="glass capsule tools" id="tools" data-lens data-button-group hidden>
       <button class="key" id="btn-unsplit" title="Geteilte Ansicht beenden"><svg viewBox="0 0 16 16"><rect x="2.2" y="3" width="11.6" height="10" rx="2.2"/><path d="M8 3v10"/></svg></button>
     </div>
@@ -801,6 +809,8 @@
     shieldOff: '<path d="M8 1.9 13 3.8v3.9c0 3-2.1 5.4-5 6.4-2.9-1-5-3.4-5-6.4V3.8z"/><path d="m2.5 2.5 11 11"/>',
     chev: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
     check: '<path d="m3.5 8.5 3 3 6-7"/>',
+    pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
+    penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
   };
   const svg = (name, cls = '') => `<svg class="${cls}" viewBox="0 0 16 16">${ICON[name]}</svg>`;
@@ -1337,7 +1347,24 @@
     $('btn-fwd').disabled = !(tab?.page || tab?.home);
     renderStar();
     renderShield();
+    renderDraw();
   }
+
+  // ---------- Rechts oben: Zeichnen, nur auf Webseiten ----------
+  // Stift: auf der Seite zeichnen (drawing-content.js, gespeichert je Adresse)
+  const pageTools = $('page-tools'), drawBtn = $('btn-draw');
+  function renderDraw() {
+    const tab = activeTab();
+    pageTools.hidden = !(tab?.page && /^https?:/.test(tab.url));
+    const on = !!tab?.drawing;
+    if (drawBtn.classList.contains('on') !== on || !drawBtn.firstChild) drawBtn.innerHTML = svg(on ? 'penOn' : 'pen');
+    drawBtn.classList.toggle('on', on);
+    drawBtn.title = on ? 'Zeichnen beenden (Esc)' : 'Auf der Seite zeichnen';
+  }
+  drawBtn.addEventListener('click', () => {
+    send('draw');
+    drawBtn.classList.remove('pop'); void drawBtn.offsetWidth; drawBtn.classList.add('pop');
+  });
 
   // ---------- Aktiver Tab im eingefahrenen Adressfeld ----------
   const slot = $('addr-tab');
@@ -2327,6 +2354,7 @@
   const CHROME_IDLE = 3500, REVEAL_ZONE = 6;
   let chromeHidden = false, chromeTimer = 0, pointerAt = null;
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
+    || activeTab()?.drawing // beim Zeichnen bleibt der Stift zum Beenden sichtbar
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
     || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
     || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
