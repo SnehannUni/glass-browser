@@ -102,17 +102,26 @@
   }
 
   /* Zwischenablage-Verlauf nach Strg+V in einer Webseite (clipboard-ui.js) */
+  /* Liquid Glass über der Webseite: Die Linse (glassLens) bricht ein Bild der Seite, das passgenau dahinter liegt
+     (#clipboard-page). Schwarze Tönung, damit der Text auf jeder Seite lesbar bleibt. */
   #clipboard-history {
-    position: fixed; z-index: 25; width: 300px; padding: 6px; box-sizing: border-box; border-radius: 14px;
-    backdrop-filter: blur(24px) brightness(.6); background-color: rgba(28, 30, 38, .92); color: white; font-size: 13px;
-    animation: clip-in .14s var(--ease);
+    position: fixed; z-index: 25; width: 320px; padding: 6px; box-sizing: border-box; border-radius: 18px;
+    background: rgba(0, 0, 0, .38); backdrop-filter: blur(4px) saturate(1.3); animation: drop-in .4s var(--spring);
   }
-  @keyframes clip-in { from { opacity: 0; transform: translateY(-4px); } }
-  .clip-head, .clip-hint { padding: 5px 8px; font-size: 11px; opacity: .6; }
-  .clip-item { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 9px; cursor: default; }
-  .clip-item:hover { background-color: var(--control-hover); }
-  .clip-item.on { background-color: var(--blue); }
-  .clip-n { flex: none; width: 14px; text-align: right; font-size: 11px; opacity: .55; font-variant-numeric: tabular-nums; }
+  #clipboard-page {
+    position: fixed; z-index: 24; pointer-events: none; background-size: 100% 100%;
+    opacity: 0; transition: opacity .15s var(--ease);
+  }
+  #clipboard-page.ready { opacity: 1; }
+  .clip-head { padding: 4px 12px 4px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
+  .clip-hint { padding: 6px 12px 3px; font-size: 11px; color: var(--label-3); }
+  .clip-item {
+    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: 12px;
+    color: var(--label-2); cursor: default;
+  }
+  .clip-item.on { background: rgba(255, 255, 255, .12); color: var(--label); }
+  .clip-item:hover:not(.on) { background: rgba(255, 255, 255, .06); }
+  .clip-n { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--label-3); font-variant-numeric: tabular-nums; }
   .clip-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .capsule { height: var(--toolbar-control-height); border-radius: var(--toolbar-control-radius); display: flex; align-items: center; }
@@ -888,6 +897,7 @@
     // alten Filter erst entfernen, wenn der neue sicher gezeichnet ist
     if (old) requestAnimationFrame(() => requestAnimationFrame(() => old.remove()));
   }
+  window.glassLens = lens; // auch für Glas aus eigenen Skripten (clipboard-ui.js)
   const lensQueue = new Set();
   let lensFrame = 0;
   const resizeObserver = new ResizeObserver((entries) => {
@@ -2272,7 +2282,8 @@
   }
   // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
   const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
-    || [suggestBox, favPanel].some((el) => el.classList.contains('open')) || document.body.matches('.modal, .wheel-open');
+    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || $('clipboard-history') // Zwischenablage-Liste: Ihr Glas zeigt ein Bild der Seite, die Seite darf nicht gleiten || document.body.matches('.modal, .wheel-open');
   // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
   let flyoutTimer = 0, flyoutPointer = null;
   function sideHover(x, y) {
@@ -2373,6 +2384,7 @@
     recordSearches();
     renderTabs();
     renderPanes(slideFrom);
+    if (slideFrom) window.clipboardFollow?.(slideFrom, state.panes || []);
     renderAddress();
     if (switched && !hasPage && !activeTab()?.url) window.focusAddress();
     // Tabwechsel, neuer Tab oder eine andere Website → Leiste zeigen; Startbildschirm → immer sichtbar.

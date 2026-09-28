@@ -105,6 +105,8 @@ enum UserEvent {
     Clipboard(String),
     /// Eine Webseite meldet Einfügen, Pfeiltaste oder Ende beim Blättern im Verlauf (JSON aus clipboard-content.js).
     ClipboardPage(u32, String),
+    /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
+    ClipboardBackdrop(u64, String),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -409,6 +411,12 @@ impl Browser {
                 for &(_, [x, y, w, h, r]) in &self.overlay {
                     // Overlay-Koordinaten sind Fensterkoordinaten, die Region zählt ab der Webseiten-Ecke.
                     let (x, y) = (x - left, y - top);
+                    let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
+                    CombineRgn(region, region, hole, RGN_DIFF);
+                    DeleteObject(hole);
+                }
+                // Die Zwischenablage-Liste gleitet mit ihrer Seite mit – ihre Aussparung zählt deshalb ab der Seite
+                if let Some([x, y, w, h, r]) = self.clip.as_ref().filter(|s| s.tab == self.tabs[i].id).and_then(|s| s.hole) {
                     let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
                     CombineRgn(region, region, hole, RGN_DIFF);
                     DeleteObject(hole);
@@ -885,7 +893,9 @@ impl Browser {
                 let r = &msg["rect"];
                 let key = msg["key"].as_str().unwrap_or("main");
                 self.overlay.retain(|(k, _)| k != key);
-                if r.is_object() {
+                if key == "clipboard" {
+                    self.clip_hole(r);
+                } else if r.is_object() {
                     self.overlay.push((key.to_owned(), ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default())));
                 }
                 self.round_content_views();
@@ -939,6 +949,7 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
+            UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
