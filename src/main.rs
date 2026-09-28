@@ -9,7 +9,6 @@ mod favicon;
 mod resize_preview;
 mod clipboard;
 mod drawing;
-mod translate;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -111,10 +110,6 @@ enum UserEvent {
     ClipboardBackdrop(u64, String),
     /// Zeichnen auf einer Webseite: Tab, Adresse des sendenden Dokuments, JSON aus drawing-content.js.
     Drawing(u32, String, String),
-    /// Übersetzen einer Webseite: Tab, JSON aus translate-content.js.
-    Translate(u32, String),
-    /// Antwort von Google für eine Anfrage der Seite: Tab, Nummer der Anfrage, Übersetzungen (None: Fehler).
-    Translated(u32, String, Option<Value>),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -174,11 +169,6 @@ struct Tab {
     hidden_since: Cell<Option<Instant>>,
     /// Die Seite ist im Zeichenmodus (Stift in der Leiste, siehe drawing-content.js).
     drawing: bool,
-    /// Der Nutzer hat diese Website übersetzen lassen (Host, Zielsprache) – gilt auch für die nächsten Seiten dort.
-    translate_to: Option<(String, String)>,
-    /// Stand, den die Seite meldet: übersetzt in diese Sprache / gerade dabei.
-    translated: Option<String>,
-    translating: bool,
 }
 
 impl Tab {
@@ -536,7 +526,6 @@ impl Browser {
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
                     "drawing": t.drawing && t.shows_page(),
-                    "translated": t.translated.as_deref().filter(|_| t.shows_page()), "translating": t.translating && t.shows_page(),
                 })
             })
             .collect();
@@ -568,7 +557,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false, translate_to: None, translated: None, translating: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -759,17 +748,6 @@ impl Browser {
             }
             "new_tab" => self.new_tab(None, false),
             // Schutzschild im Adressfeld: Werbeblocker für die Seite des aktiven Tabs an/aus, dann neu laden
-            // Übersetzen-Knopf: an/aus in der gemerkten Sprache; `force` (Sprache im Menü gewählt): in diese übersetzen
-            "translate" => {
-                let lang = msg["lang"].as_str().filter(|l| translate::valid_lang(l)).unwrap_or("de").to_owned();
-                let force = msg["force"].as_bool().unwrap_or(false);
-                if let Some(tab) = self.tabs.get_mut(self.active).filter(|t| t.shows_page()) {
-                    let on = force || tab.translate_to.is_none();
-                    tab.translate_to = on.then(|| (host_of(&tab.url), lang.clone()));
-                    let script = if on { format!("window.__glassTranslate?.on({})", json!(lang)) } else { "window.__glassTranslate?.off()".into() };
-                    if let Some(wv) = &tab.webview { let _ = wv.evaluate_script(&script); }
-                }
-            }
             // Stift in der Leiste: Zeichenmodus der aktiven Seite an/aus (die Seite meldet den neuen Stand zurück)
             "draw" => {
                 if let Some(wv) = self.tabs.get(self.active).filter(|t| t.shows_page()).and_then(|t| t.webview.as_ref()) {
@@ -986,12 +964,6 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
-            UserEvent::Translate(id, raw) => self.translate_page(id, &raw),
-            UserEvent::Translated(id, request, result) => {
-                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
-                    let _ = wv.evaluate_script(&format!("window.__glassTranslated?.({}, {})", json!(request), result.unwrap_or(Value::Null)));
-                }
-            }
             UserEvent::Drawing(id, source, raw) => {
                 let Some(i) = self.index_of(id) else { return true };
                 let msg: Value = serde_json::from_str(&raw).unwrap_or_default();
@@ -1075,20 +1047,6 @@ impl Browser {
                     tab.loading = loading;
                     if !url.is_empty() {
                         tab.url = url;
-                    }
-                    // Übersetzen gilt für die ganze Website: nach jedem Laden dort weiter übersetzen, woanders nicht
-                    if !loading {
-                        let host = host_of(&tab.url);
-                        match (&tab.translate_to, &tab.webview) {
-                            (Some((h, lang)), Some(wv)) if *h == host => {
-                                let _ = wv.evaluate_script(&format!("window.__glassTranslate?.on({})", json!(lang)));
-                            }
-                            _ => {
-                                tab.translate_to = None;
-                                tab.translated = None;
-                                tab.translating = false;
-                            }
-                        }
                     }
                     self.sync_ui();
                 }
@@ -1179,7 +1137,6 @@ fn build_content_webview(
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("clipboard-content.js"))
         .with_initialization_script(include_str!("drawing-content.js"))
-        .with_initialization_script(include_str!("translate-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
@@ -1187,8 +1144,6 @@ fn build_content_webview(
                 let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
                 if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
-                } else if msg.get("tr").is_some() {
-                    UserEvent::Translate(id, body)
                 } else if msg.get("draw").is_some() {
                     UserEvent::Drawing(id, req.uri().to_string(), body)
                 } else if msg.get("clip").is_some() {
@@ -1378,11 +1333,6 @@ fn as_url(input: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Host einer Adresse (leer, wenn sie keinen hat).
-fn host_of(url: &str) -> String {
-    url.parse::<wry::http::Uri>().ok().and_then(|u| u.host().map(str::to_owned)).unwrap_or_default()
 }
 
 /// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
