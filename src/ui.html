@@ -878,6 +878,16 @@
   #sidestrip .winctl { gap: 0; margin: 0; }
   /* Startbildschirm: Such-Kapsel und Hinweis stehen in der Mitte der freien Fläche rechts der Leiste */
   body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 332px)); }
+  /* Startbildschirm: Hinweis unten, solange Glass nicht der Standardbrowser ist */
+  #default-hint {
+    position: fixed; left: 0; right: 0; bottom: 28px; width: fit-content; margin: 0 auto; display: none; align-items: center; gap: 10px;
+    height: 40px; padding: 0 5px 0 16px; border-radius: 20px; white-space: nowrap; color: var(--label-2); font-size: 12.5px;
+  }
+  body.start:not(.private) #default-hint.show { display: flex; animation: pop-in .5s var(--spring); }
+  #default-hint .up-btn { height: 30px; }
+  #dh-close { width: 30px; padding: 0; display: grid; place-items: center; background: none; }
+  #dh-close svg { width: 10px; height: 10px; stroke-width: 2; }
+  #dh-close:is(:hover, .vh) { background: rgba(255, 255, 255, .14); }
 
 
   html.resize-n, html.resize-s { cursor: ns-resize; }
@@ -965,6 +975,12 @@
   <!-- Mail-Ansicht (mail.rs): Liste links; rechts liegt das Postfach als eigene WebView darüber -->
   <div id="mailview" class="glass"></div>
   <div id="mail-hint"></div>
+
+  <div id="default-hint" class="glass">
+    <span>Glass als Standardbrowser verwenden?</span>
+    <button class="up-btn primary" id="dh-set">Festlegen</button>
+    <button class="up-btn" id="dh-close" title="Nicht mehr fragen"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+  </div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
   <div id="scrim"></div>
@@ -2944,6 +2960,20 @@
     requestAnimationFrame(reportUpdateOverlay);
   };
   addEventListener('resize', () => { if (upBox.classList.contains('open')) reportUpdateOverlay(); });
+
+  // ---------- Standardbrowser (Rust meldet beim Start und bei jedem Fokus, ob Glass es schon ist) ----------
+  const DEFAULT_HINT_KEY = 'glass.defaultBrowserHint.dismissed';
+  const defaultHint = $('default-hint');
+  window.setDefaultBrowser = (isDefault) => {
+    let dismissed = false;
+    try { dismissed = localStorage.getItem(DEFAULT_HINT_KEY) === '1'; } catch { /* dann eben zeigen */ }
+    defaultHint.classList.toggle('show', !isDefault && !dismissed);
+  };
+  $('dh-set').addEventListener('click', () => send('default_browser'));
+  $('dh-close').addEventListener('click', () => {
+    try { localStorage.setItem(DEFAULT_HINT_KEY, '1'); } catch { /* egal */ }
+    defaultHint.classList.remove('show');
+  });
   favBtn.addEventListener('pointerenter', openFavorites);
   favBtn.addEventListener('pointerleave', closeFavoritesSoon);
   favBtn.addEventListener('click', () => (favPanel.classList.contains('open') ? closeFavorites() : openFavorites()));
