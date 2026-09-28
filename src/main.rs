@@ -8,6 +8,7 @@ mod autofill;
 mod favicon;
 mod resize_preview;
 mod clipboard;
+mod drawing;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -107,6 +108,8 @@ enum UserEvent {
     ClipboardPage(u32, String),
     /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
     ClipboardBackdrop(u64, String),
+    /// Zeichnen auf einer Webseite: Tab, Adresse des sendenden Dokuments, JSON aus drawing-content.js.
+    Drawing(u32, String, String),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -164,6 +167,8 @@ struct Tab {
     pending_prompt: Option<String>,
     /// Seit wann die Seite ausgeblendet ist (`None`: gerade sichtbar). Siehe `sleep_idle_tabs`.
     hidden_since: Cell<Option<Instant>>,
+    /// Die Seite ist im Zeichenmodus (Stift in der Leiste, siehe drawing-content.js).
+    drawing: bool,
 }
 
 impl Tab {
@@ -211,6 +216,8 @@ struct Browser {
     clips: clipboard::History,
     /// Gerade offene Liste nach Strg+V.
     clip: Option<clipboard::Session>,
+    /// Gespeicherte Zeichnungen auf Webseiten.
+    drawings: drawing::Store,
 }
 
 impl Browser {
@@ -518,6 +525,7 @@ impl Browser {
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
+                    "drawing": t.drawing && t.shows_page(),
                 })
             })
             .collect();
@@ -549,7 +557,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None) });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -740,6 +748,13 @@ impl Browser {
             }
             "new_tab" => self.new_tab(None, false),
             // Schutzschild im Adressfeld: Werbeblocker für die Seite des aktiven Tabs an/aus, dann neu laden
+            // Stift in der Leiste: Zeichenmodus der aktiven Seite an/aus (die Seite meldet den neuen Stand zurück)
+            "draw" => {
+                if let Some(wv) = self.tabs.get(self.active).filter(|t| t.shows_page()).and_then(|t| t.webview.as_ref()) {
+                    let _ = wv.evaluate_script("window.__glassDraw?.toggle()");
+                    let _ = wv.focus();
+                }
+            }
             "adblock_toggle" => {
                 let url = self.tabs[self.active].url.clone();
                 blocker::toggle(&url);
@@ -949,6 +964,18 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
+            UserEvent::Drawing(id, source, raw) => {
+                let Some(i) = self.index_of(id) else { return true };
+                let msg: Value = serde_json::from_str(&raw).unwrap_or_default();
+                // Jede Nachricht sagt, ob die Seite gerade im Zeichenmodus ist (ein neues Dokument beginnt ohne)
+                if let Some(on) = msg["on"].as_bool().filter(|on| *on != self.tabs[i].drawing) {
+                    self.tabs[i].drawing = on;
+                    self.sync_ui();
+                }
+                if let (Some(script), Some(wv)) = (self.drawings.handle(&source, &msg, self.tabs[i].private), &self.tabs[i].webview) {
+                    let _ = wv.evaluate_script(&script);
+                }
+            }
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
@@ -1109,6 +1136,7 @@ fn build_content_webview(
         .with_initialization_script(include_str!("passkey-policy.js"))
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("clipboard-content.js"))
+        .with_initialization_script(include_str!("drawing-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
@@ -1116,6 +1144,8 @@ fn build_content_webview(
                 let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
                 if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
+                } else if msg.get("draw").is_some() {
+                    UserEvent::Drawing(id, req.uri().to_string(), body)
                 } else if msg.get("clip").is_some() {
                     UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
@@ -1443,6 +1473,7 @@ fn main() -> wry::Result<()> {
         .map(|p| std::path::PathBuf::from(p).join("GlassBrowser"))
         .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"));
     blocker::init(data_dir.clone());
+    let drawings = drawing::Store::new(&data_dir);
     let mut web_context = WebContext::new(Some(data_dir));
 
     let p_ui = proxy.clone();
@@ -1511,7 +1542,7 @@ fn main() -> wry::Result<()> {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
-        clips: clipboard::History::default(), clip: None,
+        clips: clipboard::History::default(), clip: None, drawings,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();

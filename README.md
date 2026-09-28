@@ -14,6 +14,8 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Private Tabs** (Strg+Umschalt+N) – InPrivate-Profil nur im Arbeitsspeicher, strenger Tracking-Schutz
 - **Werbeblocker** – Brave-Filter-Engine mit EasyList, EasyPrivacy, EasyList Germany und uBlock-Listen;
   blendet Werbeflächen aus, entfernt YouTube-Werbung und lässt sich pro Website abschalten
+- **Auf Webseiten zeichnen** – Stift im Adressfeld: Stift, Textmarker, Radierer, Farben, Rückgängig (Strg+Z);
+  die Zeichnung bleibt pro Adresse gespeichert und erscheint beim nächsten Besuch wieder (privat: nur bis zum Schließen)
 
 ## Bauen
 
@@ -34,6 +36,7 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/ui.html` | Oberfläche (Glas, Tabs, Adressfeld, Vorschläge, Favoriten) |
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
+| `src/drawing.rs`, `src/drawing-content.js` | Zeichnen auf Webseiten: Speicher je Adresse, Zeichenfläche und Werkzeuge in der Seite |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
 | `build.rs` | bettet das Icon und die Programminfos in die Exe ein |
