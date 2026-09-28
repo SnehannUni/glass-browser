@@ -115,12 +115,25 @@
   });
 
   // 2. Rutscht doch eine Werbung durch: stumm vorspulen und „Überspringen“ drücken.
-  let mutedByUs = false;
+  // 3. „Werbeblocker sind auf YouTube nicht erlaubt“: YouTube pausiert dabei das Video und legt eine Sperre über die
+  //    Seite. Der Dialog ist ausgeblendet (4.) – so wirkte der Tab eingefroren. Schließen und weiterspielen.
+  let mutedByUs = false, resumeAfterNag = false;
   setInterval(() => {
     if (off()) return;
+    const nag = document.querySelector('ytd-enforcement-message-view-model')?.closest('tp-yt-paper-dialog');
+    if (nag?.opened) {
+      // Der Schließen-Knopf hat nur eine Beschriftung für Screenreader, keinen Text
+      const close = [...nag.querySelectorAll('button[aria-label]')].find((b) => !b.innerText.trim());
+      if (close) close.click(); else nag.close?.();
+      resumeAfterNag = true;
+    }
     const player = document.querySelector('#movie_player, .html5-video-player');
     const video = player?.querySelector('video');
     if (!video) return;
+    if (resumeAfterNag && !nag?.opened) {
+      resumeAfterNag = false;
+      if (video.paused) video.play().catch(() => { /* Autoplay verweigert: dann startet es der Nutzer */ });
+    }
     if (player.classList.contains('ad-showing')) {
       if (!video.muted) { video.muted = true; mutedByUs = true; }
       if (Number.isFinite(video.duration)) video.currentTime = video.duration;
@@ -131,7 +144,7 @@
     }
   }, 250);
 
-  // 3. Werbeflächen auf der Seite und der „Werbeblocker erkannt“-Dialog
+  // 4. Werbeflächen auf der Seite und der „Werbeblocker erkannt“-Dialog (den schließt 3.)
   document.addEventListener('DOMContentLoaded', () => {
     if (off()) return;
     window.__glassHide([
