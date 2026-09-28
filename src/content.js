@@ -20,8 +20,8 @@
   }, true);
 
   // ---------- Fenster am oberen Seitenrand anfassen ----------
-  // Steht die Leiste links, fehlt oben die Titelleiste. Leere Stellen im oberen Streifen der Seite ersetzen sie:
-  // Ziehen verschiebt das Fenster, Doppelklick maximiert. Rust führt das nur mit Leiste links aus.
+  // Steht die Leiste links oder ist sie oben ausgeblendet, fehlt oben die Titelleiste. Leere Stellen im oberen
+  // Streifen der Seite ersetzen sie: Ziehen verschiebt das Fenster, Doppelklick maximiert. Rust entscheidet, ob.
   // Erst bei Bewegung ziehen – ein einfacher Klick bleibt ein Klick für die Seite.
   const GRAB_BAND = 40, GRAB_SLOP = 4;
   const INTERACTIVE = 'a, button, input, select, textarea, label, summary, video, audio, iframe, embed, object, canvas, '
