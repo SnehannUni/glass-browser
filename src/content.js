@@ -19,6 +19,43 @@
     window.ipc.postMessage(cmd);
   }, true);
 
+  // ---------- Fenster am oberen Seitenrand anfassen ----------
+  // Steht die Leiste links, fehlt oben die Titelleiste. Leere Stellen im oberen Streifen der Seite ersetzen sie:
+  // Ziehen verschiebt das Fenster, Doppelklick maximiert. Rust führt das nur mit Leiste links aus.
+  // Erst bei Bewegung ziehen – ein einfacher Klick bleibt ein Klick für die Seite.
+  const GRAB_BAND = 40, GRAB_SLOP = 4;
+  const INTERACTIVE = 'a, button, input, select, textarea, label, summary, video, audio, iframe, embed, object, canvas, '
+    + '[contenteditable]:not([contenteditable="false"]), [draggable="true"], [onclick], [tabindex]:not([tabindex="-1"]), '
+    + '[role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], '
+    + '[role="switch"], [role="textbox"], [role="combobox"], [role="slider"], [role="option"]';
+  // Liegt unter dem Punkt Text? (Text hat meist den Cursor „auto“, zeigt aber einen Textcursor)
+  function textAt(x, y) {
+    const caret = document.caretRangeFromPoint?.(x, y);
+    if (caret?.startContainer.nodeType !== Node.TEXT_NODE) return false;
+    const range = document.createRange();
+    range.selectNodeContents(caret.startContainer);
+    return [...range.getClientRects()].some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+  }
+  function grabbable(e) {
+    if (e.button !== 0 || e.clientY >= GRAB_BAND || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return false;
+    if (document.fullscreenElement) return false;
+    const el = e.target;
+    if (!(el instanceof Element) || el.closest(INTERACTIVE)) return false;
+    if (!['auto', 'default'].includes(getComputedStyle(el).cursor)) return false; // Hand, Textcursor, Greifen …
+    return !textAt(e.clientX, e.clientY);
+  }
+  let grab = null;
+  window.addEventListener('mousedown', (e) => { grab = grabbable(e) ? { x: e.clientX, y: e.clientY } : null; }, true);
+  window.addEventListener('mousemove', (e) => {
+    if (!grab) return;
+    if (!(e.buttons & 1)) { grab = null; return; }
+    if (Math.hypot(e.clientX - grab.x, e.clientY - grab.y) < GRAB_SLOP) return;
+    grab = null;
+    window.ipc.postMessage('window_drag');
+  }, true);
+  window.addEventListener('mouseup', () => { grab = null; }, true);
+  window.addEventListener('dblclick', (e) => { if (grabbable(e)) window.ipc.postMessage('window_maximize'); }, true);
+
   // ---------- Werbeblocker ----------
   // Seiten ohne Werbeblocker setzt Rust per eigenem Skript, das direkt nach diesem läuft – daher erst bei Bedarf lesen.
   const host = location.hostname.replace(/^www\./, '');

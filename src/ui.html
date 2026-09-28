@@ -6,6 +6,7 @@
 <style>
   :root {
     --chrome: 42px;   /* kommt als chromeHeight aus main.rs */
+    --chrome-w: 240px; /* Breite der Leiste links, kommt als chromeWidth aus main.rs */
     --margin: 4px;    /* = MARGIN in main.rs */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
     --label: rgba(255, 255, 255, .97);
@@ -116,10 +117,11 @@
 
   #toolbar-menu { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
   #toolbar-menu[hidden] { display: none; }
-  #toolbar-pin { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-  #toolbar-pin:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
-  #toolbar-pin .check { width: 16px; visibility: hidden; }
-  #toolbar-pin[aria-checked="true"] .check { visibility: visible; }
+  #toolbar-menu .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  #toolbar-menu .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
+  #toolbar-menu .item .check { width: 16px; visibility: hidden; }
+  #toolbar-menu .item[aria-checked="true"] .check { visibility: visible; }
+  #toolbar-menu .item:disabled { opacity: .45; cursor: default; background: transparent; }
   /* ---------- Toolbar ---------- */
   #toolbar {
     --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
@@ -305,7 +307,7 @@
   body.searching .side.left > #btn-new { opacity: 0; pointer-events: none; }
   #lens {
     position: absolute; top: 0; left: 0; height: var(--toolbar-control-height); width: 0; pointer-events: none;
-    transition: transform .6s var(--spring), width .6s var(--spring);
+    transition: transform .6s var(--spring), width .6s var(--spring), height .6s var(--spring);
   }
   #lens.instant { transition: none; }
   /* Der aktive Tab steht links im Adressfeld (renderTabList: .in-slot). Ein geteiltes Paar bleibt als Einheit
@@ -533,6 +535,90 @@
   #private-note b svg { width: 20px; height: 20px; }
   body.start.private #private-note { display: flex; animation: pop-in .5s var(--spring); }
 
+  /* ---------- Leiste links (Rechtsklick auf die Leiste → „Leiste links“) ---------- */
+  /* Dieselben Teile wie oben, nur untereinander: Ampel und rechts daneben Vor/Zurück, das Adressfeld mit dem aktiven Tab,
+     darunter „+“ (rechts) und die übrigen Tabs, ganz unten die Knöpfe. Breite = SIDEBAR_WIDTH in main.rs (--chrome-w). */
+  /* Ein eigenes Feld aus Glas, mit demselben Rand wie die Webseiten – so steht die Leiste auch auf dem
+     Startbildschirm (ohne Seite daneben) nicht lose auf dem Wallpaper */
+  body.side-left #toolbar {
+    position: fixed; left: var(--margin); top: var(--margin); bottom: var(--margin); width: calc(var(--chrome-w) - 2 * var(--margin)); height: auto;
+    display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 4px 8px 8px 8px;
+  }
+  /* Liquid Glass als eigene Ebene hinter den Teilen: Lichtkante wie alle .glass-Flächen, dazu Unschärfe und eine
+     helle Innenkante. Ohne SVG-Linse: Deren Verzerrungskarte verrutscht, solange die Leiste per transform ein- und
+     ausfährt (senkrechte Streifen), und rastet danach sichtbar wieder ein – bei einer so großen Fläche fällt das auf.
+     Nicht auf die Leiste selbst: backdrop-filter dort würde die Such-Kapsel des Startbildschirms
+     (position: fixed) in der Leiste gefangen halten. */
+  #sidepanel { display: none; }
+  body.side-left #sidepanel {
+    display: block; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: var(--pane-radius); /* wie die Webseiten */
+    --glass-fill-top: .1; --glass-fill-bottom: .045;
+    backdrop-filter: blur(14px) saturate(1.6) brightness(.86);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .14),
+      inset 0 -14px 24px -18px rgba(255, 255, 255, .12),
+      0 6px 20px -6px rgba(0, 0, 0, .28),
+      0 1px 3px rgba(0, 0, 0, .16);
+  }
+  /* Nur schieben, nicht überblenden: Solange opacity < 1 ist, sehen die Glasflächen darin nur die Leiste selbst statt
+     des Wallpapers – Unschärfe und Lichtbrechung fehlten während der Bewegung und sprängen beim Einrasten an.
+     Ganz links draußen ist die Leiste ohnehin nicht mehr zu sehen. */
+  body.side-left #toolbar { transition: transform var(--chrome-slide); }
+  body.side-left.chrome-hidden #toolbar { transform: translateX(calc(var(--margin) - var(--chrome-w))); opacity: 1; }
+  body.side-left .side { align-self: stretch; }
+  body.side-left .side.left { flex-wrap: wrap; row-gap: 12px; min-height: 30px; }
+  body.side-left .lights { margin-left: 4px; }
+  body.side-left .nav { margin-left: auto; } /* Vor/Zurück rechts oben, in einer Zeile mit der Ampel */
+  /* Startbildschirm: Platz freihalten, sonst rutscht der Tab darunter beim Wechsel zu einer Seite */
+  body.side-left.start:not(.home-back) .nav { display: flex; visibility: hidden; }
+  body.side-left .center { width: auto; flex: 0 0 100%; height: var(--toolbar-control-height); }
+  /* Das Feld fährt nicht aus – es hat die ganze Breite der Leiste schon */
+  body.side-left .address, body.side-left .address.editing { width: 100%; }
+  body.side-left:not(.start) .address { top: 0; }
+  body.side-left .center.docked { height: calc(2 * var(--toolbar-control-height) + 4px); }
+  body.side-left .center.docked .address:not(.editing) { width: 100%; padding-right: 5px; }
+  /* Startbildschirm: Der aktive Tab steht oben an der Stelle des Adressfelds (renderTabList: .slotted) */
+  body.side-left .center > .tab.slotted { position: absolute; inset: 0; width: auto; color: var(--label); }
+  /* Partner einer geteilten Ansicht: direkt unter dem Adressfeld */
+  body.side-left .tab.docked { top: calc(var(--toolbar-control-height) + 4px); left: 0; right: 0; width: auto; }
+  body.side-left .tab.docked::before { display: none; }
+  body.side-left .tab.docked .tab-label { padding: 0 10px 0 12px; }
+  body.side-left .tab.docked { background-image: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .045)); }
+  /* Tabs untereinander; reicht der Platz nicht, scrollt die Liste. Scrollen erst dann (placeLens: .scrolls): Als
+     Scroll-Container zeichnet Chromium die Glasflächen darin (Linse, „+“) über einem hellen Rechteck in
+     Größe der Liste – ihr backdrop-filter sieht dann das Glas der Leiste dahinter nicht mehr. Die Clip-Margin lässt
+     die Schatten von Linse und „+“ über den Rand (greift nur, wenn beide Achsen clip sind). */
+  body.side-left #tabbar {
+    flex: 0 1 auto; min-height: 0; height: auto; margin-top: 10px; padding: 0; overflow: clip; overflow-clip-margin: 24px; scrollbar-width: none;
+    flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px;
+  }
+  body.side-left #tabbar.scrolls { overflow: hidden auto; }
+  body.side-left #tabs { flex: none; height: auto; flex-direction: column; }
+  body.side-left .tab { width: auto; flex: none; justify-content: flex-start; }
+  body.side-left .tab-label { padding: 0 10px 0 12px; }
+  /* Schließen liegt über dem Favicon, wie beim Tab im Adressfeld */
+  body.side-left .close { left: 8px; }
+  body.side-left .tab:is(:hover, .vh, :focus-within) .fav { opacity: 0; }
+  body.side-left .tab .fav { transition: opacity .18s var(--ease); }
+  body.side-left .tab-new { margin-left: 3px; }
+  /* „+“ rechts direkt über dem ersten Tab, kleiner als die übrigen Knöpfe */
+  body.side-left #tabbar > .tab-new { order: -1; align-self: flex-end; margin: 0 3px 0 0; width: 24px; height: 24px; }
+  body.side-left #tabbar > .tab-new > svg:not(.glass-rim) { width: 12px; height: 12px; }
+  body.side-left #lens { width: 100%; height: var(--toolbar-control-height); }
+  body.side-left #lens.squish .glass { animation-name: squish-v; }
+  @keyframes squish-v { 30% { transform: scale(.94, 1.12); } }
+  /* Kombiniertes Paar untereinander: eine Kapsel mit Trennlinie dazwischen */
+  body.side-left .tab.pair-left { border-radius: var(--toolbar-control-radius) var(--toolbar-control-radius) 0 0; }
+  body.side-left .tab.pair-right { margin: -4px 0 0; border-radius: 0 0 var(--toolbar-control-radius) var(--toolbar-control-radius); }
+  body.side-left .tab.pair-right::before { left: 12px; right: 12px; top: 0; bottom: auto; width: auto; height: 1px; }
+  /* Knöpfe ganz unten */
+  body.side-left .side.right { margin-top: auto; justify-content: flex-start; flex-wrap: wrap; }
+  body.side-left .fav-btn { margin-left: 0; }
+  #favs.up { transform-origin: bottom left; }
+  body.side-left #stage { top: var(--margin); left: var(--chrome-w); }
+  /* Startbildschirm: Such-Kapsel und Hinweis stehen in der Mitte der freien Fläche rechts der Leiste */
+  body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 64px)); }
+
 
   html.resize-n, html.resize-s { cursor: ns-resize; }
   html.resize-e, html.resize-w { cursor: ew-resize; }
@@ -546,6 +632,7 @@
 
   <div id="chrome">
   <header id="toolbar" data-drag>
+    <div id="sidepanel" class="glass" aria-hidden="true"></div>
     <div class="side left">
     <div class="lights">
       <button class="light" id="l-close" title="Schließen"><i><svg viewBox="0 0 10 10"><path d="m3 3 4 4m0-4-4 4"/></svg></i></button>
@@ -588,7 +675,8 @@
   </div>
 
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
-    <button id="toolbar-pin" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste dauerhaft anzeigen</button>
+    <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste dauerhaft anzeigen</button>
+    <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
   </div>
   <main id="stage">
   </main>
@@ -655,7 +743,7 @@
   const svg = (name, cls = '') => `<svg class="${cls}" viewBox="0 0 16 16">${ICON[name]}</svg>`;
 
 
-  let state = { tabs: [], active: null, maximized: false, focused: true, chromeHeight: 42 };
+  let state = { tabs: [], active: null, maximized: false, focused: true, chromeHeight: 42, chromeWidth: 240 };
   let lastActive = null;
   const tabEls = new Map();
 
@@ -924,6 +1012,10 @@
   let tabDrag = null;
   const SPLIT_GAP = 4; // = SPLIT_GAP in main.rs
   const hasPage = (id) => !!state.tabs.find((t) => t.id === id)?.page;
+  // Leiste links statt oben (Einstellung im Kontextmenü der Leiste)
+  const sideLeft = () => document.body.classList.contains('side-left');
+  // Liegt der Punkt auf der Leiste (oben bzw. links) statt über der Webseite?
+  const overChrome = (x, y) => (sideLeft() ? x < state.chromeWidth : y < state.chromeHeight);
 
   function updateDrop(d, e) {
     const under = document.elementsFromPoint(e.clientX, e.clientY).find((n) => !d.el.contains(n));
@@ -939,11 +1031,11 @@
       const partnered = split && [split.left, split.right].includes(d.id) && [split.left, split.right].includes(targetId);
       const side = partnered ? (split.left === d.id ? 'right' : 'left') : e.clientX < r.left + r.width / 2 ? 'left' : 'right';
       drop = { type: 'tab', id: targetId, side };
-    } else if (!tabEl && e.clientY < state.chromeHeight && under?.closest?.('#toolbar') && !under.closest('.center')
+    } else if (!tabEl && overChrome(e.clientX, e.clientY) && under?.closest?.('#toolbar') && !under.closest('.center')
                && (state.split?.left === d.id || state.split?.right === d.id)) {
-      // Irgendwo in die Leiste außerhalb des Adressfelds (meist: zurück in die Mitte): geteilten Tab wieder lösen
+      // Irgendwo in die Leiste außerhalb des Adressfelds (meist: zurück zu den Tabs): geteilten Tab wieder lösen
       drop = { type: 'bar' };
-    } else if (!tabEl && e.clientY > state.chromeHeight && d.base !== d.id && hasPage(d.base) && hasPage(d.id)) {
+    } else if (!tabEl && !overChrome(e.clientX, e.clientY) && d.base !== d.id && hasPage(d.base) && hasPage(d.id)) {
       // Über der Webseite: linke oder rechte Hälfte, je nach Mauszeiger
       const panes = state.panes, first = panes[0], last = panes[panes.length - 1];
       const x = first.x, w = last.x + last.w - first.x, half = (w - SPLIT_GAP) / 2;
@@ -1005,14 +1097,14 @@
   function renderTabs() {
     const box = $('tabs');
     const before = new Map();
-    for (const [id, el] of tabEls) if (el.offsetWidth && el !== tabDrag?.el) before.set(id, el.getBoundingClientRect().left);
+    for (const [id, el] of tabEls) if (el.offsetWidth && el !== tabDrag?.el) before.set(id, el.getBoundingClientRect());
     renderTabList(box);
     for (const [id, el] of tabEls) {
-      const x = before.get(id);
-      if (x == null || !el.offsetWidth) continue;
+      const r = before.get(id);
+      if (r == null || !el.offsetWidth) continue;
       el.getAnimations().forEach((a) => { if (a.id === 'flip') a.cancel(); }); // sonst misst die neue Lage die alte Bewegung mit
-      const dx = x - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > .5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { ...TAB_FLIP, id: 'flip' });
+      const now = el.getBoundingClientRect(), dx = r.left - now.left, dy = r.top - now.top;
+      if (Math.abs(dx) > .5 || Math.abs(dy) > .5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { ...TAB_FLIP, id: 'flip' });
     }
   }
   function renderTabList(box) {
@@ -1021,6 +1113,9 @@
     // Geteilte Ansicht: Der aktive Tab steht im Adressfeld, sein Partner rechts in derselben Kapsel (kein Tab doppelt)
     const split = activeSplit(), inBar = !document.body.classList.contains('start');
     const docked = split && inBar ? (split.left === state.active ? split.right : split.left) : null;
+    // Leiste links, Startbildschirm: Das Adressfeld steht als Suche in der Mitte – der aktive Tab bleibt trotzdem
+    // oben an seinem Platz, wie auf einer Seite (ganz oben steht immer, wo man gerade ist)
+    const slotted = !inBar && !split && sideLeft() ? state.active : null;
     center.classList.toggle('docked', docked != null); // Adressfeld wird um den Partner breiter
     // Ist gerade ein anderer Tab aktiv, steht ein kombiniertes Paar trotzdem als Einheit in der Leiste:
     // beide nebeneinander (links, rechts wie auf der Seite) an der Stelle des vorderen
@@ -1037,13 +1132,15 @@
       if (!el) { el = makeTab(tab); tabEls.set(tab.id, el); }
       // Nur umhängen, wenn die Reihenfolge nicht stimmt: Neu eingefügte Elemente starten ihre
       // Einblend-Animation von vorn – sonst blinken beim Tabwechsel alle Namen. (Vor den Tabs steht die Linse.)
-      if (tab.id === docked) {
+      if (tab.id === docked || tab.id === slotted) {
         if (el.parentElement !== center) center.append(el);
       } else {
         if (prev.nextElementSibling !== el) prev.after(el);
         prev = el;
       }
       el.classList.toggle('docked', tab.id === docked);
+      el.classList.toggle('slotted', tab.id === slotted);
+      el.classList.toggle('glass', tab.id === slotted);
       el.classList.toggle('active', tab.id === state.active);
       el.classList.toggle('in-slot', tab.id === state.active && inBar);
       el.classList.toggle('private', !!tab.private);
@@ -1065,7 +1162,8 @@
   function placeNewTab() {
     const btn = $('btn-new');
     // (auch bei einem einzigen kombinierten Paar: beide stehen dann im Feld)
-    const solo = !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
+    // (Leiste links: „+“ bleibt immer über den Tabs – dort steht es ohnehin direkt unter dem Feld)
+    const solo = !sideLeft() && !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
     const home = solo ? document.querySelector('.side.left') : $('tabbar');
     if (btn.parentElement === home) return;
     const from = btn.getBoundingClientRect();
@@ -1078,14 +1176,18 @@
   }
 
   function placeLens() {
-    const lensEl = $('lens');
+    const lensEl = $('lens'), bar = $('tabbar');
+    // Leiste links, zu viele Tabs? Nicht per scrollHeight: Darin zählt auch die Linse mit (ausgeblendet steht sie
+    // noch unter dem letzten Tab, beim Squish ragt sie heraus) – die Liste scrollte sonst schon bei zwei Tabs
+    const rows = [...bar.children].reduce((h, k) => h + k.offsetHeight, 0) + (parseFloat(getComputedStyle(bar).rowGap) || 0) * (bar.children.length - 1);
+    bar.classList.toggle('scrolls', sideLeft() && rows > bar.clientHeight + 1);
     for (const t of tabEls.values()) t.classList.toggle('compact', t.offsetWidth < 96);
     // Die Linse liegt auf den sichtbaren Tabs der aktuellen Ansicht: Ein einzelner aktiver Tab steht links im
     // Adressfeld (außer auf dem Startbildschirm) – dann gibt es keine; ein geteiltes Paar umfasst sie ganz.
     const split = activeSplit();
     const shown = (split ? [split.left, split.right] : [state.active])
       .map((id) => tabEls.get(id)).filter((t) => t?.offsetWidth && t.parentElement === $('tabs'))
-      .sort((x, y) => x.offsetLeft - y.offsetLeft);
+      .sort((x, y) => x.offsetLeft - y.offsetLeft || x.offsetTop - y.offsetTop);
     lensEl.classList.toggle('off', !shown.length);
     if (!shown.length) { lastActive = null; lensEl.classList.add('instant'); return; }
     const [a, b] = [shown[0], shown[shown.length - 1]];
@@ -1093,16 +1195,26 @@
     if (lastActive !== null && lastActive !== key) {
       lensEl.classList.remove('squish'); void lensEl.offsetWidth; lensEl.classList.add('squish');
     }
-    lensEl.style.transform = `translateX(${a.offsetLeft}px)`;
-    lensEl.style.width = `${b.offsetLeft + b.offsetWidth - a.offsetLeft}px`;
+    // Leiste links: Tabs untereinander – die Linse wandert nach unten und wird höher statt breiter
+    if (sideLeft()) {
+      lensEl.style.transform = `translateY(${a.offsetTop}px)`;
+      lensEl.style.width = '';
+      lensEl.style.height = `${b.offsetTop + b.offsetHeight - a.offsetTop}px`;
+    } else {
+      lensEl.style.transform = `translateX(${a.offsetLeft}px)`;
+      lensEl.style.width = `${b.offsetLeft + b.offsetWidth - a.offsetLeft}px`;
+      lensEl.style.height = '';
+    }
     lastActive = key;
     requestAnimationFrame(() => lensEl.classList.remove('instant'));
   }
   // Die Tabs teilen sich die Zeile mit dem Adressfeld: ändert sich ihr Platz (Fenstergröße), Linse nachziehen
   let tabsFrame = 0;
-  new ResizeObserver(() => {
+  const tabsObserver = new ResizeObserver(() => {
     if (!tabsFrame) tabsFrame = requestAnimationFrame(() => { tabsFrame = 0; placeLens(); });
-  }).observe($('tabs'));
+  });
+  tabsObserver.observe($('tabs'));
+  tabsObserver.observe($('tabbar')); // Leiste links: Fensterhöhe ändert, ob die Liste scrollen muss
 
   // ---------- Adressfeld (in der Leiste eingefahren: Lupe + Neu laden; beim Suchen fährt es aus) ----------
   const address = $('address'), input = $('addr-input');
@@ -1223,7 +1335,8 @@
     const inBar = !document.body.classList.contains('start');
     document.body.classList.toggle('searching', open && inBar);
     address.classList.toggle('editing', open);
-    if (!inBar) return;
+    // Leiste links: Das Feld behält seine Breite – es gibt kein transitionend, auf das slideDone warten könnte
+    if (!inBar || sideLeft()) return;
     address.classList.add('resizing');
     address.style.backdropFilter = '';
     delete address.dataset.lensSize;
@@ -1619,7 +1732,9 @@
     if (!suggestPending || address.classList.contains('resizing')) return;
     suggestPending = false;
     const r = layoutRect(address);
-    Object.assign(suggestBox.style, { left: `${r.left}px`, top: `${r.bottom + 8}px`, width: `${r.width}px` });
+    // Leiste links: Die Liste darf breiter als die Leiste sein und ragt dann über die Webseite
+    const width = sideLeft() && !document.body.classList.contains('start') ? Math.max(r.width, 420) : r.width;
+    Object.assign(suggestBox.style, { left: `${r.left}px`, top: `${r.bottom + 8}px`, width: `${width}px` });
     suggestBox.classList.add('open');
     reportOverlay();
     scheduleInk();
@@ -1741,7 +1856,12 @@
   function placeFavorites() {
     if (!favPanel.classList.contains('open')) return;
     const r = layoutRect(favBtn);
-    Object.assign(favPanel.style, { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
+    // Leiste links: der Knopf sitzt unten – die Liste klappt nach oben auf
+    const up = sideLeft();
+    favPanel.classList.toggle('up', up);
+    Object.assign(favPanel.style, up
+      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
+      : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
     send('overlay', { rect: { x: parseFloat(favPanel.style.left), y: parseFloat(favPanel.style.top),
                               w: favPanel.offsetWidth, h: favPanel.offsetHeight, r: 18 } });
@@ -1809,7 +1929,7 @@
   // Das Licht verfolgt auch die Position über Webseiten. Nur echte UI-Treffer erhalten .vh.
   let vhover = [];
   window.hoverAt = (x, y, overUI = true) => {
-    chromeHover(y);
+    chromeHover(x, y);
     window.GroupHover.at(x, y, overUI);
     trackLight(x, y);
     const el = x == null || !overUI ? null : document.elementFromPoint(x, y);
@@ -1857,10 +1977,10 @@
       el.className = `pane${p.id === state.active ? ' focus' : ''}`;
       Object.assign(el.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
       const old = from?.find((o) => o.id === p.id);
-      if (old && old.y !== p.y) {
+      if (old && (old.y !== p.y || old.x !== p.x)) {
         const [dur, ...curve] = getComputedStyle(document.documentElement).getPropertyValue('--chrome-slide').trim().split(' ');
-        el.animate([{ top: `${old.y}px`, height: `${old.h}px` }, { top: `${p.y}px`, height: `${p.h}px` }],
-          { duration: parseFloat(dur) * 1000, easing: curve.join(' ') });
+        const box = (q) => ({ left: `${q.x}px`, top: `${q.y}px`, width: `${q.w}px`, height: `${q.h}px` });
+        el.animate([box(old), box(p)], { duration: parseFloat(dur) * 1000, easing: curve.join(' ') });
       }
       return el;
     }));
@@ -1972,7 +2092,13 @@
   let toolbarPinned = false;
   try { toolbarPinned = localStorage.getItem(TOOLBAR_PIN_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
   const toolbarMenu = $('toolbar-menu'), toolbarPin = $('toolbar-pin');
-  toolbarPin.setAttribute('aria-checked', String(toolbarPinned));
+  // Leiste links bleibt immer stehen: „dauerhaft anzeigen“ ist dann fest angehakt, die eigene Wahl bleibt gespeichert
+  const chromeKept = () => toolbarPinned || sideLeft();
+  function renderToolbarPin() {
+    toolbarPin.setAttribute('aria-checked', String(chromeKept()));
+    toolbarPin.disabled = sideLeft();
+  }
+  renderToolbarPin();
   function closeToolbarMenu() {
     if (toolbarMenu.hidden) return;
     toolbarMenu.hidden = true;
@@ -1990,21 +2116,63 @@
     Object.assign(toolbarMenu.style, { left: `${x}px`, top: `${y}px` });
     send('overlay', { rect: { x, y, w: toolbarMenu.offsetWidth, h: toolbarMenu.offsetHeight, r: 12 } });
     showChrome();
-    toolbarPin.focus({ preventScroll: true });
+    (sideLeft() ? toolbarSide : toolbarPin).focus({ preventScroll: true });
   });
   toolbarPin.addEventListener('click', () => {
     toolbarPinned = !toolbarPinned;
-    toolbarPin.setAttribute('aria-checked', String(toolbarPinned));
+    renderToolbarPin();
     try { localStorage.setItem(TOOLBAR_PIN_KEY, String(toolbarPinned)); } catch { /* Sitzungseinstellung */ }
     closeToolbarMenu();
     toolbarPin.blur();
   });
+
+  // Leiste oben oder links: Die Oberfläche merkt sich die Wahl und sagt Rust, wo die Webseiten Platz haben
+  const TOOLBAR_SIDE_KEY = 'glass.toolbarSide';
+  const toolbarSide = $('toolbar-side');
+  // Rust bekommt immer die gewählte Seite (Webseiten gibt es ohnehin erst mit Tabs). Die Oberfläche steht aber
+  // nur links, wenn etwas offen ist – ohne Tabs sitzen die Knöpfe wie bei der Leiste oben rechts oben.
+  let sidePref = false;
+  function applySide(left) {
+    sidePref = left;
+    toolbarSide.setAttribute('aria-checked', String(left));
+    send('chrome_side', { value: left ? 'left' : 'top' });
+    layoutSide();
+  }
+  function layoutSide() {
+    const left = sidePref && !!state.tabbar;
+    if (sideLeft() === left) return;
+    document.body.classList.toggle('side-left', left);
+    renderToolbarPin();
+    // Feld und Tabs sind jetzt anders angeordnet: alles neu vermessen
+    address.classList.remove('resizing');
+    if (left) { toolbar.style.removeProperty('--side'); toolbar.style.removeProperty('--address-width'); }
+    renderTabs();
+    lastActive = null;
+    $('lens').classList.add('instant');
+    requestAnimationFrame(placeLens);
+    scheduleSides();
+    scheduleInk();
+  }
+  toolbarSide.addEventListener('click', () => {
+    const left = !sidePref;
+    try { localStorage.setItem(TOOLBAR_SIDE_KEY, left ? 'left' : 'top'); } catch { /* Sitzungseinstellung */ }
+    closeToolbarMenu();
+    toolbarSide.blur();
+    applySide(left);
+    showChrome(); // zurück nach oben: der Countdown zum Ausblenden läuft wieder
+  });
+
   document.addEventListener('pointerdown', (e) => {
     if (!toolbarMenu.contains(e.target)) closeToolbarMenu();
   }, true);
   document.addEventListener('keydown', (e) => {
     if (toolbarMenu.hidden) return;
-    if (e.key === 'Escape' || e.key === 'Tab') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const items = [...toolbarMenu.querySelectorAll('.item:not(:disabled)')];
+      const i = items.indexOf(document.activeElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus({ preventScroll: true });
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
       e.preventDefault(); e.stopImmediatePropagation(); closeToolbarMenu();
       $('btn-reload').focus({ preventScroll: true });
     }
@@ -2012,13 +2180,13 @@
   window.addEventListener('blur', closeToolbarMenu);
   window.addEventListener('resize', closeToolbarMenu);
   const CHROME_IDLE = 3500, REVEAL_ZONE = 6;
-  let chromeHidden = false, chromeTimer = 0, pointerY = null;
-  const chromeBusy = () => toolbarPinned || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
+  let chromeHidden = false, chromeTimer = 0, pointerAt = null;
+  const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
     || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
-    || (pointerY != null && pointerY < state.chromeHeight); // Maus ruht auf der Leiste
+    || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
-    hidden = hidden && !toolbarPinned;
+    hidden = hidden && !chromeKept();
     if (hidden === chromeHidden) return;
     chromeHidden = hidden;
     document.body.classList.toggle('chrome-hidden', hidden);
@@ -2028,16 +2196,19 @@
   function showChrome() {
     setChromeHidden(false);
     clearTimeout(chromeTimer);
-    if (toolbarPinned) return;
+    if (chromeKept()) return;
     chromeTimer = setTimeout(function idle() {
       if (chromeBusy()) chromeTimer = setTimeout(idle, CHROME_IDLE);
       else setChromeHidden(true);
     }, CHROME_IDLE);
   }
-  // Mausposition von hoverAt: ausgeblendet reicht der obere Rand, eingeblendet hält jede Bewegung auf der Leiste sie offen
-  function chromeHover(y) {
-    pointerY = y;
-    if (y != null && y < (chromeHidden ? REVEAL_ZONE : state.chromeHeight)) showChrome();
+  // Mausposition von hoverAt: ausgeblendet reicht der Fensterrand (oben bzw. links), eingeblendet hält jede
+  // Bewegung auf der Leiste sie offen
+  function chromeHover(x, y) {
+    pointerAt = x == null || y == null ? null : { x, y };
+    if (!pointerAt) return;
+    const near = chromeHidden ? (sideLeft() ? x : y) < REVEAL_ZONE : overChrome(x, y);
+    if (near) showChrome();
   }
   input.addEventListener('focus', showChrome);
   input.addEventListener('blur', showChrome);
@@ -2052,7 +2223,9 @@
     state = next;
     if (opened && engine !== ENGINES[0]) { engine = ENGINES[0]; renderEngine(); } // neuer Tab → immer Google
     document.documentElement.style.setProperty('--chrome', `${state.chromeHeight}px`);
+    document.documentElement.style.setProperty('--chrome-w', `${state.chromeWidth}px`);
     document.body.classList.toggle('multi', !!state.tabbar); // Tabs sichtbar (Rust: sobald etwas offen ist)
+    layoutSide();
     document.body.classList.toggle('inactive', !state.focused);
     const hasPage = !!activeTab()?.page; // Rust meldet, ob der Tab eine Webseite hat (die URL kann leer sein)
     // Ein leerer Tab wird per Knopf umgeschaltet (Rust: "private_tab"), sonst öffnet er einen neuen privaten Tab
@@ -2122,13 +2295,31 @@
   let lastDown = { t: 0, x: 0, y: 0 };
   document.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    // Rand neu bestimmen: Hat eine Webseite den Fokus, kommen keine pointermove an – die gemerkte Richtung
+    // wäre dann veraltet, und ein Klick neben dem Rand würde die Größe ändern statt das Fenster zu verschieben
+    updateResizeCursor(e);
     if (resizeDir) { e.preventDefault(); send('resize', { value: resizeDir }); return; }
-    if (!e.target.closest('[data-drag]') || e.target.closest('button, input, form, .tab, .capsule')) return;
+    // Leiste links, Startbildschirm: Oben fehlt die Leiste als Griff – die leere Fläche daneben ersetzt sie.
+    // Verschoben wird erst nach ein paar Pixeln (wie auf Webseiten, content.js), ein Klick schließt so weiter Menüs.
+    const bare = sideLeft() && document.body.classList.contains('start')
+      && [document.body, document.documentElement, $('chrome')].includes(e.target);
+    if (!bare && (!e.target.closest('[data-drag]') || e.target.closest('button, input, form, .tab, .capsule'))) return;
     const now = performance.now();
     const isDouble = now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 6;
     lastDown = { t: isDouble ? 0 : now, x: e.clientX, y: e.clientY };
-    send(isDouble ? 'maximize' : 'drag');
+    if (isDouble) send('maximize');
+    else if (bare) bareGrab = { x: e.clientX, y: e.clientY };
+    else send('drag');
   });
+  let bareGrab = null;
+  document.addEventListener('pointermove', (e) => {
+    if (!bareGrab) return;
+    if (!(e.buttons & 1)) { bareGrab = null; return; }
+    if (Math.hypot(e.clientX - bareGrab.x, e.clientY - bareGrab.y) < 4) return;
+    bareGrab = null;
+    send('drag');
+  });
+  document.addEventListener('pointerup', () => { bareGrab = null; });
 
   window.addEventListener('resize', () => requestAnimationFrame(placeLens));
 
@@ -2149,6 +2340,7 @@
   let sidesFrame = 0;
   const balanceSides = () => {
     sidesFrame = 0;
+    if (sideLeft()) return; // links stehen die Teile untereinander, jedes so breit wie die Leiste
     const cs = getComputedStyle(toolbar);
     const inner = toolbar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2 * parseFloat(cs.columnGap);
     const n = [...$('tabs').querySelectorAll('.tab')].filter((t) => getComputedStyle(t).display !== 'none').length;
@@ -2164,6 +2356,9 @@
   const sidesObserver = new ResizeObserver(scheduleSides);
   sides.forEach((side) => [...side.children].forEach((k) => sidesObserver.observe(k)));
   addEventListener('resize', scheduleSides);
+  let startLeft = false;
+  try { startLeft = localStorage.getItem(TOOLBAR_SIDE_KEY) === 'left'; } catch { /* Sitzungseinstellung */ }
+  applySide(startLeft); // vor „ready“: Rust legt die Seiten dann gleich richtig aus
   balanceSides();
   watchLens();
   send('ready');
