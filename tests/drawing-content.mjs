@@ -14,9 +14,13 @@ const watchdog = setTimeout(() => { console.error('drawing test exceeded 60 seco
 let script = await readFile(new URL('../src/drawing-content.js', import.meta.url), 'utf8');
 assert.ok(script.includes("mode: 'closed'"), 'closed shadow root found');
 script = script.replace("mode: 'closed'", "mode: 'open'");
-const page = `<!doctype html><body style="margin:0;height:3000px;background:#fff"><h1>Test</h1>
+// `layout` ändert die Seite beim nächsten Laden: Banner oben (verschiebt den Text nach unten) und Rand links
+const layout = { banner: 0, left: 0 };
+const page = () => `<!doctype html><body style="margin:0 0 0 ${layout.left}px;height:3000px;background:#fff">
+  <div style="height:${layout.banner}px"></div><h1>Test</h1>
+  <p id=para style="margin-top:500px;font:20px/30px sans-serif">Ein Absatz mit Text zum Markieren, lang genug für einen Strich.</p>
   <input id=field><button id=b onclick="window.__clicked=(window.__clicked||0)+1" style="position:absolute;left:300px;top:300px">Knopf</button>`;
-const server = createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(page); });
+const server = createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(page()); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 
@@ -107,19 +111,23 @@ try {
   assert.equal(saved()[0].t, 'pen');
   assert.ok(saved()[0].p.length >= 8, 'points recorded');
 
-  // 4. Nach dem Scrollen liegen Striche in Dokumentkoordinaten
+  // 4. Nach dem Scrollen liegen Striche in Dokumentkoordinaten; der Textmarker ist am Text darunter verankert
   await run('scrollTo(0, 500)');
   await delay(50);
+  const para = await run(`(() => { const r = para.getBoundingClientRect(); return [r.left, r.top]; })()`);
+  const [mx, my] = [Math.round(para[0] + 10), Math.round(para[1] + 15)];
   await key('m', 'KeyM', 77, 'm'); // Textmarker
-  await stroke([[100, 100], [200, 100]]);
+  await stroke([[mx, my], [mx + 200, my]]);
   await waitSave();
   assert.equal(saved().length, 2);
   assert.equal(saved()[1].t, 'marker');
-  assert.equal(saved()[1].p[1], 600, 'y includes scroll offset');
+  assert.equal(saved()[1].p[1], my + 500, 'y includes scroll offset');
+  assert.equal(saved()[1].a?.id, 'para', 'anchored to the paragraph');
+  assert.equal(typeof saved()[1].a.ch, 'string', 'anchored to a character');
 
   // 5. Radierer entfernt den getroffenen Strich, Strg+Z holt ihn zurück
   await key('e', 'KeyE', 69, 'e');
-  await stroke([[150, 90], [150, 110]]);
+  await stroke([[mx + 50, my - 10], [mx + 50, my + 10]]);
   await waitSave();
   assert.equal(saved().length, 1);
   assert.equal(saved()[0].t, 'pen');
@@ -137,10 +145,30 @@ try {
   assert.equal(await paths(), 2);
 
   // 7. Neu laden: Die gespeicherten Striche erscheinen wieder
+  const boxes = () => run(`[...document.querySelector('glass-draw').shadowRoot.querySelectorAll('svg.ink path')]
+    .map((p) => { const r = p.getBoundingClientRect(); return [Math.round(r.left + scrollX), Math.round(r.top + scrollY)]; })`);
+  const before = await boxes();
   await call('Page.reload');
   await delay(800);
   assert.equal(await paths(), 2, 'drawing restored after reload');
   assert.equal(await run('window.__clicked ?? 0'), 0);
+  assert.deepEqual(await boxes(), before, 'same place after a plain reload');
+
+  // 7b. Die Seite hat sich verschoben (Banner oben, Rand links): Der Textmarker wandert mit seinem Text,
+  // der Strich über dem absolut platzierten Knopf bleibt, wo der Knopf ist
+  Object.assign(layout, { banner: 150, left: 40 });
+  await call('Page.reload');
+  await delay(800);
+  const after = await boxes();
+  assert.deepEqual(after[0], before[0], 'pen stroke stays with the fixed-position button');
+  assert.deepEqual([after[1][0] - before[1][0], after[1][1] - before[1][1]], [40, 150], 'marker follows its text');
+  // Auch ohne Neuladen: Die Seite ändert sich zur Laufzeit
+  await run(`document.body.firstElementChild.style.height = '50px'`);
+  await delay(100);
+  assert.deepEqual((await boxes())[1][1] - before[1][1], 50, 'marker follows a live layout change');
+  Object.assign(layout, { banner: 0, left: 0 });
+  await call('Page.reload');
+  await delay(800);
 
   // 8. Andere Adresse per pushState: eigene (leere) Zeichnung, zurück: wieder da
   await run(`history.pushState(null, '', '/andere')`);

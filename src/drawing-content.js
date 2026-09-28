@@ -1,5 +1,7 @@
 // Auf Webseiten zeichnen: Der Stift in der Leiste schaltet den Zeichenmodus ein (Rust ruft __glassDraw.toggle).
-// Striche liegen in Dokumentkoordinaten in einem SVG über der Seite und scrollen mit ihr. Nach jeder Änderung
+// Striche liegen in Dokumentkoordinaten in einem SVG über der Seite und scrollen mit ihr. Jeder Strich ist am Text
+// (bzw. Element) unter seinem Anfangspunkt verankert: Verschiebt sich die Seite (Banner, andere Breite, nachgeladene
+// Inhalte), wandert er mit – sonst läge er nach dem Neuladen woanders als der Text, auf den er zeigt. Nach jeder Änderung
 // schickt das Skript alle Striche an Rust (drawing.rs), das sie je Adresse speichert und beim Laden zurückgibt.
 // Alles steckt in einem geschlossenen Shadow-DOM, damit das CSS der Seite nichts verstellt.
 (() => {
@@ -25,7 +27,8 @@
   };
   const icon = (name) => `<svg viewBox="0 0 16 16">${ICONS[name]}</svg>`;
 
-  let strokes = [];   // { t: 'pen'|'marker', c: Farbe, w: Breite, p: [x, y, x, y, …] }
+  // { t: 'pen'|'marker', c: Farbe, w: Breite, p: [x, y, x, y, …], a: Anker, o: [x, y] Ankerposition beim Zeichnen }
+  let strokes = [];
   let undo = [];      // frühere Stände von `strokes` (flache Kopien, die Striche selbst ändern sich nie)
   let key = pageKey();   // Adresse, zu der `strokes` gehören
   let loadedFor = null;
@@ -33,6 +36,96 @@
   let tool = 'pen', color = COLORS[0];
   let host, root, svg, layer, bar;
   const paths = new Map(); // Strich → <path>
+  const shift = new Map(); // Strich → [dx, dy], wie weit sein Anker seit dem Zeichnen gewandert ist
+
+  // ---------- Anker ----------
+  // Weg zum Element: vom nächsten Vorfahren mit (eindeutiger) id aus, je Schritt Kind-Nummer und Tag
+  function elementPath(el) {
+    const path = [];
+    while (el && el !== document.body && el !== document.documentElement && path.length < 40) {
+      if (el.id && document.getElementById(el.id) === el) return { id: el.id, path: path.reverse() };
+      const parent = el.parentElement;
+      if (!parent) return null;
+      path.push([Array.prototype.indexOf.call(parent.children, el), el.localName]);
+      el = parent;
+    }
+    return el === document.body ? { id: null, path: path.reverse() } : null;
+  }
+  function resolvePath(a) {
+    let el = a.id == null ? document.body : document.getElementById(a.id);
+    for (const [i, tag] of a.path) {
+      el = el?.children[i];
+      if (el?.localName !== tag) return null;
+    }
+    return el;
+  }
+  // Liegt das Element in etwas Festem (fixed/sticky)? Dann gilt der Strich der Seite, nicht dem Element.
+  function pinned(el) {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (/fixed|sticky/.test(getComputedStyle(el).position)) return true;
+    }
+    return false;
+  }
+  const textRect = (node, off) => {
+    const r = document.createRange();
+    r.setStart(node, off); r.setEnd(node, off + 1);
+    return [...r.getClientRects()].find((q) => q.width || q.height);
+  };
+  // Anker unter einem Punkt (Fensterkoordinaten): möglichst ein Zeichen im Text, sonst das Element darunter
+  function anchorAt(x, y) {
+    layer.style.pointerEvents = 'none';
+    try {
+      const caret = document.caretPositionFromPoint?.(x, y);
+      const node = caret?.offsetNode;
+      if (node?.nodeType === Node.TEXT_NODE && node.data.trim()) {
+        const off = Math.min(caret.offset, node.data.length - 1);
+        const el = node.parentElement, rect = textRect(node, off);
+        const a = el && rect && !pinned(el) && elementPath(el);
+        // Nur, wenn der Punkt wirklich bei diesem Text liegt (daneben liefert caret die nächstgelegene Stelle)
+        if (a && Math.abs(rect.top + rect.height / 2 - y) < rect.height * 2 && Math.abs(rect.left - x) < 200) {
+          const n = Array.prototype.indexOf.call(el.childNodes, node);
+          return { ...a, n, off, ch: node.data.slice(off, off + 8) };
+        }
+      }
+      let el = document.elementFromPoint(x, y);
+      while (el && el !== document.body && ['inline', 'contents'].includes(getComputedStyle(el).display) && el.parentElement) el = el.parentElement;
+      return el && el !== host && !pinned(el) ? elementPath(el) : null;
+    } finally {
+      layer.style.pointerEvents = '';
+    }
+  }
+  // Wo liegt der Anker jetzt (Dokumentkoordinaten)? null: nicht (mehr) da
+  function anchorPos(a) {
+    const el = resolvePath(a);
+    if (!el) return null;
+    let r;
+    if (a.n != null) {
+      const node = el.childNodes[a.n];
+      if (node?.nodeType !== Node.TEXT_NODE || node.data.slice(a.off, a.off + 8) !== a.ch) return null;
+      r = textRect(node, a.off);
+    } else {
+      r = el.getBoundingClientRect();
+    }
+    return r ? [r.left + scrollX, r.top + scrollY] : null;
+  }
+  // Striche ihren Ankern nachführen. Fehlt ein Anker (noch nicht nachgeladen), bleibt der Strich, wo er war.
+  let placeQueued = false;
+  function place() {
+    placeQueued = false;
+    for (const s of strokes) {
+      const pos = s.a && anchorPos(s.a);
+      const d = pos ? [Math.round(pos[0] - s.o[0]), Math.round(pos[1] - s.o[1])] : [0, 0];
+      const old = shift.get(s);
+      if (old?.[0] === d[0] && old?.[1] === d[1]) continue;
+      shift.set(s, d);
+      paths.get(s)?.setAttribute('transform', `translate(${d[0]} ${d[1]})`);
+    }
+  }
+  const queuePlace = () => {
+    if (placeQueued || !strokes.some((s) => s.a)) return;
+    placeQueued = true;
+    requestAnimationFrame(place);
+  };
 
   // ---------- Zeichnen ----------
   // Glatte Linie: Quadratische Kurven durch die Mitten zwischen den Punkten
@@ -59,10 +152,17 @@
     paths.forEach((el) => el.remove());
     paths.clear();
     strokes.forEach(addPath);
+    shift.clear();
+    place();
     renderBar();
   }
   const valid = (s) => s && TOOLS[s.t] && typeof s.c === 'string' && /^#[0-9a-f]{6}$/i.test(s.c)
-    && Number.isFinite(s.w) && Array.isArray(s.p) && s.p.length >= 2 && s.p.length % 2 === 0 && s.p.every(Number.isFinite);
+    && Number.isFinite(s.w) && Array.isArray(s.p) && s.p.length >= 2 && s.p.length % 2 === 0 && s.p.every(Number.isFinite)
+    && (s.a == null || (validAnchor(s.a) && Array.isArray(s.o) && s.o.length === 2 && s.o.every(Number.isFinite)));
+  const validAnchor = (a) => typeof a === 'object' && (a.id === null || typeof a.id === 'string')
+    && Array.isArray(a.path) && a.path.length <= 40
+    && a.path.every((step) => Array.isArray(step) && Number.isInteger(step[0]) && typeof step[1] === 'string')
+    && (a.n == null || (Number.isInteger(a.n) && Number.isInteger(a.off) && typeof a.ch === 'string'));
 
   // Speichern erst, wenn eine Weile nichts mehr passiert – beim Verlassen der Seite sofort
   let saveTimer = 0;
@@ -84,6 +184,8 @@
   // Radierer: ganze Striche, die der Zeiger berührt
   function near(s, x, y, r) {
     const p = s.p;
+    const [sx, sy] = shift.get(s) ?? [0, 0];
+    x -= sx; y -= sy;
     r += s.w / 2;
     for (let i = 0; i < p.length; i += 2) {
       const ax = p[i], ay = p[i + 1];
@@ -107,7 +209,7 @@
       return;
     }
     const s = { t: tool, c: color, w: TOOLS[tool].width, p: at(e) };
-    drawing = { stroke: s, el: addPath(s) };
+    drawing = { stroke: s, el: addPath(s), start: [e.clientX, e.clientY], scroll: [scrollX, scrollY] };
   }
   function move(e) {
     if (!drawing) return;
@@ -138,6 +240,11 @@
       return;
     }
     d.el.remove();
+    // Anker unter dem Anfangspunkt, dort, wo er beim Aufsetzen lag (die Seite kann seitdem gescrollt sein)
+    const [x, y] = [d.start[0] + d.scroll[0] - scrollX, d.start[1] + d.scroll[1] - scrollY];
+    const a = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight ? anchorAt(x, y) : null;
+    const pos = a && anchorPos(a);
+    if (pos) Object.assign(d.stroke, { a, o: pos.map((v) => Math.round(v * 10) / 10) });
     change([...strokes, d.stroke]);
   }
 
@@ -309,4 +416,18 @@
   window.navigation?.addEventListener('navigatesuccess', checkUrl);
   window.addEventListener('popstate', checkUrl);
   window.addEventListener('pagehide', () => { up(); if (saveTimer) save(); });
+  // Die Seite verschiebt sich: nach Größenänderungen, nachgeladenen Bildern und Schriften, Klappmenüs …
+  // DOM- und Größenänderungen fangen fast alles ab (höchstens ein Abgleich pro Bild), dazu ein seltener Abgleich für
+  // den Rest (z. B. reine CSS-Animationen). Ohne verankerte Striche kostet das nichts (queuePlace kehrt sofort um).
+  const sizes = new ResizeObserver(queuePlace);
+  const dom = new MutationObserver(queuePlace);
+  whenReady(() => {
+    sizes.observe(document.documentElement);
+    if (document.body) sizes.observe(document.body);
+    dom.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  });
+  window.addEventListener('resize', queuePlace);
+  window.addEventListener('load', queuePlace);
+  document.fonts?.addEventListener('loadingdone', queuePlace);
+  setInterval(() => { if (!document.hidden) queuePlace(); }, 2000);
 })();
