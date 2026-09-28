@@ -33,6 +33,13 @@ const TOOLBAR_HEIGHT: f64 = 42.0;
 const SIDEBAR_WIDTH: f64 = 240.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
+/// Kleinste Fenstergröße: Startbildschirm mit allen Vorschlägen unter dem Suchfeld und dem Anbieter-Rad daneben
+/// (ui.html: body.start .address). Mit Leiste links kommt deren Breite hinzu.
+const MIN_WIDTH: f64 = 760.0;
+const MIN_HEIGHT: f64 = 640.0;
+fn min_size(chrome_left: bool) -> LogicalSize<f64> {
+    LogicalSize::new(MIN_WIDTH + if chrome_left { SIDEBAR_WIDTH } else { 0.0 }, MIN_HEIGHT)
+}
 /// So lange gleiten die Seiten, wenn die Leiste oben aus- oder einfährt (gleich wie --chrome-slide in ui.html).
 const CHROME_SLIDE: std::time::Duration = std::time::Duration::from_millis(380);
 /// Konzentrisch zur Fensterecke (--radius = 8 px in ui.html, wie Windows 11): 8 − MARGIN.
@@ -847,6 +854,7 @@ impl Browser {
                 if left != self.chrome_left {
                     self.chrome_left = left;
                     self.chrome_slide = None;
+                    self.window.set_min_inner_size(Some(min_size(left)));
                     self.layout();
                     self.sync_ui();
                 }
@@ -1372,7 +1380,7 @@ fn main() -> wry::Result<()> {
         .with_window_icon(icon(32))
         .with_taskbar_icon(icon(256))
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 820.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(480.0, 320.0))
+        .with_min_inner_size(min_size(false))
         .with_decorations(false)
         .with_transparent(true)
         .with_undecorated_shadow(true)
