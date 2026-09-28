@@ -29,8 +29,19 @@ const UI_URL: &str = "http://glass.localhost/";
 
 /// Die eine Zeile oben: Ampel, Vor/Zurück, Tabs, Adressfeld und Knöpfe.
 const TOOLBAR_HEIGHT: f64 = 42.0;
+/// Breite der Leiste, wenn sie links statt oben steht (Rechtsklick auf die Leiste → „Leiste links“).
+const SIDEBAR_WIDTH: f64 = 240.0;
+/// Eingeklappte Leiste links (Rechtsklick → „Leiste einklappen“): nur noch die Logos der Tabs.
+const SIDEBAR_COLLAPSED_WIDTH: f64 = 56.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
+/// Kleinste Fenstergröße: Startbildschirm mit allen Vorschlägen unter dem Suchfeld und dem Anbieter-Rad daneben
+/// (ui.html: body.start .address). Mit Leiste links kommt deren Breite hinzu.
+const MIN_WIDTH: f64 = 760.0;
+const MIN_HEIGHT: f64 = 640.0;
+fn min_size(chrome_left: bool) -> LogicalSize<f64> {
+    LogicalSize::new(MIN_WIDTH + if chrome_left { SIDEBAR_WIDTH } else { 0.0 }, MIN_HEIGHT)
+}
 /// So lange gleiten die Seiten, wenn die Leiste oben aus- oder einfährt (gleich wie --chrome-slide in ui.html).
 const CHROME_SLIDE: std::time::Duration = std::time::Duration::from_millis(380);
 /// Konzentrisch zur Fensterecke (--radius = 8 px in ui.html, wie Windows 11): 8 − MARGIN.
@@ -169,18 +180,26 @@ struct Browser {
     fullscreen: bool,
     /// War das Fenster vor dem Vollbild maximiert? Wird beim Verlassen wiederhergestellt.
     was_maximized: bool,
-    /// Offenes Overlay der Oberfläche über der Webseite: x, y, Breite, Höhe, Eckradius (logische px).
-    overlay: Option<[f64; 5]>,
+    /// Offene Overlays der Oberfläche über der Webseite, je Quelle (`key`, sonst „main“): x, y, Breite, Höhe,
+    /// Eckradius (logische px). Die ausgeklappte Leiste links kann z. B. zugleich mit den Vorschlägen offen sein.
+    overlay: Vec<(String, [f64; 5])>,
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
     resize_preview: Option<(u64, bool)>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
-    /// Die Oberfläche hat die Leiste oben ausgeblendet: Webseiten reichen dann bis an den oberen Rand.
+    /// Die Oberfläche hat die Leiste ausgeblendet: Webseiten reichen dann bis an den Rand.
     chrome_hidden: bool,
-    /// Die Seiten gleiten gerade nach oben oder unten: Beginn, Oberkante vorher und nachher.
-    chrome_slide: Option<(std::time::Instant, f64, f64)>,
+    /// Die Leiste steht links statt oben (Einstellung der Oberfläche, dort gespeichert).
+    chrome_left: bool,
+    /// Leiste links ist eingeklappt (nur die Logos der Tabs).
+    chrome_collapsed: bool,
+    /// Die Seiten gleiten gerade: Beginn, linke obere Ecke vorher und nachher.
+    chrome_slide: Option<(std::time::Instant, [f64; 2], [f64; 2])>,
+    /// Tempo der Animationen: 1, in der Zeitlupe der Oberfläche (Strg+Umschalt+F8) 0,05 – sonst glitte die Seite
+    /// in normalem Tempo, während die Leiste in Zeitlupe hinterherkriecht.
+    animation_rate: f64,
 }
 
 impl Browser {
@@ -189,16 +208,30 @@ impl Browser {
         self.tabs.len() > 1 || self.tabs.iter().any(|t| t.webview.is_some() || !t.url.is_empty())
     }
 
+    /// Breite der Leiste links, eingeklappt oder nicht.
+    fn sidebar_width(&self) -> f64 {
+        if self.chrome_collapsed { SIDEBAR_COLLAPSED_WIDTH } else { SIDEBAR_WIDTH }
+    }
+
+    /// Dauer der Gleitbewegung in Sekunden (in der Zeitlupe entsprechend länger).
+    fn chrome_slide_duration(&self) -> f64 {
+        CHROME_SLIDE.as_secs_f64() / self.animation_rate
+    }
+
     fn chrome_height(&self) -> f64 {
         TOOLBAR_HEIGHT
     }
 
-    /// Fläche für Webseiten unter der Toolbar. Ist die Leiste ausgeblendet, bleibt oben nur der Rand frei –
-    /// fährt die Maus dorthin, holt die Oberfläche die Leiste zurück.
+    /// Fläche für Webseiten unter (bzw. rechts neben) der Leiste. Ist die Leiste ausgeblendet, bleibt nur der Rand
+    /// frei – fährt die Maus dorthin, holt die Oberfläche die Leiste zurück.
     fn resting_area(&self) -> Area {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-        let top = if self.chrome_hidden { MARGIN } else { self.chrome_height() };
-        [MARGIN, top, size.width - 2.0 * MARGIN, size.height - top - MARGIN]
+        let (left, top) = match (self.chrome_hidden, self.chrome_left) {
+            (true, _) => (MARGIN, MARGIN),
+            (false, true) => (self.sidebar_width(), MARGIN),
+            (false, false) => (MARGIN, self.chrome_height()),
+        };
+        [left, top, size.width - left - MARGIN, size.height - top - MARGIN]
     }
 
     /// Wie `resting_area`, nur mitten im Gleiten: Dann hat die Seite schon ihre volle Höhe und wird nur
@@ -206,9 +239,10 @@ impl Browser {
     fn content_area(&self) -> Area {
         let Some((start, from, to)) = self.chrome_slide else { return self.resting_area() };
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-        let t = (start.elapsed().as_secs_f64() / CHROME_SLIDE.as_secs_f64()).min(1.0);
+        let e = chrome_ease((start.elapsed().as_secs_f64() / self.chrome_slide_duration()).min(1.0));
         // Nicht auf ganze Pixel runden: wry rechnet in physische Pixel um, sonst wären die Schritte ungleich groß
-        [MARGIN, from + (to - from) * chrome_ease(t), size.width - 2.0 * MARGIN, size.height - 2.0 * MARGIN]
+        let [x, y] = [0, 1].map(|k| from[k] + (to[k] - from[k]) * e);
+        [x, y, size.width - 2.0 * MARGIN, size.height - 2.0 * MARGIN]
     }
 
     /// Ein Bild der Gleitbewegung: die sichtbaren Seiten nur verschieben, am Ende regulär auslegen.
@@ -217,7 +251,7 @@ impl Browser {
     fn slide_chrome(&mut self) {
         let Some((start, ..)) = self.chrome_slide else { return };
         unsafe { windows_sys::Win32::Graphics::Dwm::DwmFlush() };
-        if start.elapsed() >= CHROME_SLIDE {
+        if start.elapsed().as_secs_f64() >= self.chrome_slide_duration() {
             self.chrome_slide = None;
             self.layout();
             return;
@@ -363,7 +397,7 @@ impl Browser {
                 let mut rc: RECT = std::mem::zeroed();
                 GetClientRect(hwnd, &mut rc);
                 let region = rounded_region(rc.right, rc.bottom, radius);
-                if let Some([x, y, w, h, r]) = self.overlay {
+                for &(_, [x, y, w, h, r]) in &self.overlay {
                     // Overlay-Koordinaten sind Fensterkoordinaten, die Region zählt ab der Webseiten-Ecke.
                     let (x, y) = (x - left, y - top);
                     let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
@@ -477,6 +511,8 @@ impl Browser {
             "focused": self.window.is_focused(),
             "chromeHeight": self.chrome_height(),
             "chromeHidden": self.chrome_hidden,
+            "chromeLeft": self.chrome_left,
+            "chromeWidth": self.sidebar_width(),
             "tabbar": self.show_tabbar(),
             "split": self.split.as_ref().map(|s| json!({ "left": s.left, "right": s.right, "ratio": s.ratio })),
             // Zielposition auch mitten im Gleiten – die Oberfläche animiert ihre Rahmen selbst dorthin
@@ -657,7 +693,7 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
-        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "chrome_hidden") {
+        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "chrome_hidden" | "chrome_side" | "animation_rate") {
             if let Some((token, _)) = self.resize_preview.take() {
                 self.layout();
                 let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
@@ -810,16 +846,38 @@ impl Browser {
             "chrome_hidden" => {
                 let hidden = msg["value"].as_bool().unwrap_or(false);
                 if hidden != self.chrome_hidden {
-                    let from = self.content_area()[1]; // mitten in einer Gleitbewegung: von dort aus weiter
+                    let [x, y, ..] = self.content_area(); // mitten in einer Gleitbewegung: von dort aus weiter
                     self.chrome_hidden = hidden;
-                    self.chrome_slide = Some((std::time::Instant::now(), from, self.resting_area()[1]));
+                    let [tx, ty, ..] = self.resting_area();
+                    self.chrome_slide = Some((std::time::Instant::now(), [x, y], [tx, ty]));
+                    self.layout();
+                    self.sync_ui();
+                }
+            }
+            // Zeitlupe der Oberfläche an/aus: gilt auch für das Gleiten der Seiten
+            "animation_rate" => {
+                self.animation_rate = msg["value"].as_f64().filter(|r| *r > 0.0).unwrap_or(1.0);
+            }
+            // Leiste oben oder links: Die Seiten springen sofort an ihren Platz – die Leiste baut sich ja auch um
+            "chrome_side" => {
+                let left = value == "left";
+                let collapsed = msg["collapsed"].as_bool().unwrap_or(false);
+                if left != self.chrome_left || collapsed != self.chrome_collapsed {
+                    self.chrome_left = left;
+                    self.chrome_collapsed = collapsed;
+                    self.chrome_slide = None;
+                    self.window.set_min_inner_size(Some(min_size(left)));
                     self.layout();
                     self.sync_ui();
                 }
             }
             "overlay" => {
                 let r = &msg["rect"];
-                self.overlay = r.is_object().then(|| ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default()));
+                let key = msg["key"].as_str().unwrap_or("main");
+                self.overlay.retain(|(k, _)| k != key);
+                if r.is_object() {
+                    self.overlay.push((key.to_owned(), ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default())));
+                }
                 self.round_content_views();
             }
             "resize" => {
@@ -841,6 +899,15 @@ impl Browser {
             }
             // Webseiten dürfen nur Tastenkürzel melden, sonst nichts steuern.
             UserEvent::Content(cmd) => {
+                // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
+                // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
+                if (self.chrome_left || self.chrome_hidden) && !self.fullscreen {
+                    match cmd.as_str() {
+                        "window_drag" => { let _ = self.window.drag_window(); }
+                        "window_maximize" => self.window.set_maximized(!self.window.is_maximized()),
+                        _ => {}
+                    }
+                }
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
                 }
@@ -1329,7 +1396,7 @@ fn main() -> wry::Result<()> {
         .with_window_icon(icon(32))
         .with_taskbar_icon(icon(256))
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 820.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(480.0, 320.0))
+        .with_min_inner_size(min_size(false))
         .with_decorations(false)
         .with_transparent(true)
         .with_undecorated_shadow(true)
@@ -1406,8 +1473,8 @@ fn main() -> wry::Result<()> {
     let mut browser = Browser {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, was_maximized: false, overlay: None, split: None, resize_preview: None, hover: None, update: None,
-        chrome_hidden: false, chrome_slide: None,
+        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
+        chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
