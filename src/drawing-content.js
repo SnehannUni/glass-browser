@@ -79,48 +79,147 @@
     r.setStart(node, off); r.setEnd(node, off + 1);
     return [...r.getClientRects()].find((q) => q.width || q.height);
   };
-  // Anker unter einem Punkt (Fensterkoordinaten): möglichst ein Zeichen im Text, sonst das Element darunter
-  function anchorAt(x, y) {
+  // Die Zeichenfläche liegt über der Seite – für Treffertests kurz durchlässig machen
+  const throughLayer = (fn) => {
     layer.style.pointerEvents = 'none';
-    try {
-      const caret = document.caretPositionFromPoint?.(x, y);
-      const node = caret?.offsetNode;
-      if (node?.nodeType === Node.TEXT_NODE && node.data.trim()) {
-        const off = Math.min(caret.offset, node.data.length - 1);
-        const el = node.parentElement, rect = textRect(node, off);
-        const a = el && rect && !pinned(el) && elementPath(el);
-        // Nur, wenn der Punkt wirklich bei diesem Text liegt (daneben liefert caret die nächstgelegene Stelle)
-        if (a && Math.abs(rect.top + rect.height / 2 - y) < rect.height * 2 && Math.abs(rect.left - x) < 200) {
-          const n = Array.prototype.indexOf.call(el.childNodes, node);
-          return { ...a, n, off, ch: node.data.slice(off, off + 8) };
-        }
-      }
-      let el = document.elementFromPoint(x, y);
-      while (el && el !== document.body && ['inline', 'contents'].includes(getComputedStyle(el).display) && el.parentElement) el = el.parentElement;
-      return el && el !== host && !pinned(el) ? elementPath(el) : null;
-    } finally {
-      layer.style.pointerEvents = '';
-    }
+    try { return fn(); } finally { layer.style.pointerEvents = ''; }
+  };
+  // Zeichen unter einem Punkt (Fensterkoordinaten) – nur, wenn der Punkt wirklich auf dem Text liegt
+  // (daneben liefert caretPositionFromPoint die nächstgelegene Stelle)
+  function textCaret(x, y) {
+    const caret = document.caretPositionFromPoint?.(x, y);
+    const node = caret?.offsetNode;
+    if (node?.nodeType !== Node.TEXT_NODE || !node.data.trim()) return null;
+    const off = Math.min(caret.offset, node.data.length - 1);
+    const rect = textRect(node, off);
+    if (!rect || Math.abs(rect.top + rect.height / 2 - y) >= rect.height * 2 || Math.abs(rect.left - x) >= 200) return null;
+    return { node, off };
+  }
+  function textAnchor({ node, off }) {
+    const el = node.parentElement;
+    const a = el && !pinned(el) && elementPath(el);
+    return a ? { ...a, n: Array.prototype.indexOf.call(el.childNodes, node), off, ch: node.data.slice(off, off + 8) } : null;
+  }
+  // Anker unter einem Punkt: möglichst ein Zeichen im Text, sonst das Element darunter
+  const anchorAt = (x, y) => throughLayer(() => {
+    const caret = textCaret(x, y);
+    const a = caret && textAnchor(caret);
+    if (a) return a;
+    let el = document.elementFromPoint(x, y);
+    while (el && el !== document.body && ['inline', 'contents'].includes(getComputedStyle(el).display) && el.parentElement) el = el.parentElement;
+    return el && el !== host && !pinned(el) ? elementPath(el) : null;
+  });
+  // Textknoten eines Zeichen-Ankers, wenn er noch denselben Text enthält
+  function anchorText(a) {
+    const node = resolvePath(a)?.childNodes[a.n];
+    return node?.nodeType === Node.TEXT_NODE && node.data.slice(a.off, a.off + 8) === a.ch ? node : null;
   }
   // Wo liegt der Anker jetzt (Dokumentkoordinaten)? null: nicht (mehr) da
   function anchorPos(a) {
-    const el = resolvePath(a);
-    if (!el) return null;
     let r;
     if (a.n != null) {
-      const node = el.childNodes[a.n];
-      if (node?.nodeType !== Node.TEXT_NODE || node.data.slice(a.off, a.off + 8) !== a.ch) return null;
-      r = textRect(node, a.off);
+      const node = anchorText(a);
+      r = node && textRect(node, a.off);
     } else {
-      r = el.getBoundingClientRect();
+      r = resolvePath(a)?.getBoundingClientRect();
     }
     return r ? [r.left + scrollX, r.top + scrollY] : null;
   }
+
+  // ---------- Textmarker über Text ----------
+  // Fährt der Textmarker über Text, gilt er dem Text zwischen dem ersten und dem letzten überstrichenen Zeichen
+  // (h: { s, e } – zwei Zeichen-Anker). Gezeichnet wird dann die Markierung dieser Zeichen, Zeile für Zeile neu
+  // berechnet: Bricht der Text nach einer Größenänderung anders um, folgt sie ihm über alle Zeilen.
+  const beforeCaret = (a, b) => {
+    const r = document.createRange();
+    r.setStart(b.node, b.off);
+    return r.comparePoint(a.node, a.off) < 0;
+  };
+  const highlightOf = (stroke) => throughLayer(() => {
+    const p = stroke.p, count = p.length / 2, step = Math.max(1, Math.floor(count / 80));
+    let first = null, last = null, hits = 0, samples = 0;
+    const picks = [];
+    for (let i = 0; i < count; i += step) picks.push(i);
+    if (picks.at(-1) !== count - 1) picks.push(count - 1); // der Endpunkt zählt immer
+    for (const i of picks) {
+      const x = p[2 * i] - scrollX, y = p[2 * i + 1] - scrollY;
+      if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+      samples++;
+      const c = textCaret(x, y);
+      if (!c) continue;
+      hits++;
+      if (!first || beforeCaret(c, first)) first = c;
+      if (!last || beforeCaret(last, c)) last = c;
+    }
+    // Überwiegend neben dem Text (z. B. ein Kringel um ein Bild): eine freie Linie bleibt eine freie Linie
+    if (!first || hits * 2 < samples) return null;
+    const s = textAnchor(first), e = textAnchor(last);
+    return s && e ? { s, e } : null;
+  });
+  // Rechtecke der markierten Zeichen (Dokumentkoordinaten), je Zeile zu einem zusammengefasst; null: Text fehlt
+  function highlightRects(h) {
+    const start = anchorText(h.s), end = anchorText(h.e);
+    if (!start || !end) return null;
+    const range = document.createRange();
+    try { range.setStart(start, h.s.off); range.setEnd(end, h.e.off + 1); } catch { return null; }
+    if (range.collapsed) return null;
+    const root = range.commonAncestorContainer;
+    const walker = document.createTreeWalker(root.nodeType === Node.TEXT_NODE ? root.parentNode : root, NodeFilter.SHOW_TEXT);
+    walker.currentNode = start;
+    const boxes = [];
+    for (let node = start, n = 0; node && n < 5000; node = walker.nextNode(), n++) {
+      if (node.data.trim()) {
+        const part = document.createRange();
+        part.setStart(node, node === start ? h.s.off : 0);
+        part.setEnd(node, node === end ? h.e.off + 1 : node.length);
+        for (const r of part.getClientRects()) if (r.width > 0.5 && r.height > 0.5) boxes.push(r);
+      }
+      if (node === end) break;
+    }
+    const lines = [];
+    for (const r of boxes.sort((a, b) => a.top - b.top)) {
+      const mid = (r.top + r.bottom) / 2;
+      const line = lines.find((l) => Math.abs((l.t + l.b) / 2 - mid) < Math.min(l.b - l.t, r.height) / 2);
+      if (line) Object.assign(line, { l: Math.min(line.l, r.left), r: Math.max(line.r, r.right), t: Math.min(line.t, r.top), b: Math.max(line.b, r.bottom) });
+      else lines.push({ l: r.left, r: r.right, t: r.top, b: r.bottom });
+    }
+    return lines.map((l) => ({ l: l.l + scrollX, r: l.r + scrollX, t: l.t + scrollY, b: l.b + scrollY }));
+  }
+  // Abgerundete Rechtecke als ein Pfad: Überlappungen färben so nicht doppelt
+  const rectsPath = (rects) => rects.map(({ l, r, t, b }) => {
+    const w = r - l, h = b - t, k = Math.min(3, w / 2, h / 2);
+    const f = (v) => Math.round(v * 10) / 10;
+    return `M${f(l + k)} ${f(t)}h${f(w - 2 * k)}a${k} ${k} 0 0 1 ${k} ${k}v${f(h - 2 * k)}a${k} ${k} 0 0 1 ${-k} ${k}`
+      + `h${f(2 * k - w)}a${k} ${k} 0 0 1 ${-k} ${-k}v${f(2 * k - h)}a${k} ${k} 0 0 1 ${k} ${-k}z`;
+  }).join('');
+  const lit = new Map(); // Strich → aktuelle Zeilen-Rechtecke seiner Markierung
   // Striche ihren Ankern nachführen. Fehlt ein Anker (noch nicht nachgeladen), bleibt der Strich, wo er war.
   let placeQueued = false;
   function place() {
     placeQueued = false;
     for (const s of strokes) {
+      const el = paths.get(s);
+      const rects = s.h && highlightRects(s.h);
+      if (rects?.length) {
+        lit.set(s, rects);
+        const d = rectsPath(rects);
+        if (el && el.dataset.d !== d) {
+          el.dataset.d = d;
+          el.setAttribute('d', d);
+          el.removeAttribute('transform');
+          el.classList.add('hl');
+        }
+        shift.set(s, [0, 0]);
+        continue;
+      }
+      // Text der Markierung (noch) nicht da: als freie Linie zeigen, wie gezeichnet
+      lit.delete(s);
+      if (el?.classList.contains('hl')) {
+        el.classList.remove('hl');
+        delete el.dataset.d;
+        el.setAttribute('d', pathData(s.p));
+        shift.delete(s);
+      }
       const pos = s.a && anchorPos(s.a);
       const d = pos ? [Math.round(pos[0] - s.o[0]), Math.round(pos[1] - s.o[1])] : [0, 0];
       const old = shift.get(s);
@@ -130,7 +229,7 @@
     }
   }
   const queuePlace = () => {
-    if (placeQueued || !strokes.some((s) => s.a)) return;
+    if (placeQueued || !strokes.some((s) => s.a || s.h)) return;
     placeQueued = true;
     requestAnimationFrame(place);
   };
@@ -151,6 +250,7 @@
     el.setAttribute('stroke', s.c);
     el.setAttribute('stroke-width', s.w);
     el.setAttribute('stroke-opacity', TOOLS[s.t]?.opacity ?? 1);
+    el.style.setProperty('--c', s.c); // Füllfarbe als Markierung (CSS schlägt Attribute, siehe path.hl)
     svg.append(el);
     paths.set(s, el);
     return el;
@@ -161,12 +261,14 @@
     paths.clear();
     strokes.forEach(addPath);
     shift.clear();
+    lit.clear();
     place();
     renderBar();
   }
   const valid = (s) => s && TOOLS[s.t] && typeof s.c === 'string' && /^#[0-9a-f]{6}$/i.test(s.c)
     && Number.isFinite(s.w) && Array.isArray(s.p) && s.p.length >= 2 && s.p.length % 2 === 0 && s.p.every(Number.isFinite)
-    && (s.a == null || (validAnchor(s.a) && Array.isArray(s.o) && s.o.length === 2 && s.o.every(Number.isFinite)));
+    && (s.a == null || (validAnchor(s.a) && Array.isArray(s.o) && s.o.length === 2 && s.o.every(Number.isFinite)))
+    && (s.h == null || (typeof s.h === 'object' && [s.h.s, s.h.e].every((a) => a && validAnchor(a) && a.n != null)));
   const validAnchor = (a) => typeof a === 'object' && (a.id === null || typeof a.id === 'string')
     && Array.isArray(a.path) && a.path.length <= 40
     && a.path.every((step) => Array.isArray(step) && Number.isInteger(step[0]) && typeof step[1] === 'string')
@@ -191,6 +293,8 @@
 
   // Radierer: ganze Striche, die der Zeiger berührt
   function near(s, x, y, r) {
+    const rects = lit.get(s);
+    if (rects) return rects.some((q) => x >= q.l - r && x <= q.r + r && y >= q.t - r && y <= q.b + r);
     const p = s.p;
     const [sx, sy] = shift.get(s) ?? [0, 0];
     x -= sx; y -= sy;
@@ -253,6 +357,8 @@
     const a = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight ? anchorAt(x, y) : null;
     const pos = a && anchorPos(a);
     if (pos) Object.assign(d.stroke, { a, o: pos.map((v) => Math.round(v * 10) / 10) });
+    const h = d.stroke.t === 'marker' && highlightOf(d.stroke);
+    if (h) d.stroke.h = h;
     change([...strokes, d.stroke]);
   }
 
@@ -261,6 +367,7 @@
     :host { all: initial; position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2147483646; }
     svg.ink { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
     svg.ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    svg.ink path.hl { fill: var(--c); fill-opacity: .38; stroke: none; }
     .layer { position: fixed; inset: 0; cursor: crosshair; touch-action: none; display: none; }
     .layer.eraser { cursor: cell; }
     :host(.on) .layer { display: block; }

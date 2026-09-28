@@ -19,6 +19,7 @@ const layout = { banner: 0, left: 0 };
 const page = () => `<!doctype html><body style="margin:0 0 0 ${layout.left}px;height:3000px;background:#fff">
   <div style="height:${layout.banner}px"></div><h1>Test</h1>
   <p id=para style="margin-top:500px;font:20px/30px sans-serif">Ein Absatz mit Text zum Markieren, lang genug für einen Strich.</p>
+  <p id=multi style="width:220px;font:20px/30px sans-serif">Dieser Absatz ist schmal und bricht darum auf viele Zeilen um, damit ein Textmarker in einem Zug über mehrere Zeilen fahren kann und danach die Breite wechselt.</p>
   <input id=field><button id=b onclick="window.__clicked=(window.__clicked||0)+1" style="position:absolute;left:300px;top:300px">Knopf</button>`;
 // Trusted Types wie auf YouTube: Jede innerHTML-Zuweisung im Skript würde hier scheitern
 const server = createServer((req, res) => {
@@ -181,6 +182,43 @@ try {
   await run(`history.back()`);
   await delay(300);
   assert.equal(await paths(), 2);
+
+  // 8b. Textmarker in einem Zug über drei Zeilen: Er gilt dem Text dazwischen und folgt ihm, wenn der Absatz
+  // nach einer Größenänderung anders umbricht
+  await run(`multi.scrollIntoView({ block: 'center' })`);
+  await delay(50);
+  const mr = await run(`(() => { const r = multi.getBoundingClientRect(); return [r.left, r.top]; })()`);
+  await run('window.__glassDraw.toggle()');
+  await key('m', 'KeyM', 77, 'm');
+  await stroke([[mr[0] + 40, mr[1] + 15], [mr[0] + 200, mr[1] + 18], [mr[0] + 10, mr[1] + 45], [mr[0] + 200, mr[1] + 48], [mr[0] + 10, mr[1] + 75], [mr[0] + 120, mr[1] + 75]]);
+  await key('Escape', 'Escape', 27);
+  await waitSave();
+  const h = saved().at(-1).h;
+  assert.ok(h?.s && h?.e, 'marker became a text highlight');
+  assert.equal(h.s.id, 'multi');
+  // Soll: die Zeilen-Rechtecke genau dieser Zeichen – Ist: das Rechteck um die gezeichnete Markierung
+  const expected = () => run(`(() => {
+    const t = multi.firstChild, r = document.createRange();
+    r.setStart(t, ${h.s.off}); r.setEnd(t, ${h.e.off + 1});
+    const q = [...r.getClientRects()];
+    return [Math.min(...q.map((x) => x.left)), Math.min(...q.map((x) => x.top)), Math.max(...q.map((x) => x.right)), Math.max(...q.map((x) => x.bottom))].map(Math.round);
+  })()`);
+  const actual = () => run(`(() => {
+    const p = [...document.querySelector('glass-draw').shadowRoot.querySelectorAll('svg.ink path.hl')].at(-1);
+    const r = p.getBoundingClientRect();
+    return [r.left, r.top, r.right, r.bottom].map(Math.round);
+  })()`);
+  const close = (a, b, what) => assert.ok(a.every((v, i) => Math.abs(v - b[i]) <= 1), `${what}: ${a} vs ${b}`);
+  const lines = await run(`(() => { const t = multi.firstChild, r = document.createRange();
+    r.setStart(t, ${h.s.off}); r.setEnd(t, ${h.e.off + 1}); return new Set([...r.getClientRects()].map((q) => Math.round(q.top))).size; })()`);
+  assert.ok(lines >= 3, `spans ${lines} lines`);
+  close(await actual(), await expected(), 'highlight covers its text');
+  await run(`multi.style.width = '440px'`);
+  await delay(100);
+  close(await actual(), await expected(), 'highlight follows its text after reflow');
+  await call('Page.reload');
+  await delay(800);
+  close(await actual(), await expected(), 'highlight restored on its text');
 
   // 9. Alles löschen speichert eine leere Liste (Rust löscht dann die Datei)
   await run('window.__glassDraw.toggle()');
