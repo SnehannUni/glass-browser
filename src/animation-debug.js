@@ -35,6 +35,8 @@
     enabled = !!value;
     badge.hidden = !enabled;
     badge.setAttribute('aria-pressed', String(enabled));
+    // Rust schiebt die Webseiten selbst (Leiste ein-/ausfahren) – dieselbe Zeitlupe, sonst laufen sie auseinander
+    window.ipc?.postMessage(JSON.stringify({ cmd: 'animation_rate', value: enabled ? slowRate : 1 }));
     if (enabled) tick();
     else {
       cancelAnimationFrame(frame); frame = 0;
