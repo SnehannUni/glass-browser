@@ -116,6 +116,13 @@ pub struct Session {
     /// Die Seite hat die Liste geschlossen (z. B. weil der Fokus zum Klick in die Liste wechselte).
     /// Ein Klick auf einen Eintrag gilt dann noch kurz.
     ended: Option<std::time::Instant>,
+    /// Laufende Nummer: ein spät eintreffendes Seitenbild gehört vielleicht zu einer schon geschlossenen Liste.
+    seq: u64,
+    /// Wo die Seite im Fenster liegt (x, y, Breite, Höhe) – dorthin legt die Oberfläche ihr Bild.
+    pane: [f64; 4],
+    /// Aussparung für die Liste in der Seite, ab deren linker oberer Ecke (x, y, Breite, Höhe, Eckradius).
+    /// Seiten- statt Fensterkoordinaten: Gleitet die Seite (Leiste fährt ein/aus), wandert das Loch von selbst mit.
+    pub hole: Option<[f64; 5]>,
 }
 
 /// Ist die Taste gerade physisch gedrückt? So kann kein Skript der Seite den Verlauf durchblättern und mitlesen.
@@ -125,6 +132,7 @@ fn key_down(vk: u16) -> bool {
 }
 
 use tao::platform::windows::WindowExtWindows;
+use wry::WebViewExtWindows;
 
 impl crate::Browser {
     pub fn foreground(&self) -> bool {
@@ -162,7 +170,7 @@ impl crate::Browser {
         self.clip_end(true);
         let r: Vec<f64> = rect.as_array().map(|a| a.iter().filter_map(serde_json::Value::as_f64).collect()).unwrap_or_default();
         if r.len() != 4 || r.iter().any(|v| !v.is_finite()) { return; }
-        let Some((_, [px, py, w, h])) = self.panes().into_iter().find(|(i, _)| self.tabs[*i].id == tab_id) else { return };
+        let Some((index, [px, py, w, h])) = self.panes().into_iter().find(|(i, _)| self.tabs[*i].id == tab_id) else { return };
         // Gerade eingefügt – steht das in der Ablage, auch wenn die 250-ms-Abfrage es noch nicht gemeldet hat
         // (oder es aus einem privaten Tab stammt und deshalb nicht im Verlauf ist): nur für diese Liste vorn ergänzen
         let mut items: Vec<String> = self.clips.entries().into_iter().map(str::to_owned).collect();
@@ -176,9 +184,38 @@ impl crate::Browser {
         // Einfügestelle in Fensterkoordinaten, auf die Seite begrenzt
         let (x, top, bottom) = (px + r[0].clamp(0.0, w), py + r[1].clamp(0.0, h), py + (r[1] + r[3]).clamp(0.0, h));
         let previews: Vec<String> = items.iter().map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect()).collect();
-        let data = serde_json::json!({ "x": x, "top": top, "bottom": bottom, "items": previews, "index": 0 });
+        let data = serde_json::json!({ "tab": tab_id, "x": x, "top": top, "bottom": bottom, "items": previews, "index": 0 });
         let _ = self.ui.evaluate_script(&format!("window.clipboardHistory?.({data})"));
-        self.clip = Some(Session { tab: tab_id, items, index: 0, ended: None });
+        // Liquid Glass bricht, was dahinter liegt – die Seite ist aber ein eigenes Fenster über der Oberfläche.
+        // Also ein Bild von ihr aufnehmen und in der Oberfläche passgenau hinter die Liste legen.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if let Some(wv) = &self.tabs[index].webview {
+            let proxy = self.proxy.clone();
+            let _ = crate::resize_preview::capture(&wv.webview(), move |image| {
+                let _ = proxy.send_event(crate::UserEvent::ClipboardBackdrop(seq, image));
+            });
+        }
+        self.clip = Some(Session { tab: tab_id, items, index: 0, ended: None, seq, pane: [px, py, w, h], hole: None });
+    }
+
+    /// Die Oberfläche meldet, wo die Liste liegt (Fensterkoordinaten); `null`: geschlossen.
+    pub fn clip_hole(&mut self, rect: &serde_json::Value) {
+        let Some(tab) = self.clip.as_ref().map(|s| s.tab) else { return };
+        let origin = self.panes().into_iter().find(|(i, _)| self.tabs[*i].id == tab).map(|(_, [x, y, ..])| (x, y));
+        let hole = origin.filter(|_| rect.is_object()).map(|(ox, oy)| {
+            let v = |k: &str| rect[k].as_f64().unwrap_or_default();
+            [v("x") - ox, v("y") - oy, v("w"), v("h"), v("r")]
+        });
+        if let Some(s) = &mut self.clip { s.hole = hole; }
+    }
+
+    pub fn clip_backdrop(&mut self, seq: u64, image: String) {
+        let Some(s) = self.clip.as_ref().filter(|s| s.seq == seq && s.ended.is_none()) else { return };
+        if !image.starts_with("data:image/jpeg;base64,") { return; }
+        let [x, y, w, h] = s.pane;
+        let data = serde_json::json!({ "image": image, "x": x, "y": y, "w": w, "h": h });
+        let _ = self.ui.evaluate_script(&format!("window.clipboardBackdrop?.({data})"));
     }
 
     fn clip_select(&mut self, index: usize) {
@@ -209,6 +246,7 @@ impl crate::Browser {
     pub fn clip_end(&mut self, tell_page: bool) {
         let Some(s) = self.clip.take() else { return };
         let _ = self.ui.evaluate_script("window.clipboardHistoryHide?.()");
+        self.round_content_views();
         if tell_page && s.ended.is_none() {
             if let Some(wv) = self.index_of(s.tab).and_then(|i| self.tabs[i].webview.as_ref()) {
                 let _ = wv.evaluate_script("window.__glassClipEnd?.()");
