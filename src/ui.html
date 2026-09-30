@@ -156,7 +156,7 @@
   }
   /* Ausgeblendet schiebt die Webseite die Leiste nach oben weg (42 − 4 px Rand) – ihre Unterkante bleibt an der Seite */
   body.chrome-hidden #toolbar { transform: translateY(-38px); opacity: 0; }
-  /* Eine Zeile in drei Teilen: links Ampel, Vor/Zurück und der aktive Tab (= Adressfeld), in der Mitte die übrigen Tabs, rechts Knöpfe.
+  /* Eine Zeile in drei Teilen: links Vor/Zurück und der aktive Tab (= Adressfeld), in der Mitte die übrigen Tabs, rechts Knöpfe und Fensterknöpfe.
      Die beiden Seiten sind gleich breit – so stehen die Tabs in der Fenstermitte, solange sie Platz haben. */
   /* kein min-width: 0 – die Seiten behalten ihren Platz, schrumpfen müssen die Tabs */
   .side { display: flex; align-items: center; gap: 10px; align-self: stretch; }
@@ -164,20 +164,22 @@
   #tabbar { grid-column: 2; }
   .side.right { grid-column: 3; justify-content: flex-end; }
 
-  .lights { display: flex; gap: 8px; margin-right: 6px; }
-  .light { width: 12px; height: 24px; display: grid; place-items: center; }
-  .light i {
-    width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center;
-    box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .28), inset 0 1px 1px rgba(255, 255, 255, .25);
-    transition: background-color .3s, transform .3s var(--spring);
+  /* Fensterknöpfe wie unter Windows: schlichte Symbole, beim Überfahren eine Fläche, Schließen wird rot */
+  .winctl { display: flex; gap: 2px; margin-left: 4px; }
+  .win {
+    width: 36px; height: var(--toolbar-control-height); border-radius: 8px; display: grid; place-items: center; color: var(--label);
+    transition: background-color .18s var(--ease), color .18s var(--ease);
   }
-  .light svg { width: 8px; height: 8px; stroke: rgba(0, 0, 0, .62); stroke-width: 1.5; opacity: 0; transition: opacity .12s; }
-  .lights:is(:hover, .vh) .light svg { opacity: 1; }
-  .light:active i { transform: scale(.9); filter: brightness(.85); }
-  #l-close i { background: #ff5f57; }
-  #l-min i { background: #febc2e; }
-  #l-zoom i { background: #28c840; }
-  body.inactive .lights:not(:is(:hover, .vh)) .light i { background: rgba(255, 255, 255, .16); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .08); }
+  .win svg { width: 10px; height: 10px; stroke-width: 1; }
+  .win:hover { background-color: var(--control-hover); }
+  .win:active { background-color: var(--control-pressed); }
+  .win:focus-visible { outline: 2px solid var(--label); outline-offset: -2px; }
+  #win-close:hover { background-color: #c42b1c; color: #fff; }
+  #win-close:active { background-color: #b22a1c; color: rgba(255, 255, 255, .8); }
+  body.inactive .win:not(:hover) { color: var(--label-3); }
+  /* Maximiert: „Wiederherstellen“ (zwei Fenster) statt „Maximieren“ */
+  #win-max .restore, body.maximized #win-max .maximize { display: none; }
+  body.maximized #win-max .restore { display: inline; }
 
   /* Vor/Zurück gibt es nur, wenn im Tab eine Seite offen ist */
   .nav { padding: 0 5px; gap: 0; animation: pop-in .5s var(--spring); }
@@ -651,7 +653,7 @@
   body.start.private #private-note { display: flex; animation: pop-in .5s var(--spring); }
 
   /* ---------- Leiste links (Rechtsklick auf die Leiste → „Leiste links“) ---------- */
-  /* Dieselben Teile wie oben, nur untereinander: Ampel und rechts daneben Vor/Zurück, das Adressfeld mit dem aktiven Tab,
+  /* Dieselben Teile wie oben, nur untereinander: Vor/Zurück und rechts daneben die Fensterknöpfe, das Adressfeld mit dem aktiven Tab,
      darunter „+“ (rechts) und die übrigen Tabs, ganz unten die Knöpfe. Breite = SIDEBAR_WIDTH in main.rs (--chrome-w). */
   /* Ein eigenes Feld aus Glas, mit demselben Rand wie die Webseiten – so steht die Leiste auch auf dem
      Startbildschirm (ohne Seite daneben) nicht lose auf dem Wallpaper */
@@ -684,8 +686,9 @@
   /* Raster statt Umbruch: Beim Aufklappen über der Seite ist die Leiste kurz schmal – umgebrochen rutschte
      Vor/Zurück in eine eigene Zeile und das Suchfeld sprang nach unten und wieder hoch */
   body.side-left .side.left { display: grid; grid-template-columns: auto 1fr; align-items: center; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
-  body.side-left .lights { margin-left: 4px; }
-  body.side-left .nav { grid-column: 2; justify-self: end; } /* Vor/Zurück rechts oben, in einer Zeile mit der Ampel */
+  /* Vor/Zurück links oben, in einer Zeile mit den Fensterknöpfen rechts (layoutSide holt sie hierher) */
+  body.side-left .nav { grid-column: 1; }
+  body.side-left .winctl { grid-column: 2; justify-self: end; margin: 0 4px 0 0; }
   /* Startbildschirm: Platz freihalten, sonst rutscht der Tab darunter beim Wechsel zu einer Seite */
   body.side-left.start:not(.home-back) .nav { display: flex; visibility: hidden; }
   body.side-left .center { grid-column: 1 / -1; width: auto; height: var(--toolbar-control-height); }
@@ -703,7 +706,7 @@
   body.side-collapsed #toolbar { z-index: 8; }
   body.side-collapsed #toolbar { transition: transform var(--chrome-slide), width .26s var(--ease); }
   body.side-slim #toolbar { padding: 8px 6px; gap: 0; }
-  body.side-slim :is(.lights, .nav, .side.right, #tabbar > .tab-new) { display: none; }
+  body.side-slim :is(.winctl, .nav, .side.right, #tabbar > .tab-new) { display: none; }
   /* Das Suchfeld bleibt im Dokument: Auf dem Startbildschirm steht es ohnehin fest in der Mitte, auf einer Seite
      klappt Strg+L die Leiste vorher auf (setFlyout) */
   body.side-slim .side.left { min-height: 0; }
@@ -718,7 +721,7 @@
      nichts gestaucht am Rand der Seite abgeschnitten wird. Zuklappen: Der Rest verschwindet sofort (.side-slim). */
   body.side-flyout :is(.side.left, .side.right) { min-width: calc(var(--chrome-w-full) - 2 * var(--margin) - 16px); }
   /* (Startbildschirm: Das Suchfeld steht fest in der Mitte und bleibt, nur der Tab oben blendet mit ein) */
-  body.side-flyout :is(.lights, .nav, .side.right, #tabbar > .tab-new, #tabs .tab .title),
+  body.side-flyout :is(.winctl, .nav, .side.right, #tabbar > .tab-new, #tabs .tab .title),
   body.side-flyout:not(.start) .center, body.side-flyout.start .center > .tab.slotted {
     animation: side-reveal .16s var(--ease) .16s backwards;
   }
@@ -787,11 +790,6 @@
   <header id="toolbar" data-drag>
     <div id="sidepanel" class="glass" aria-hidden="true"></div>
     <div class="side left">
-    <div class="lights">
-      <button class="light" id="l-close" title="Schließen"><i><svg viewBox="0 0 10 10"><path d="m3 3 4 4m0-4-4 4"/></svg></i></button>
-      <button class="light" id="l-min" title="Minimieren"><i><svg viewBox="0 0 10 10"><path d="M2.5 5h5"/></svg></i></button>
-      <button class="light" id="l-zoom" title="Zoomen"><i><svg viewBox="0 0 10 10"><path d="M3 7V3.6L6.4 7Z M7 3v3.4L3.6 3Z" fill="rgba(0,0,0,.62)" stroke="none"/></svg></i></button>
-    </div>
     <div class="glass capsule nav" data-lens data-button-group>
       <button class="key" id="btn-back" title="Zurück (Alt+←)"><svg viewBox="0 0 16 16"><path d="M10 2.8 4.8 8l5.2 5.2"/></svg></button>
       <button class="key" id="btn-fwd" title="Vorwärts (Alt+→)"><svg viewBox="0 0 16 16"><path d="M6 2.8 11.2 8 6 13.2"/></svg></button>
@@ -827,6 +825,12 @@
     <button class="glass tab-new private-btn" id="btn-private" title="Neuer privater Tab (Strg+Umschalt+N)" data-lens><svg viewBox="0 0 16 16"><path d="M1.6 7.4h12.8M3.2 7.4l1.1-3.9c.1-.4.6-.6 1-.4L8 4l2.7-.9c.4-.2.9 0 1 .4l1.1 3.9"/><circle cx="4.9" cy="11" r="2"/><circle cx="11.1" cy="11" r="2"/><path d="M6.9 11c.7-.5 1.5-.5 2.2 0"/></svg></button>
     <button class="glass tab-new fav-btn" id="btn-favs" title="Favoriten" data-lens><svg viewBox="0 0 16 16"><path d="M4.6 2.6h6.8v10.8L8 11 4.6 13.4z"/></svg></button>
     <button class="glass tab-new mail-btn" id="btn-mail" title="Mail" data-lens><svg viewBox="0 0 16 16"><rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2"/><path d="m2.8 4.6 5.2 4 5.2-4"/></svg><span class="mail-badge"></span></button>
+    <!-- Fensterknöpfe wie unter Windows: rechts oben, Schließen ganz außen -->
+    <div class="winctl">
+      <button class="win" id="win-min" title="Minimieren"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></button>
+      <button class="win" id="win-max" title="Maximieren"><svg viewBox="0 0 10 10"><rect class="maximize" x=".5" y=".5" width="9" height="9" rx="1.5"/><g class="restore"><rect x=".5" y="2.5" width="7" height="7" rx="1.2"/><path d="M2.5 2.5v-.5a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v4A1.5 1.5 0 0 1 8 7.5h-.5"/></g></svg></button>
+      <button class="win" id="win-close" title="Schließen"><svg viewBox="0 0 10 10"><path d="m.5.5 9 9m0-9-9 9"/></svg></button>
+    </div>
     </div>
   </header>
   </div>
@@ -2564,6 +2568,10 @@
     body.toggle('side-collapsed', collapsed);
     body.toggle('side-slim', slim);
     body.toggle('side-flyout', collapsed && flyout);
+    // Fensterknöpfe rechts oben: oben am Ende der Leiste, links in der ersten Zeile (unten stehen dort die Knöpfe)
+    const winctl = document.querySelector('.winctl');
+    if (left) document.querySelector('.side.left > .nav').after(winctl);
+    else document.querySelector('.side.right').append(winctl);
     renderToolbarPin();
     reportSideOverlay();
     // Feld und Tabs sind jetzt anders angeordnet: alles neu vermessen
@@ -2706,6 +2714,8 @@
     document.body.classList.toggle('multi', !!state.tabbar); // Tabs sichtbar (Rust: sobald etwas offen ist)
     layoutSide();
     document.body.classList.toggle('inactive', !state.focused);
+    document.body.classList.toggle('maximized', !!state.maximized);
+    $('win-max').title = state.maximized ? 'Wiederherstellen' : 'Maximieren';
     const hasPage = !!activeTab()?.page; // Rust meldet, ob der Tab eine Webseite hat (die URL kann leer sein)
     // Ein leerer Tab wird per Knopf umgeschaltet (Rust: "private_tab"), sonst öffnet er einen neuen privaten Tab
     const isPrivate = !!activeTab()?.private, empty = !hasPage && !activeTab()?.url && !activeTab()?.mail;
@@ -2747,9 +2757,9 @@
   click('btn-back', 'back');
   click('btn-fwd', 'forward');
   click('btn-reload', () => (activeTab()?.loading ? 'stop' : 'reload'));
-  click('l-close', 'close');
-  click('l-min', 'minimize');
-  click('l-zoom', 'maximize');
+  click('win-close', 'close');
+  click('win-min', 'minimize');
+  click('win-max', 'maximize');
 
   document.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
