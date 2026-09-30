@@ -9,6 +9,7 @@ mod favicon;
 mod resize_preview;
 mod clipboard;
 mod drawing;
+mod mail;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -110,6 +111,18 @@ enum UserEvent {
     ClipboardBackdrop(u64, String),
     /// Zeichnen auf einer Webseite: Tab, Adresse des sendenden Dokuments, JSON aus drawing-content.js.
     Drawing(u32, String, String),
+    /// Ein Web-Postfach meldet Ungelesene und neueste Mails: Tab, Adresse des Dokuments, JSON aus mail-content.js.
+    MailReport(u32, String, String),
+    /// Alle 5 Minuten: Postfächer im Hintergrund laden bzw. aufwecken (siehe mail.rs) …
+    MailTick,
+    /// … und nach einer Minute wieder schlafen legen (Nummer der Weckrunde).
+    MailSleep(u64),
+    /// Jede Minute: Anmeldungen aus Sitzungs-Cookies dauerhaft machen (iCloud, siehe `keep_signed_in`).
+    MailKeep,
+    /// Kurz nach dem Laden eines Postfachs: Zustand neu melden (angemeldet oder nicht, siehe `mail_loaded`).
+    MailSync,
+    /// Beim Beenden: Die Anmeldungen der Postfächer sind gesichert (`mail_before_exit`), Glass darf zu.
+    ExitReady,
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -169,6 +182,8 @@ struct Tab {
     hidden_since: Cell<Option<Instant>>,
     /// Die Seite ist im Zeichenmodus (Stift in der Leiste, siehe drawing-content.js).
     drawing: bool,
+    /// Der Tab ist die Mail-Ansicht (mail.rs): keine eigene Webseite, links die Liste, rechts ein Postfach.
+    mail_view: bool,
 }
 
 impl Tab {
@@ -218,12 +233,14 @@ struct Browser {
     clip: Option<clipboard::Session>,
     /// Gespeicherte Zeichnungen auf Webseiten.
     drawings: drawing::Store,
+    /// Web-Postfächer hinter dem Mail-Knopf.
+    mail: mail::Mail,
 }
 
 impl Browser {
     /// Tabs zeigt die Zeile oben, sobald etwas offen ist – nur bei einem einzigen leeren Tab fehlen sie.
     fn show_tabbar(&self) -> bool {
-        self.tabs.len() > 1 || self.tabs.iter().any(|t| t.webview.is_some() || !t.url.is_empty())
+        self.tabs.len() > 1 || self.tabs.iter().any(|t| t.webview.is_some() || !t.url.is_empty() || t.mail_view)
     }
 
     /// Breite der Leiste links, eingeklappt oder nicht.
@@ -282,6 +299,11 @@ impl Browser {
                 let _ = wv.set_bounds(to_rect(area));
             }
         }
+        if self.mail_view_active() {
+            if let Some(wv) = self.mail.shown_tab().and_then(|t| t.webview.as_ref()) {
+                let _ = wv.set_bounds(to_rect(self.mail_pane(self.content_area())));
+            }
+        }
     }
 
     fn split_of(&self, id: u32) -> Option<&Split> {
@@ -295,7 +317,8 @@ impl Browser {
 
     fn panes_in(&self, [x, y, w, h]: Area) -> Vec<(usize, Area)> {
         let Some(active) = self.tabs.get(self.active) else { return Vec::new() };
-        if active.home {
+        // Die Mail-Ansicht hat keine eigene Seite; ihr Postfach legt `mail_layout` aus
+        if active.home || active.mail_view {
             return Vec::new();
         }
         if self.fullscreen {
@@ -357,6 +380,7 @@ impl Browser {
                 }
             }
         }
+        self.mail_layout();
         self.round_content_views();
     }
 
@@ -400,8 +424,16 @@ impl Browser {
         let scale = self.window.scale_factor();
         let px = |v: f64| (v * scale).round() as i32;
         let radius = px(CONTENT_RADIUS);
-        for (i, [left, top, ..]) in self.panes() {
-            let Some(wv) = &self.tabs[i].webview else { continue };
+        // Sichtbare Seiten: die Tabs der aktuellen Ansicht bzw. das Postfach rechts in der Mail-Ansicht
+        let mut views: Vec<(&WebView, Area, u32)> = self
+            .panes()
+            .into_iter()
+            .filter_map(|(i, area)| Some((self.tabs[i].webview.as_ref()?, area, self.tabs[i].id)))
+            .collect();
+        if let (true, Some(tab)) = (self.mail_view_active(), self.mail.shown_tab()) {
+            views.extend(tab.webview.as_ref().map(|wv| (wv, self.mail_pane(self.content_area()), tab.id)));
+        }
+        for (wv, [left, top, ..], id) in views {
             let mut hwnd = windows::Win32::Foundation::HWND::default();
             if unsafe { wv.controller().ParentWindow(&mut hwnd) }.is_err() {
                 continue;
@@ -423,7 +455,7 @@ impl Browser {
                     DeleteObject(hole);
                 }
                 // Die Zwischenablage-Liste gleitet mit ihrer Seite mit – ihre Aussparung zählt deshalb ab der Seite
-                if let Some([x, y, w, h, r]) = self.clip.as_ref().filter(|s| s.tab == self.tabs[i].id).and_then(|s| s.hole) {
+                if let Some([x, y, w, h, r]) = self.clip.as_ref().filter(|s| s.tab == id).and_then(|s| s.hole) {
                     let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
                     CombineRgn(region, region, hole, RGN_DIFF);
                     DeleteObject(hole);
@@ -454,6 +486,7 @@ impl Browser {
                         .tabs
                         .iter()
                         .filter_map(|t| t.webview.as_ref())
+                        .chain(self.mail.webviews())
                         .filter_map(|wv| {
                             let mut h = windows::Win32::Foundation::HWND::default();
                             wv.controller().ParentWindow(&mut h).ok().map(|_| h.0 as *mut core::ffi::c_void)
@@ -525,7 +558,7 @@ impl Browser {
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
-                    "drawing": t.drawing && t.shows_page(),
+                    "drawing": t.drawing && t.shows_page(), "mail": t.mail_view,
                 })
             })
             .collect();
@@ -542,12 +575,25 @@ impl Browser {
             "split": self.split.as_ref().map(|s| json!({ "left": s.left, "right": s.right, "ratio": s.ratio })),
             // Zielposition auch mitten im Gleiten – die Oberfläche animiert ihre Rahmen selbst dorthin
             "panes": self.panes_in(self.resting_area()).iter().map(|(i, [x, y, w, h])| json!({ "id": self.tabs[*i].id, "x": x, "y": y, "w": w, "h": h })).collect::<Vec<_>>(),
+            // Mail-Ansicht: ganze Seitenfläche und darin das Postfach rechts – links davon zeichnet die Oberfläche die Liste
+            "mailView": self.mail_view_active().then(|| {
+                let (area, [px, py, pw, ph]) = (self.resting_area(), self.mail_pane(self.resting_area()));
+                json!({ "x": area[0], "y": area[1], "w": area[2], "h": area[3], "pane": { "x": px, "y": py, "w": pw, "h": ph } })
+            }),
         });
         let _ = self.ui.evaluate_script(&format!("window.render({state})"));
     }
 
     fn index_of(&self, id: u32) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
+    }
+
+    /// Tab mit dieser Id – auch ein beiseitegelegtes Postfach, das nicht in der Tab-Leiste steht (mail.rs).
+    fn tab_mut(&mut self, id: u32) -> Option<&mut Tab> {
+        match self.index_of(id) {
+            Some(i) => Some(&mut self.tabs[i]),
+            None => self.mail.tab_mut(id),
+        }
     }
 
     fn new_tab(&mut self, url: Option<String>, private: bool) {
@@ -557,7 +603,7 @@ impl Browser {
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
         let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false, mail_view: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -637,6 +683,10 @@ impl Browser {
         let tab = &mut self.tabs[self.active];
         tab.url = url.clone();
         tab.loading = true;
+        // In der Mail-Ansicht eine Adresse eingetippt: Der Tab wird zu einem gewöhnlichen
+        if std::mem::take(&mut tab.mail_view) {
+            tab.title.clear();
+        }
         // Vom Startbildschirm aus weitersurfen: die wartende Seite wird wieder sichtbar und lädt die neue Adresse
         let was_home = std::mem::take(&mut tab.home);
         match &tab.webview {
@@ -648,7 +698,7 @@ impl Browser {
                 let _ = self.tabs[self.active].webview.as_ref().map(|wv| wv.focus());
             }
             None => {
-                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds);
+                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds, true);
                 tab.webview = wv.ok();
                 if let Some(wv) = &tab.webview {
                     set_adblock_flag(wv, &tab.adblock_flag);
@@ -736,7 +786,13 @@ impl Browser {
                 self.sync_ui();
                 self.sync_geometry();
                 self.show_update();
+                self.sync_mail();
             }
+            // Mail-Knopf und Mail-Ansicht: Postfach (oder eine Mail darin) rechts zeigen, Postfach trennen
+            "mail_view" => self.mail_view(),
+            "mail_show" => self.mail_show(value, msg["item"].as_str()),
+            "mail_forget" => self.mail_forget(value),
+            "mail_list" => self.mail_list_width(msg["value"].as_f64()),
             // Update-Modal: „Jetzt installieren“ – Download und Austausch laufen im Hintergrund
             "update_install" => {
                 if let Some((_, _, url)) = self.update.clone() {
@@ -773,7 +829,7 @@ impl Browser {
             // Ein noch leerer Tab wird einfach umgeschaltet, sonst öffnet sich ein neuer privater Tab.
             "private_tab" => {
                 let tab = &mut self.tabs[self.active];
-                if tab.webview.is_none() && tab.url.is_empty() {
+                if tab.webview.is_none() && tab.url.is_empty() && !tab.mail_view {
                     tab.private = !tab.private;
                     self.sync_ui();
                     self.focus_address();
@@ -977,6 +1033,11 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
+            UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
+            UserEvent::MailTick => self.mail_tick(),
+            UserEvent::MailSleep(round) => self.mail_sleep(round),
+            UserEvent::MailKeep => self.mail_keep(),
+            UserEvent::ExitReady => {} // in der Ereignisschleife behandelt
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -985,7 +1046,7 @@ impl Browser {
                 }
             }
             UserEvent::Cosmetic(id, raw) => {
-                let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) else { return true };
+                let Some(wv) = self.tab_mut(id).and_then(|t| t.webview.as_ref()) else { return true };
                 let msg: Value = serde_json::from_str(&raw).unwrap_or_default();
                 let list = |k: &str| -> Vec<String> {
                     msg[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default()
@@ -1002,21 +1063,23 @@ impl Browser {
                 }
             }
             UserEvent::PageFavicon(id, source, icon) => {
-                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                if let Some(tab) = self.tab_mut(id) {
                     if !tab.private && source == tab.url && favicon::valid_page_icon(&icon) {
                         tab.page_favicon = icon;
                         self.sync_ui();
+                        if self.mail.owns(id) { self.sync_mail(); }
                     }
                 }
             }
             UserEvent::Favicon(id, icon) => {
-                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                if let Some(tab) = self.tab_mut(id) {
                     tab.favicon = icon;
                     self.sync_ui();
+                    if self.mail.owns(id) { self.sync_mail(); }
                 }
             }
             UserEvent::Title(id, title) => {
-                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                if let Some(tab) = self.tab_mut(id) {
                     tab.title = title;
                     // Single-Page-Apps ändern die URL oft ohne echte Navigation.
                     if let Some(Ok(url)) = tab.webview.as_ref().map(|wv| wv.url()) {
@@ -1037,7 +1100,7 @@ impl Browser {
                 }
                 if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
                 if loading && self.clip.as_ref().is_some_and(|s| s.tab == id) { self.clip_end(true); }
-                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                if let Some(tab) = self.tab_mut(id) {
                     if loading {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
@@ -1050,9 +1113,17 @@ impl Browser {
                     }
                     self.sync_ui();
                 }
+                if self.mail.owns(id) {
+                    self.mail_loaded(id, loading);
+                }
             }
+            UserEvent::MailSync => self.sync_mail(),
             // Links aus einem privaten Tab öffnen sich wieder privat.
             UserEvent::NewWindow(from, url) => {
+                // Ein Postfach öffnet nur Tabs, solange es in der Mail-Ansicht zu sehen ist (Link in einer Mail)
+                if self.mail.owns(from) && !(self.mail_view_active() && self.mail.shown_tab().is_some_and(|t| t.id == from)) {
+                    return true;
+                }
                 let private = self.index_of(from).is_some_and(|i| self.tabs[i].private);
                 self.new_tab(Some(url), private);
             }
@@ -1117,6 +1188,7 @@ fn build_content_webview(
     private: bool,
     url: &str,
     bounds: Rect,
+    visible: bool,
 ) -> wry::Result<WebView> {
     let (p_ipc, p_title, p_load, p_new, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
@@ -1130,6 +1202,7 @@ fn build_content_webview(
         .with_incognito(private)
         .with_url(url)
         .with_bounds(bounds)
+        .with_visible(visible)
         .with_devtools(true)
         .with_initialization_script(if private { "" } else { include_str!("favicon-content.js") })
         .with_initialization_script(CONTENT_JS)
@@ -1137,6 +1210,7 @@ fn build_content_webview(
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("clipboard-content.js"))
         .with_initialization_script(include_str!("drawing-content.js"))
+        .with_initialization_script(include_str!("mail-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
@@ -1146,6 +1220,8 @@ fn build_content_webview(
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
                 } else if msg.get("draw").is_some() {
                     UserEvent::Drawing(id, req.uri().to_string(), body)
+                } else if msg.get("mail").is_some() {
+                    UserEvent::MailReport(id, req.uri().to_string(), body)
                 } else if msg.get("clip").is_some() {
                     UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
@@ -1474,6 +1550,7 @@ fn main() -> wry::Result<()> {
         .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"));
     blocker::init(data_dir.clone());
     let drawings = drawing::Store::new(&data_dir);
+    let mail = mail::Mail::new(&data_dir);
     let mut web_context = WebContext::new(Some(data_dir));
 
     let p_ui = proxy.clone();
@@ -1532,6 +1609,21 @@ fn main() -> wry::Result<()> {
         }
     });
 
+    // Postfächer hinter dem Mail-Knopf: kurz nach dem Start laden, dann alle 5 Minuten aufwecken (mail.rs)
+    let p_mail = proxy.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        while p_mail.send_event(UserEvent::MailTick).is_ok() {
+            std::thread::sleep(mail::REFRESH_EVERY);
+        }
+    });
+    let p_keep = proxy.clone();
+    std::thread::spawn(move || {
+        while p_keep.send_event(UserEvent::MailKeep).is_ok() {
+            std::thread::sleep(mail::KEEP_EVERY);
+        }
+    });
+
     let p_clip = proxy.clone();
     clipboard::watch(move |text| p_clip.send_event(UserEvent::Clipboard(text)).is_ok());
 
@@ -1542,7 +1634,7 @@ fn main() -> wry::Result<()> {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
-        clips: clipboard::History::default(), clip: None, drawings,
+        clips: clipboard::History::default(), clip: None, drawings, mail,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
@@ -1553,7 +1645,24 @@ fn main() -> wry::Result<()> {
         browser.new_tab(Some(url), false);
     }
 
+    // Beenden angefragt, aber die Postfächer sichern noch ihre Anmeldung: spätestens dann wirklich zu
+    let mut exit_at: Option<Instant> = None;
     event_loop.run(move |event, _, control_flow| {
+        if let Some(deadline) = exit_at {
+            let done = matches!(event, Event::UserEvent(UserEvent::ExitReady)) || Instant::now() >= deadline;
+            *control_flow = if done { ControlFlow::Exit } else { ControlFlow::WaitUntil(deadline) };
+            return;
+        }
+        // Fenster sofort weg, Beenden erst nach `mail_before_exit` (höchstens 1,5 s)
+        let mut exit = |browser: &mut Browser, control_flow: &mut ControlFlow| {
+            if browser.mail_before_exit() {
+                browser.window.set_visible(false);
+                exit_at = Some(Instant::now() + std::time::Duration::from_millis(1500));
+                *control_flow = ControlFlow::WaitUntil(exit_at.unwrap());
+            } else {
+                *control_flow = ControlFlow::Exit;
+            }
+        };
         // Solange das Fenster aktiv ist, regelmäßig die Mausposition prüfen (siehe `poll_hover`)
         // (Vordergrund statt is_focused(): Hat eine Webseite den Fokus, gilt das Hauptfenster für tao als unfokussiert.)
         let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
@@ -1572,7 +1681,7 @@ fn main() -> wry::Result<()> {
                 browser.poll_hover();
             }
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::CloseRequested => exit(&mut browser, control_flow),
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     browser.dismiss_autofill();
                     browser.clip_end(true);
@@ -1586,7 +1695,7 @@ fn main() -> wry::Result<()> {
             },
             Event::UserEvent(event) => {
                 if !browser.handle(event) {
-                    *control_flow = ControlFlow::Exit;
+                    exit(&mut browser, control_flow);
                 }
             }
             _ => {}
