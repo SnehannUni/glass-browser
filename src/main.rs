@@ -119,6 +119,8 @@ enum UserEvent {
     MailSleep(u64),
     /// Jede Minute: Anmeldungen aus Sitzungs-Cookies dauerhaft machen (iCloud, siehe `keep_signed_in`).
     MailKeep,
+    /// Kurz nach dem Laden eines Postfachs: Zustand neu melden (angemeldet oder nicht, siehe `mail_loaded`).
+    MailSync,
     /// Beim Beenden: Die Anmeldungen der Postfächer sind gesichert (`mail_before_exit`), Glass darf zu.
     ExitReady,
 }
@@ -1111,7 +1113,11 @@ impl Browser {
                     }
                     self.sync_ui();
                 }
+                if self.mail.owns(id) {
+                    self.mail_loaded(id, loading);
+                }
             }
+            UserEvent::MailSync => self.sync_mail(),
             // Links aus einem privaten Tab öffnen sich wieder privat.
             UserEvent::NewWindow(from, url) => {
                 // Ein Postfach öffnet nur Tabs, solange es in der Mail-Ansicht zu sehen ist (Link in einer Mail)
