@@ -516,19 +516,23 @@
   .ml-boxes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
   .ml-box.sel { background: rgba(255, 255, 255, .24); color: var(--label); }
   .ml-box.filter { flex: none; }
-  /* Postfächer in derselben Zeile wie die Filter: nur Symbol und Zahl (der Name steht im Tooltip), sie wachsen,
-     schrumpfen aber nicht unter ihren Inhalt */
+  /* Postfächer in derselben Zeile wie die Filter: Symbol und Name; sie wachsen, schrumpfen aber nicht unter ihren
+     Inhalt. Ungelesene als Abzeichen oben rechts (wie am Mail-Knopf) */
   .ml-box:not(.filter) { flex: 1 0 auto; justify-content: center; }
-  .ml-box .name:empty { display: none; }
-  .ml-boxes { flex-wrap: nowrap; }
-  #mailview { container-type: inline-size; }
-  /* Schmale Liste: nur noch Symbole – die Zahl steht im Tooltip, das „!“ für „nicht angemeldet“ bleibt */
-  @container (max-width: 360px) { .ml-box:not(.filter):not(.out) .n { display: none; } }
   .ml-box:not(.filter) .name { flex: none; }
-  /* Verbunden, aber abgemeldet: oranger Rand und „Anmelden“ statt der Zahl */
+  .ml-boxes { flex-wrap: nowrap; padding-top: 6px; }
+  #mailview { container-type: inline-size; }
+  /* Schmale Liste: nur noch Symbole – der Name steht im Tooltip, das Abzeichen bleibt */
+  @container (max-width: 360px) { .ml-box:not(.filter) .name { display: none; } }
+  .ml-box .badge {
+    position: absolute; top: -6px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: #ff3b30; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+    font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); pointer-events: none;
+  }
+  .ml-box .badge.warn { background: #ff9f0a; color: #1c1c1e; font-weight: 800; }
+  .ml-box .badge.add { background: rgba(120, 122, 132, .95); font-size: 12px; }
+  /* Verbunden, aber abgemeldet: oranger Rand und „!“ */
   .ml-box.out { box-shadow: inset 0 0 0 1px rgba(255, 159, 10, .7); }
-  .ml-box.out .n { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
-                   background: #ff9f0a; color: #1c1c1e; font-weight: 800; font-size: 11px; }
   .ml-box {
     position: relative; flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: 15px;
     display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, .08); color: var(--label-2); font-size: 12px;
@@ -536,8 +540,7 @@
   .ml-box:is(:hover, .vh) { background: rgba(255, 255, 255, .15); color: var(--label); }
   .ml-box.off { background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
   .ml-box .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-  .ml-box .n { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--label); }
-  .ml-box .rm { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; background: rgba(60, 62, 72, .95); }
+  .ml-box .rm { position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; background: rgba(60, 62, 72, .95); }
   .ml-box:is(:hover, .vh) .rm { opacity: .85; }
   .ml-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--label-2); }
   .ml-ic img { width: 16px; height: 16px; border-radius: 4px; }
@@ -2085,11 +2088,23 @@
     if (!mail.boxes.some((b) => b.key === mailFilter)) mailFilter = mailFilter === 'unread' ? 'unread' : 'all';
     if (inMailView()) renderMailView();
   };
+  // Feste Symbole je Postfach (wie bei den Suchanbietern): schon vor dem Verbinden zu erkennen, und sie wechseln nicht
+  // mit der Seite (Outlooks Anmeldung zeigt sonst das Microsoft-Logo). Die Seite liefert nur den Ersatz.
+  const MAIL_ICONS = {
+    icloud: 'https://www.icloud.com/system/icloud.com/current/favicons/mail-favicon-light-180x180.png', // Mail, nicht die Wolke
+    outlook: favicon('outlook.live.com'),
+    gmail: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico', // (der Dienst liefert für Gmail nur das Google-„G“)
+  };
   const mailIcon = (box) => {
     const ic = document.createElement('span');
     ic.className = 'ml-ic';
-    if (box.icon) { const img = new Image(); img.src = box.icon; ic.append(img); }
-    else ic.innerHTML = svg('mail');
+    const src = MAIL_ICONS[box.key] || box.icon;
+    if (src) {
+      const img = new Image();
+      img.onerror = () => { if (box.icon && img.src !== box.icon) img.src = box.icon; else ic.innerHTML = svg('mail'); };
+      img.src = src;
+      ic.append(img);
+    } else ic.innerHTML = svg('mail');
     return ic;
   };
   // Heute die Uhrzeit, gestern „Gestern“, in dieser Woche der Wochentag, sonst das Datum
@@ -2137,7 +2152,7 @@
       );
     }
     for (const b of mail.boxes) {
-      const el = chip(b.connected ? '' : '+', {
+      const el = chip(b.name, {
         sel: mailFilter === b.key, off: !b.connected, cls: b.signedOut ? 'out' : '',
         title: !b.connected ? `${b.name} verbinden – rechts erscheint die Anmeldung`
           : b.signedOut ? `${b.name}: nicht angemeldet – klicken, um dich rechts anzumelden`
@@ -2145,15 +2160,12 @@
         onClick: () => { mailFilter = b.key; mailSelected = null; send('mail_show', { value: b.key }); renderMailView(); },
       });
       el.prepend(mailIcon(b));
-      if (b.signedOut) {
+      // Abzeichen oben rechts, wie am Mail-Knopf: Ungelesene, „!“ (abgemeldet) oder „+“ (noch nicht verbunden)
+      const badge = !b.connected ? ['+', 'add'] : b.signedOut ? ['!', 'warn'] : b.unread ? [plural(b.unread), ''] : null;
+      if (badge) {
         const n = document.createElement('span');
-        n.className = 'n';
-        n.textContent = '!';
-        el.append(n);
-      } else if (b.connected && b.unread) {
-        const n = document.createElement('span');
-        n.className = 'n';
-        n.textContent = plural(b.unread);
+        n.className = `badge ${badge[1]}`;
+        n.textContent = badge[0];
         el.append(n);
       }
       if (b.connected) {
