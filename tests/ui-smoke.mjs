@@ -101,18 +101,24 @@ try {
   assert.ok(await evaluate(`document.getElementById('toolbar-menu').getBoundingClientRect().right <= innerWidth`));
   await evaluate(`document.getElementById('toolbar-pin').click();hoverAt(500,500,false)`);
   assert.equal(await evaluate(`localStorage.getItem('glass.toolbarPinned')`), 'true');
-  await delay(3800);
-  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'pinned toolbar survives idle timeout');
+  await evaluate(`pageScrolled(true)`);
+  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'pinned toolbar survives scrolling down');
   await openToolbarMenu();
   assert.equal(await evaluate(`document.getElementById('toolbar-pin').getAttribute('aria-checked')`), 'true');
   await evaluate(`document.getElementById('toolbar-pin').click();hoverAt(500,500,false)`);
-  await waitFor(`document.body.classList.contains('chrome-hidden')`);
+  await delay(300);
+  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'toolbar stays while nothing scrolls');
+  await evaluate(`pageScrolled(true)`);
+  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), true, 'scrolling down hides the toolbar');
+  await evaluate(`pageScrolled(false)`);
+  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'scrolling up brings it back');
+  await evaluate(`pageScrolled(true)`);
   assert.equal(await evaluate(`localStorage.getItem('glass.toolbarPinned')`), 'false');
   await evaluate(`hoverAt(500,0,true)`);
   await openToolbarMenu();
   await key('Escape','Escape');
   assert.equal(await evaluate(`document.getElementById('toolbar-menu').hidden`), true);
-  console.log('PASS: toolbar context menu, persisted pin toggle, idle prevention and unpin verified.');
+  console.log('PASS: toolbar context menu, persisted pin toggle, hide on scroll down, show on scroll up verified.');
   const swapped = await evaluate(`(()=>{render({...structuredClone(testState),active:2});const r={slot:document.querySelector('#addr-tab .title').textContent,listed:[...document.querySelectorAll('.tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id)};render(structuredClone(testState));return r})()`);
   assert.deepEqual(swapped, { slot: 'Second tab', listed: ['1'] }, 'previous tab returns to the list, new one moves to the field');
   const paired = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:1,right:2};render(s);await new Promise(r=>setTimeout(r,600));const d=document.querySelector('.tab.docked'),a=document.getElementById('address').getBoundingClientRect();const pair=()=>({slot:document.querySelector('#addr-tab .title').textContent,docked:d&&d.dataset.id,gap:d&&Math.round(a.right-d.getBoundingClientRect().right),listed:[...document.querySelectorAll('#tabs .tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id),lens:!document.getElementById('lens').classList.contains('off')});const r=[pair()];s.active=2;render(s);await new Promise(r=>setTimeout(r,600));r.push((({gap,...x})=>x)({...pair(),docked:document.querySelector('.tab.docked')?.dataset.id}));render(structuredClone(testState));await new Promise(r=>setTimeout(r,50));r.push(document.querySelectorAll('.tab.docked').length);return r})()`);
@@ -145,7 +151,7 @@ try {
   await evaluate(`render(structuredClone(testState))`);
   await delay(700);
   {
-    await evaluate(`hoverAt(300,2,true)`); await delay(450); // Leiste ist nach 3,5 s Ruhe ausgeblendet
+    await evaluate(`hoverAt(300,2,true)`); await delay(450); // Leiste zeigen, falls ausgeblendet
     const [x, y] = await evaluate(`(()=>{const r=document.querySelector('#addr-tab .title').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
