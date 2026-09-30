@@ -449,7 +449,22 @@
     backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
   #suggest.open { display: block; animation: drop-in .4s var(--spring); }
-  @keyframes drop-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+  /* Glas-Popups (Vorschläge, Favoriten, Zwischenablage) rollen von oben auf statt einzublenden: Solange ein Element
+     mit backdrop-filter halb durchsichtig ist, zeichnet Chromium (GPU) sein Glas nur teilweise – die Liste erschien
+     erst links. Die Aussparung reicht 30 px über den Rand, damit der Schatten nicht abgeschnitten wird. */
+  @keyframes drop-in {
+    from { clip-path: inset(-40px -40px 100% -40px); transform: translateY(-6px) scale(.98); }
+    to { clip-path: inset(-40px); }
+  }
+  /* Vorschläge und Favoriten heben sich deutlich ab – über einer Webseite fällt der Schatten auf deren Bild
+     (#page-shot, SHADOW_ROOM im Skript deckt ihn ab) */
+  :is(#suggest, #favs) {
+    box-shadow: inset 0 -10px 18px -14px rgba(255, 255, 255, .08), 0 14px 36px -10px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .22);
+  }
+  /* Bild der Webseite unter Glas, das über ihr liegt (pageShot): unter allem außer dem Wallpaper, die echte Seite
+     liegt ohnehin darüber – sichtbar ist es nur in deren Aussparungen */
+  #page-shot { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+  #page-shot > div { position: absolute; border-radius: var(--pane-radius); background-size: 100% 100%; }
   .sg {
     display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 8px; border-radius: 12px;
     color: var(--label-2); white-space: nowrap; overflow: hidden;
@@ -853,6 +868,7 @@
   <div id="divider" title="Ziehen: Aufteilung ändern · Doppelklick: 50 : 50"></div>
   <div id="dropzone" class="glass"></div>
 
+  <div id="page-shot"></div>
   <div id="suggest" class="glass"></div>
   <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
@@ -1156,11 +1172,16 @@
   const linear = (v) => (v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
   // Mittlere relative Leuchtdichte hinter dem Element – so, wie das Glas sie zeigt (abgedunkelt, leicht aufgehellt)
   function backdropLuminance(el) {
-    const r = el.getBoundingClientRect(), c = wall.getBoundingClientRect();
-    if (!r.width || !r.height || !c.width || !wall.classList.contains('ready')) return null;
-    const k = wall.width / c.width;
+    const r = el.getBoundingClientRect();
+    // Liegt das Glas über einer Webseite, steht dahinter deren Bild (coverPage) statt des Wallpapers
+    const page = pageBehind(el, r);
+    const [source, c, width] = page
+      ? [page.img, { left: page.x, top: page.y, width: page.w }, page.img.naturalWidth]
+      : [wall, wall.getBoundingClientRect(), wall.width];
+    if (!r.width || !r.height || !c.width || (!page && !wall.classList.contains('ready'))) return null;
+    const k = width / c.width;
     probeCtx.clearRect(0, 0, probe.width, probe.height);
-    probeCtx.drawImage(wall, (r.left - c.left) * k, (r.top - c.top) * k, r.width * k, r.height * k, 0, 0, probe.width, probe.height);
+    probeCtx.drawImage(source, (r.left - c.left) * k, (r.top - c.top) * k, r.width * k, r.height * k, 0, 0, probe.width, probe.height);
     const d = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
     let sum = 0;
     for (let i = 0; i < d.length; i += 4) {
@@ -1618,6 +1639,7 @@
     const url = activeTab()?.url || '';
     const query = searchQuery(url);
     input.value = query || url;
+    requestPageShot(); // schon jetzt: bis die Vorschläge kommen, ist das Bild der Seite da
     slide(true);
     requestAnimationFrame(() => input.select());
     // Leeres Feld → letzte Suchen; auf einer Google-Ergebnisseite → ähnliche Suchen
@@ -1628,6 +1650,7 @@
   input.addEventListener('blur', () => {
     closeWheel();
     closeSuggest();
+    if (!favPanel.classList.contains('open')) dropShot(); // Seitenbild nur, solange Glas über der Seite liegt
     slide(false);
     renderAddress();
   });
@@ -1655,6 +1678,9 @@
   // ---------- Suchvorschläge (von Google, abgerufen über Rust: /suggest) ----------
   const suggestBox = $('suggest');
   let suggestions = [], selected = -1, typed = '', suggestSeq = 0, suggestTimer = 0;
+  const SUGGEST_MAX = 7; // Zeilen höchstens (frühere Suchen und Google zusammen)
+  const suggestRowHeight = () => suggestBox.querySelector('.sg')?.offsetHeight || 34;
+  const suggestMost = () => SUGGEST_MAX * suggestRowHeight() + 12; // Höhe der vollen Liste (6 px Innenabstand)
   function moveSuggestion(step) {
     // -1 ist der eigene Text; beide Richtungen laufen durch denselben Auswahlzyklus.
     const count = suggestions.length + 1;
@@ -1720,8 +1746,9 @@
       : historyOf(searchEngine().id).slice(0, 6)
     ).map((text) => ({ text, kind: 'history' }));
     const seq = ++suggestSeq;
-    // Ohne passende frühere Suchen nur ausblenden – closeSuggest() würde die folgende Google-Anfrage verwerfen
-    if (past.length) showSuggest(past); else hideSuggest();
+    // Ohne passende frühere Suchen bleibt die bisherige Liste stehen, bis Google antwortet (wie bei Google selbst) –
+    // sie bei jedem Buchstaben zu schließen und neu aufzurollen, flackerte
+    if (past.length) showSuggest(past); else if (!q) hideSuggest();
     if (!q) return;
     suggestTimer = setTimeout(async () => {
       try {
@@ -1729,10 +1756,10 @@
         const list = res.ok ? await res.json() : [];
         if (seq !== suggestSeq || !editing()) return;
         const seen = new Set([...past.map((p) => p.text.toLowerCase()), ...(isRelated ? [lower] : [])]);
-        const more = list.filter((s) => !seen.has(s.toLowerCase())).slice(0, 7 - past.length)
+        const more = list.filter((s) => !seen.has(s.toLowerCase())).slice(0, SUGGEST_MAX - past.length)
           .map((text) => ({ text, kind: isRelated ? 'related' : 'suggest' }));
         showSuggest([...past, ...more]);
-      } catch { /* offline: einfach keine Vorschläge */ }
+      } catch { if (seq === suggestSeq && !past.length) hideSuggest(); } // offline: einfach keine Vorschläge
     }, isRelated ? 0 : 50);
   }
   input.addEventListener('input', () => { closeWheel(); refreshSuggest(input.value); warmUp(input.value); });
@@ -1974,16 +2001,34 @@
       });
       nodes.push(row);
     });
+    const before = suggestBox.classList.contains('open') ? suggestBox.offsetHeight : 0;
     suggestBox.replaceChildren(...nodes);
     markSelected();
     suggestPending = true;
     placeSuggest();
+    growSuggest(before);
+  }
+  // Kommen Zeilen dazu (erst frühere Suchen, kurz danach Googles Vorschläge), rollt die Liste nach unten weiter auf,
+  // statt zu springen – wie beim Öffnen per clip-path, nicht per opacity (siehe drop-in)
+  function growSuggest(before) {
+    const after = suggestBox.offsetHeight;
+    if (!before || after <= before || !suggestBox.classList.contains('open')) return;
+    if (suggestBox.getAnimations().some((a) => a.animationName === 'drop-in')) return; // rollt ohnehin noch auf
+    suggestBox.animate([{ clipPath: `inset(-40px -40px ${after - before}px -40px)` }, { clipPath: 'inset(-40px)' }],
+      { duration: 350, easing: 'cubic-bezier(.3, 1.2, .45, 1)' });
   }
 
   // Liste unter das Feld legen – fährt es gerade aus, erst wenn es seine Endbreite hat (slideDone)
   let suggestPending = false;
   function placeSuggest() {
     if (!suggestPending || address.classList.contains('resizing')) return;
+    // Über einer Webseite erst zusammen mit ihrem Bild aufrollen (pageShot ruft wieder auf) – sonst schiene kurz das
+    // Wallpaper durch. Kommt es nicht, nach SHOT_WAIT eben ohne.
+    if (!suggestBox.classList.contains('open') && shot && !shotReady() && !shot.late) {
+      const s = shot;
+      if (!s.wait) s.wait = setTimeout(() => { s.late = true; placeSuggest(); }, SHOT_WAIT);
+      return;
+    }
     suggestPending = false;
     const r = layoutRect(address);
     // Leiste links: Die Liste darf breiter als die Leiste sein und ragt dann über die Webseite
@@ -1991,7 +2036,7 @@
     Object.assign(suggestBox.style, { left: `${r.left}px`, top: `${r.bottom + 8}px`, width: `${width}px` });
     suggestBox.classList.add('open');
     reportOverlay();
-    scheduleInk();
+    updateInk(); // gleich im selben Bild: Über einer hellen Seite wäre die Schrift sonst kurz weiß
   }
   // Offene Liste folgt dem Feld, wenn sich das Fenster (und damit Lage oder Breite des Felds) ändert
   function followSuggest() {
@@ -2009,13 +2054,76 @@
   // Rust spart die Liste aus der Webseiten-Region aus, sonst läge die Seite darüber.
   // Layoutwerte statt getBoundingClientRect, damit die Einblend-Animation nicht mitgemessen wird.
   function reportOverlay() {
-    const open = suggestBox.classList.contains('open');
-    if (!open && upBox.classList.contains('open')) { reportUpdateOverlay(); return; } // das Modal bleibt ausgespart
-    send('overlay', {
-      rect: open ? { x: parseFloat(suggestBox.style.left), y: parseFloat(suggestBox.style.top),
-                     w: suggestBox.offsetWidth, h: suggestBox.offsetHeight, r: 18 } : null,
-    });
+    if (suggestBox.classList.contains('open')) { coverPage(suggestBox, suggestMost()); return; }
+    if (favPanel.classList.contains('open')) { coverPage(favPanel); return; }
+    uncoverPage();
+    if (upBox.classList.contains('open')) { reportUpdateOverlay(); return; } // das Modal bleibt ausgespart
+    send('overlay', { rect: null });
   }
+
+  // ---------- Glas über der Webseite: Seitenbild und Schatten ----------
+  // Die Webseite ist ein eigenes Fenster über der Oberfläche. Wo Vorschläge oder Favoriten über ihr liegen, spart
+  // Rust sie aus (overlay) – durch das Loch sähe man nur das Wallpaper. Deshalb liegt dort ein Bild der Seite, das
+  // die Unschärfe des Glases verwischt. Ist es da, wird das Loch um SHADOW_ROOM größer: Der Schatten fällt auf die Seite.
+  // Das Bild liegt, sobald es da ist, schon ganz unter der Seite (unsichtbar, die echte Seite liegt darüber): Öffnet
+  // sich das Loch, ist es längst dekodiert und gezeichnet – sonst blitzte dort kurz das Wallpaper auf.
+  const SHADOW_ROOM = 40, SHOT_WAIT = 250, pageShot = $('page-shot');
+  let shot = null, shotSeq = 0, covered = null, dropTimer = 0;
+  const shotReady = () => !!shot && shot.panes.every((p) => shot.images.has(p.id));
+  function requestPageShot() {
+    const panes = (state.panes || []).filter((p) => hasPage(p.id));
+    if (!panes.length) { dropShot(); return; }
+    clearTimeout(dropTimer);
+    shot = { token: ++shotSeq, panes, images: new Map() };
+    send('page_shot', { token: shot.token });
+  }
+  window.pageShot = async (token, id, image) => {
+    if (shot?.token !== token || !image) return;
+    const img = new Image();
+    img.src = image;
+    try { await img.decode(); } catch { return; }
+    if (shot?.token !== token) return;
+    shot.images.set(id, img);
+    if (!shotReady()) return;
+    pageShot.replaceChildren(...shot.panes.map((p) => {
+      const part = document.createElement('div');
+      Object.assign(part.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px`,
+        backgroundImage: `url("${shot.images.get(p.id).src}")` });
+      return part;
+    }));
+    if (covered) { coverPage(covered, covered === suggestBox ? suggestMost() : 0); updateInk(); }
+    else if (suggestPending) placeSuggest(); // die Liste hat auf das Bild gewartet
+  };
+  // Bild nicht mehr nötig – erst etwas später entfernen: Schließt sich gerade ein Loch, läge es bis dahin noch darin
+  function dropShot() {
+    shot = null;
+    clearTimeout(dropTimer);
+    dropTimer = setTimeout(() => { if (!shot) pageShot.replaceChildren(); }, 150);
+  }
+  // Seitenbild unter der Mitte von `el`, sofern es gerade dahinter liegt (für die Schriftfarbe, updateInk)
+  function pageBehind(el, r) {
+    if (el !== covered || !shotReady()) return null;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const p = shot.panes.find((q) => cx >= q.x && cx <= q.x + q.w && cy >= q.y && cy <= q.y + q.h);
+    return p && { ...p, img: shot.images.get(p.id) };
+  }
+  // Glasfläche `el` (offen, Lage in left/top) aus der Seite aussparen; mit fertigem Seitenbild samt Schattenrand –
+  // und gleich so hoch, wie sie höchstens wird (`most`): Wächst die Liste, muss Rust die Aussparung nicht erst
+  // nachziehen (bis dahin läge die echte Seite ein, zwei Bilder lang über den neuen Zeilen). Darunter liegt ja das Bild.
+  function coverPage(el, most = 0) {
+    covered = el;
+    const ready = shotReady();
+    const [x, y, w] = [parseFloat(el.style.left), parseFloat(el.style.top), el.offsetWidth];
+    const h = ready ? Math.max(el.offsetHeight, most) : el.offsetHeight;
+    const m = ready ? SHADOW_ROOM : 0;
+    send('overlay', { rect: { x: x - m, y: y - m, w: w + 2 * m, h: h + 2 * m, r: 18 + m } });
+  }
+  function uncoverPage() {
+    if (covered) scheduleInk();
+    covered = null;
+  }
+  // Neue Fenstergröße: Die Seiten liegen anders – das alte Bild passte nicht mehr
+  addEventListener('resize', () => { dropShot(); if (covered) coverPage(covered); });
 
   // Position aus dem Layout, ohne laufende Animationen: Beim Wechsel zum Startbildschirm gleitet das
   // Suchfeld noch in die Mitte, getBoundingClientRect() würde die Zwischenposition liefern.
@@ -2125,14 +2233,14 @@
       ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
       : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
-    send('overlay', { rect: { x: parseFloat(favPanel.style.left), y: parseFloat(favPanel.style.top),
-                              w: favPanel.offsetWidth, h: favPanel.offsetHeight, r: 18 } });
+    coverPage(favPanel);
     scheduleInk();
   }
   function openFavorites() {
     clearTimeout(favTimer);
     if (favPanel.classList.contains('open')) return;
     closeSuggest();
+    if (!editing()) requestPageShot(); // (beim Suchen gibt es schon eins)
     favPanel.classList.add('open');
     favBtn.classList.add('open');
     renderFavorites();
@@ -2142,6 +2250,8 @@
     if (!favPanel.classList.contains('open')) return;
     favPanel.classList.remove('open');
     favBtn.classList.remove('open');
+    uncoverPage();
+    if (!editing()) dropShot();
     if (upBox.classList.contains('open')) reportUpdateOverlay();
     else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
   }

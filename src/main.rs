@@ -109,6 +109,8 @@ enum UserEvent {
     ClipboardPage(u32, String),
     /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
     ClipboardBackdrop(u64, String),
+    /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
+    PageShot(u64, u32, String),
     /// Zeichnen auf einer Webseite: Tab, Adresse des sendenden Dokuments, JSON aus drawing-content.js.
     Drawing(u32, String, String),
     /// Ein Web-Postfach meldet Ungelesene und neueste Mails: Tab, Adresse des Dokuments, JSON aus mail-content.js.
@@ -768,7 +770,7 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
-        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "chrome_hidden" | "chrome_side" | "animation_rate") {
+        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "page_shot" | "chrome_hidden" | "chrome_side" | "animation_rate") {
             if let Some((token, _)) = self.resize_preview.take() {
                 self.layout();
                 let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
@@ -905,6 +907,19 @@ impl Browser {
                         if !matches!(result, Some(Ok(()))) {
                             let _ = self.proxy.send_event(UserEvent::ResizeSnapshot(token, id, String::new()));
                         }
+                    }
+                }
+            }
+            // Vorschläge oder Favoriten liegen über einer Webseite: Die Oberfläche legt ein Bild der Seiten hinter ihr
+            // Glas – durch die Aussparung in der Seite sähe man sonst nur das Wallpaper
+            "page_shot" => {
+                let token = msg["token"].as_u64().unwrap_or_default();
+                for (i, _) in self.panes() {
+                    let (id, proxy) = (self.tabs[i].id, self.proxy.clone());
+                    if let Some(wv) = &self.tabs[i].webview {
+                        let _ = resize_preview::capture(&wv.webview(), move |image| {
+                            let _ = proxy.send_event(UserEvent::PageShot(token, id, image));
+                        });
                     }
                 }
             }
@@ -1060,6 +1075,9 @@ impl Browser {
                 if !css.is_empty() {
                     let _ = wv.evaluate_script(&format!("window.__glassHide?.({})", json!(css)));
                 }
+            }
+            UserEvent::PageShot(token, id, image) => {
+                let _ = self.ui.evaluate_script(&format!("window.pageShot?.({token},{id},{})", json!(image)));
             }
             UserEvent::ResizeSnapshot(token, id, image) => {
                 if self.resize_preview.map(|p| p.0) == Some(token) {
