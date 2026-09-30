@@ -531,6 +531,77 @@
   .find-key svg { width: 14px; height: 14px; }
   .find-key:is(:hover, .vh):not(:disabled) { background: rgba(255, 255, 255, .12); color: var(--label); }
   .find-key:disabled { opacity: .35; }
+  /* ---------- Gemeinsame Bausteine der Tafeln: Schalter und Auswahl ---------- */
+  .switch {
+    position: relative; width: 38px; height: 22px; flex: none; border-radius: 11px; background: rgba(255, 255, 255, .16);
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .12); transition: background-color .2s var(--ease);
+  }
+  .switch::after {
+    content: ""; position: absolute; left: 2px; top: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .35); transition: transform .3s var(--spring);
+  }
+  .switch.on { background: #30d158; }
+  .switch.on::after { transform: translateX(16px); }
+  .seg { display: flex; flex: none; padding: 2px; border-radius: 9px; background: rgba(255, 255, 255, .08); }
+  .seg > button { height: 22px; padding: 0 9px; border-radius: 7px; font-size: 11.5px; color: var(--label-2); transition: background-color .15s, color .15s; }
+  .seg > button.on { background: rgba(255, 255, 255, .2); color: var(--label); box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
+  .seg > button:not(.on):is(:hover, .vh) { color: var(--label); }
+  .pill-btn {
+    height: 26px; padding: 0 11px; border-radius: 13px; flex: none; font-size: 12px; color: var(--label);
+    background: rgba(255, 255, 255, .1); transition: background-color .15s, color .15s;
+  }
+  .pill-btn:is(:hover, .vh) { background: rgba(255, 255, 255, .17); }
+  .pill-btn.danger { color: #ff8a80; }
+  .pill-btn.danger:is(:hover, .vh) { background: rgba(255, 110, 100, .16); }
+  .pill-btn.armed { background: #ff453a; color: #fff; }
+  /* ---------- Seiteninfo (Schloss rechts oben) ---------- */
+  #site-info {
+    position: fixed; z-index: 21; display: none; width: 330px; padding: 14px; border-radius: 18px;
+    background: linear-gradient(180deg, rgba(44, 46, 56, .93), rgba(28, 30, 38, .95));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 50px -12px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #site-info.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
+  .si-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; }
+  .si-ic { width: 34px; height: 34px; flex: none; border-radius: 11px; display: grid; place-items: center; color: #fff; }
+  .si-ic svg { width: 16px; height: 16px; }
+  .si-ic.secure { background: linear-gradient(180deg, #3ed16a, #20a84a); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+  .si-ic.insecure { background: linear-gradient(180deg, #ffb340, #f08a00); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+  .si-host { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .si-sub { margin-top: 2px; font-size: 12px; color: var(--label-3); }
+  .si-card { border-radius: 12px; background: rgba(255, 255, 255, .05); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .06); }
+  .si-card + .si-card, .si-card + .si-title { margin-top: 10px; }
+  .si-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px 6px 12px; }
+  .si-row + .si-row { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); }
+  .si-row > .si-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .si-note { font-size: 11.5px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .si-title { padding: 0 4px 6px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
+  .si-empty { padding: 10px 12px; font-size: 12px; color: var(--label-3); }
+  .si-zoom { display: flex; align-items: center; gap: 2px; }
+  .si-zoom > button { height: 26px; min-width: 26px; border-radius: 13px; display: grid; place-items: center; color: var(--label-2); font-variant-numeric: tabular-nums; }
+  .si-zoom > button:is(:hover, .vh) { background: rgba(255, 255, 255, .12); color: var(--label); }
+  .si-zoom > .si-zoom-val { min-width: 54px; font-size: 12px; color: var(--label); }
+  .si-zoom svg { width: 12px; height: 12px; }
+  .si-foot { display: flex; justify-content: center; margin-top: 12px; }
+  .si-row .rm { opacity: .6; }
+  /* ---------- Einstellungen (Strg+,) ---------- */
+  #settings {
+    position: fixed; z-index: 30; left: 50%; top: 50%; display: none; flex-direction: column;
+    width: min(580px, calc(100vw - 48px)); height: min(640px, calc(100vh - 64px)); transform: translate(-50%, -50%);
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(42, 44, 55, .94), rgba(26, 28, 37, .96));
+    backdrop-filter: blur(30px) saturate(1.4) brightness(.8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 30px 80px -20px rgba(0, 0, 0, .7), 0 2px 10px rgba(0, 0, 0, .3);
+  }
+  #settings.open { display: flex; animation: settings-in .45s var(--spring); }
+  @keyframes settings-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.96); } }
+  .st-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 14px 8px 22px; }
+  .st-head > div { font-size: 17px; font-weight: 600; }
+  .st-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 22px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .2) transparent; }
+  .st-body .si-title { padding: 18px 6px 7px; }
+  .st-body .si-row { min-height: 46px; padding: 7px 12px 7px 14px; }
+  .st-path { font-size: 11.5px; color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .st-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   /* ---------- Rechtsklick auf Webseiten ---------- */
   #ctx-menu {
     position: fixed; z-index: 40; display: none; min-width: 230px; max-width: 320px; padding: 5px; border-radius: 13px;
@@ -923,6 +994,7 @@
     <div class="side right">
     <button class="dl" id="btn-downloads" title="Downloads" aria-haspopup="dialog" hidden><svg viewBox="0 0 16 16"><circle class="dl-track" cx="8" cy="8" r="6.6"/><circle class="dl-ring" cx="8" cy="8" r="6.6" pathLength="100" stroke-dasharray="0 100"/><path class="dl-arrow" d="M8 4.6v6M5.6 8.3 8 10.7l2.4-2.4"/></svg></button>
     <div class="glass capsule tools" id="page-tools" data-lens data-button-group hidden>
+      <button class="key" id="btn-site" title="Seiteninfo"></button>
       <button class="key" id="btn-draw"></button>
     </div>
     <div class="glass capsule tools" id="tools" data-lens data-button-group hidden>
@@ -937,6 +1009,7 @@
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
     <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span><span id="toolbar-pin-label">Leiste dauerhaft anzeigen</span></button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
+    <button id="toolbar-settings" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Einstellungen …</button>
   </div>
   <main id="stage">
   </main>
@@ -956,6 +1029,11 @@
   <div id="favs" class="glass"></div>
   <div id="downloads" class="glass" role="dialog" aria-label="Downloads"></div>
   <div id="ctx-menu" role="menu"></div>
+  <div id="site-info" role="dialog" aria-label="Seiteninfo"></div>
+  <div id="settings" role="dialog" aria-labelledby="st-title">
+    <div class="st-head"><div id="st-title">Einstellungen</div><button class="find-key" id="st-close" title="Schließen (Esc)"><svg viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg></button></div>
+    <div class="st-body" id="st-body"></div>
+  </div>
   <div id="perm" role="alertdialog" aria-labelledby="perm-text">
     <div class="perm-head"><span class="perm-ic"></span><div class="perm-text" id="perm-text"></div></div>
     <div class="perm-actions"><button class="up-btn" id="perm-deny">Nicht erlauben</button><button class="up-btn primary" id="perm-allow">Erlauben</button></div>
@@ -1022,6 +1100,10 @@
     pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
     penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
     doc: '<path d="M4.6 2h4.6L12 4.8v8.7c0 .3-.2.5-.5.5h-6.9a.5.5 0 0 1-.5-.5v-11c0-.3.2-.5.5-.5z"/><path d="M9.2 2v2.8H12"/>',
+    lockOpen: '<rect x="3.8" y="7.2" width="8.4" height="6.3" rx="1.7" fill="currentColor" stroke="none"/><path d="M5.6 7.2V5.4a2.4 2.4 0 0 1 4.6-.9"/>',
+    warn: '<path d="M8 2.6 14 13H2z"/><path d="M8 6.6v2.8M8 11.2v.1"/>',
+    minus: '<path d="M3.5 8h9"/>',
+    plus: '<path d="M8 3.5v9M3.5 8h9"/>',
     camera: '<rect x="1.8" y="4.4" width="9" height="7.2" rx="1.8"/><path d="m10.8 7.2 3.4-2v5.6l-3.4-2"/>',
     mic: '<rect x="5.8" y="1.8" width="4.4" height="7.6" rx="2.2"/><path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2"/>',
     location: '<path d="M8 14.2s-4.6-4.1-4.6-7.6a4.6 4.6 0 0 1 9.2 0c0 3.5-4.6 7.6-4.6 7.6z"/><circle cx="8" cy="6.6" r="1.6"/>',
@@ -1583,6 +1665,8 @@
     renderShield();
     renderDraw();
     renderZoom();
+    renderSiteBtn();
+    if (sitePanel.classList.contains('open')) renderSiteInfo();
   }
 
   // ---------- Rechts oben: Zeichnen, nur auf Webseiten ----------
@@ -2581,9 +2665,236 @@
   $('perm-deny').addEventListener('click', () => permFor && send('permission', { id: permFor.id, value: 'deny' }));
   addEventListener('resize', placePerm);
 
+  // ---------- Seiteninfo (Schloss rechts oben; Rust: Browser::site_info) ----------
+  const siteBtn = $('btn-site'), sitePanel = $('site-info');
+  const KIND_NAME = {
+    camera: 'Kamera', microphone: 'Mikrofon', geolocation: 'Standort', notifications: 'Mitteilungen',
+    clipboard: 'Zwischenablage', downloads: 'Mehrere Downloads', midi: 'MIDI-Geräte', windows: 'Fensterverwaltung',
+    fonts: 'Schriften', files: 'Dateien bearbeiten', sensors: 'Bewegungssensoren',
+  };
+  let siteInfo = null;
+  function renderSiteBtn() {
+    const tab = activeTab(), secure = /^https:/.test(tab?.url || '');
+    const key = secure ? 'lock' : 'warn';
+    if (siteBtn.dataset.key !== key) { siteBtn.dataset.key = key; siteBtn.innerHTML = svg(key); }
+    siteBtn.title = secure ? 'Seiteninfo – Verbindung ist sicher' : 'Seiteninfo – Verbindung ist nicht sicher';
+  }
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text != null ? { textContent: text } : {});
+  // Schaltfläche, die beim ersten Klick nachfragt („Wirklich …?“) und erst beim zweiten auslöst
+  function confirmButton(label, ask, run, cls = 'pill-btn danger') {
+    const b = el('button', cls, label);
+    let armed = 0;
+    b.addEventListener('click', () => {
+      if (!armed) { b.textContent = ask; b.classList.add('armed'); armed = setTimeout(() => { armed = 0; b.textContent = label; b.classList.remove('armed'); }, 4000); return; }
+      clearTimeout(armed); armed = 0; b.classList.remove('armed');
+      run(b);
+    });
+    return b;
+  }
+  function permissionRow(p, onChange, extra) {
+    const row = el('div', 'si-row');
+    const col = el('div', 'st-col');
+    col.append(el('span', 'si-label', KIND_NAME[p.kind] || p.kind));
+    if (extra) col.append(el('span', 'st-path', extra));
+    const seg = el('div', 'seg');
+    for (const [label, allow] of [['Erlauben', true], ['Blockieren', false]]) {
+      const b = el('button', p.allow === allow ? 'on' : '', label);
+      b.addEventListener('click', () => onChange(allow));
+      seg.append(b);
+    }
+    const rm = el('button', 'rm');
+    rm.title = 'Vergessen – beim nächsten Mal wieder fragen';
+    rm.innerHTML = svg('close');
+    rm.addEventListener('click', () => onChange(null));
+    row.append(col, seg, rm);
+    return row;
+  }
+  function renderSiteInfo() {
+    const info = siteInfo, tab = activeTab();
+    if (!info || !tab) return;
+    const head = el('div', 'si-head');
+    const ic = el('span', `si-ic ${info.secure ? 'secure' : 'insecure'}`);
+    ic.innerHTML = svg(info.secure ? 'lock' : 'lockOpen');
+    const text = el('div');
+    text.style.minWidth = '0';
+    text.append(el('div', 'si-host', info.host), el('div', 'si-sub', info.secure ? 'Verbindung ist sicher' : 'Verbindung ist nicht sicher – Eingaben sind für andere lesbar'));
+    head.append(ic, text);
+
+    const general = el('div', 'si-card');
+    const zoomRow = el('div', 'si-row');
+    const zoom = el('div', 'si-zoom');
+    const zb = (icon, cmd, title) => { const b = el('button'); b.innerHTML = svg(icon); b.title = title; b.addEventListener('click', () => send(cmd)); return b; };
+    const val = el('button', 'si-zoom-val', `${Math.round((tab.zoom || 1) * 100)} %`);
+    val.title = 'Auf 100 % zurücksetzen';
+    val.addEventListener('click', () => send('zoom_reset'));
+    zoom.append(zb('minus', 'zoom_out', 'Verkleinern (Strg+−)'), val, zb('plus', 'zoom_in', 'Vergrößern (Strg++)'));
+    zoomRow.append(el('span', 'si-label', 'Zoom'), zoom);
+    const adRow = el('div', 'si-row');
+    const sw = el('button', `switch${tab.adblock ? ' on' : ''}`);
+    sw.title = tab.adblock ? 'Werbeblocker auf dieser Website ausschalten' : 'Werbeblocker einschalten';
+    sw.addEventListener('click', () => { send('adblock_toggle'); setTimeout(() => send('site_info'), 150); });
+    adRow.append(el('span', 'si-label', 'Werbeblocker'), el('span', 'si-note', tab.adblock ? `${tab.blocked} blockiert` : 'aus'), sw);
+    general.append(zoomRow, adRow);
+
+    const perms = el('div', 'si-card');
+    for (const p of info.permissions) perms.append(permissionRow(p, (allow) => send('site_permission', { value: p.kind, allow })));
+    if (!info.permissions.length) perms.append(el('div', 'si-empty', 'Diese Website hat noch nach keiner Berechtigung gefragt.'));
+
+    const foot = el('div', 'si-foot');
+    foot.append(confirmButton('Cookies und Websitedaten löschen', 'Wirklich löschen? Du wirst abgemeldet.', (b) => {
+      send('site_clear_data'); b.textContent = 'Gelöscht';
+    }));
+    sitePanel.replaceChildren(head, general, el('div', 'si-title', 'Berechtigungen'), perms, foot);
+    placeSiteInfo();
+  }
+  function placeSiteInfo() {
+    if (!sitePanel.classList.contains('open')) return;
+    const r = layoutRect(siteBtn), up = sideLeft();
+    Object.assign(sitePanel.style, up
+      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - sitePanel.offsetHeight)}px` }
+      : { left: `${Math.max(8, Math.min(innerWidth - sitePanel.offsetWidth - 8, r.left + r.width / 2 + 40 - sitePanel.offsetWidth))}px`, top: `${r.bottom + 8}px` });
+    send('overlay', { key: 'site', rect: { x: parseFloat(sitePanel.style.left), y: parseFloat(sitePanel.style.top), w: sitePanel.offsetWidth, h: sitePanel.offsetHeight, r: 18 } });
+  }
+  window.setSiteInfo = (info) => { siteInfo = info; if (sitePanel.classList.contains('open')) renderSiteInfo(); };
+  function openSiteInfo() {
+    closeSuggest(); closeFavorites(); closeDownloads(); closeHistory(); closeToolbarMenu();
+    sitePanel.classList.add('open');
+    siteBtn.classList.add('on');
+    send('site_info');
+  }
+  function closeSiteInfo() {
+    if (!sitePanel.classList.contains('open')) return;
+    sitePanel.classList.remove('open');
+    siteBtn.classList.remove('on');
+    send('overlay', { key: 'site', rect: null });
+  }
+  siteBtn.addEventListener('click', () => (sitePanel.classList.contains('open') ? closeSiteInfo() : openSiteInfo()));
+  document.addEventListener('pointerdown', (e) => { if (!sitePanel.contains(e.target) && !siteBtn.contains(e.target)) closeSiteInfo(); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sitePanel.classList.contains('open')) { e.preventDefault(); closeSiteInfo(); } });
+  window.addEventListener('blur', closeSiteInfo);
+  addEventListener('resize', placeSiteInfo);
+
+  // ---------- Einstellungen (Strg+, oder Rechtsklick auf die Leiste; Rust: settings.rs) ----------
+  const settingsBox = $('settings'), settingsBody = $('st-body');
+  let settingsData = null;
+  function switchRow(label, on, toggle, note) {
+    const row = el('div', 'si-row');
+    const col = el('div', 'st-col');
+    col.append(el('span', 'si-label', label));
+    if (note) col.append(el('span', 'st-path', note));
+    const sw = el('button', `switch${on ? ' on' : ''}`);
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(on));
+    sw.addEventListener('click', () => { toggle(!sw.classList.contains('on')); sw.classList.toggle('on'); sw.setAttribute('aria-checked', String(sw.classList.contains('on'))); });
+    row.append(col, sw);
+    return row;
+  }
+  function buttonRow(label, button, note) {
+    const row = el('div', 'si-row');
+    const col = el('div', 'st-col');
+    col.append(el('span', 'si-label', label));
+    if (note) col.append(el('span', 'st-path', note));
+    row.append(col, ...[button].flat());
+    return row;
+  }
+  const card = (...rows) => { const c = el('div', 'si-card'); c.append(...rows); return c; };
+  function renderSettings() {
+    const d = settingsData;
+    if (!d) return;
+    const scroll = settingsBody.scrollTop;
+    const nodes = [];
+    nodes.push(el('div', 'si-title', 'Start'), card(
+      switchRow('Tabs der letzten Sitzung wieder öffnen', d.restore, (on) => send('settings_restore', { on }), 'Beim Start sind alle Tabs wieder da, geladen wird erst beim Anschauen'),
+    ));
+    const pin = $('toolbar-pin');
+    nodes.push(el('div', 'si-title', 'Leiste'), card(
+      switchRow('Leiste links', sidePref, () => $('toolbar-side').click()),
+      switchRow($('toolbar-pin-label').textContent, pin.getAttribute('aria-checked') === 'true', () => { pin.click(); setTimeout(renderSettings, 50); }),
+    ));
+    const change = el('button', 'pill-btn', 'Ändern …');
+    change.addEventListener('click', () => send('settings_download_dir'));
+    const dirButtons = [change];
+    if (d.customDir) {
+      const reset = el('button', 'pill-btn', 'Standard');
+      reset.title = 'Wieder den Downloads-Ordner von Windows verwenden';
+      reset.addEventListener('click', () => send('settings_download_default'));
+      dirButtons.unshift(reset);
+    }
+    nodes.push(el('div', 'si-title', 'Downloads'), card(
+      buttonRow('Speicherort', dirButtons, d.downloadDir),
+      buttonRow('Download-Liste', confirmButton('Leeren', 'Wirklich leeren?', (b) => { send('download_clear'); b.textContent = 'Geleert'; }, 'pill-btn')),
+    ));
+    nodes.push(el('div', 'si-title', 'Datenschutz'), card(
+      buttonRow('Verlauf', confirmButton('Löschen', 'Wirklich löschen?', (b) => { clearSearchHistories(); send('history_clear'); b.textContent = 'Gelöscht'; }), 'Besuchte Seiten und frühere Suchen'),
+      buttonRow('Cookies und Websitedaten', confirmButton('Löschen', 'Überall abmelden?', (b) => { clearSearchHistories(); send('clear_browsing_data'); b.textContent = 'Gelöscht'; }), 'Anmeldungen, Cache und gespeicherte Daten aller Websites – dazu der Verlauf'),
+    ));
+    const ads = card();
+    for (const host of d.adblockOff) {
+      const rm = el('button', 'rm');
+      rm.title = 'Werbeblocker hier wieder einschalten';
+      rm.innerHTML = svg('close');
+      rm.addEventListener('click', () => send('adblock_site', { value: host }));
+      const row = el('div', 'si-row');
+      row.append(el('span', 'si-label', host), rm);
+      ads.append(row);
+    }
+    if (!d.adblockOff.length) ads.append(el('div', 'si-empty', 'Der Werbeblocker ist auf allen Websites an. Ausschalten lässt er sich über das Schild im Adressfeld.'));
+    nodes.push(el('div', 'si-title', 'Werbeblocker ist aus auf'), ads);
+    const perms = card();
+    for (const p of d.permissions) {
+      perms.append(permissionRow(p, (allow) => send('site_permission', { value: p.kind, allow, origin: p.origin }), p.origin.replace(/^https?:\/\//, '')));
+    }
+    if (d.permissions.length) {
+      const all = confirmButton('Alle zurücksetzen', 'Wirklich alle?', () => send('permissions_clear'));
+      const foot = el('div', 'si-row');
+      foot.style.justifyContent = 'flex-end';
+      foot.append(all);
+      perms.append(foot);
+    } else perms.append(el('div', 'si-empty', 'Noch keine Website hat nach einer Berechtigung gefragt.'));
+    nodes.push(el('div', 'si-title', 'Website-Berechtigungen'), perms);
+    nodes.push(el('div', 'si-title', 'Über Glass'), card(buttonRow(d.build ? `Glass · Build ${d.build}` : 'Glass · Entwicklerversion',
+      [], d.build ? 'Aktualisiert sich automatisch von GitHub' : 'Ohne automatische Updates')));
+    settingsBody.replaceChildren(...nodes);
+    settingsBody.scrollTop = scroll;
+  }
+  function clearSearchHistories() {
+    try {
+      for (const k of Object.keys(localStorage)) if (/^glass\.(searchHistory|promptHistory\.)/.test(k)) localStorage.removeItem(k);
+    } catch { /* egal */ }
+    for (const k of Object.keys(histories)) delete histories[k];
+  }
+  const reportSettingsOverlay = () => {
+    const r = settingsBox.getBoundingClientRect();
+    send('overlay', { key: 'settings', rect: { x: r.left, y: r.top, w: r.width, h: r.height, r: 22 } });
+  };
+  window.setSettings = (d) => { settingsData = d; renderSettings(); };
+  function openSettings() {
+    input.blur(); closeSuggest(); closeFavorites(); closeDownloads(); closeHistory(); closeSiteInfo(); closeToolbarMenu();
+    settingsBox.classList.add('open');
+    document.body.classList.add('modal');
+    send('settings_get');
+    // Erst nach dem Aufspringen messen (die Animation skaliert)
+    reportSettingsOverlay();
+    setTimeout(reportSettingsOverlay, 460);
+  }
+  function closeSettings() {
+    if (!settingsBox.classList.contains('open')) return;
+    settingsBox.classList.remove('open');
+    document.body.classList.remove('modal');
+    send('overlay', { key: 'settings', rect: null });
+  }
+  $('st-close').addEventListener('click', closeSettings);
+  $('toolbar-settings').addEventListener('click', () => { closeToolbarMenu(); openSettings(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && settingsBox.classList.contains('open')) { e.preventDefault(); closeSettings(); } });
+  document.addEventListener('pointerdown', (e) => {
+    if (settingsBox.classList.contains('open') && !settingsBox.contains(e.target) && !$('toolbar').contains(e.target)) closeSettings();
+  }, true);
+  addEventListener('resize', () => { if (settingsBox.classList.contains('open')) reportSettingsOverlay(); });
+
   // Tastenkürzel, die eine Tafel öffnen (auch aus Webseiten, über Rust)
   window.uiAction = (what) => {
     if (what === 'find') openFind();
+    else if (what === 'settings') settingsBox.classList.contains('open') ? closeSettings() : openSettings();
     else if (what === 'history') histPanel.classList.contains('open') ? closeHistory() : openHistory();
     else if (what === 'downloads') {
       showChrome();
@@ -3128,7 +3439,7 @@
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || activeTab()?.drawing // beim Zeichnen bleibt der Stift zum Beenden sichtbar
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
-    || [suggestBox, favPanel, dlPanel, histPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel, histPanel, sitePanel].some((el) => el.classList.contains('open'))
     || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
     hidden = hidden && !chromeKept();
@@ -3224,9 +3535,11 @@
       else if (k === 'r') cmd = 'reload';
       else if (k === 'tab') cmd = e.shiftKey ? 'prev_tab' : 'next_tab';
       else if (k === 'l') { e.preventDefault(); window.focusAddress(); return; }
+      else if (k === ',') { e.preventDefault(); window.uiAction('settings'); return; }
     } else if (e.altKey && k === 'arrowleft') cmd = 'back';
     else if (e.altKey && k === 'arrowright') cmd = 'forward';
     else if (k === 'f5') cmd = 'reload';
+    else if (k === 'f11') cmd = 'window_fullscreen';
     if (cmd) { e.preventDefault(); send(cmd); }
   });
 

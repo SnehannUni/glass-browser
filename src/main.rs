@@ -15,6 +15,7 @@ mod history;
 mod sites;
 mod page_menu;
 mod permissions;
+mod settings;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -273,6 +274,7 @@ struct Browser {
     menus: page_menu::Shared,
     /// Wartende Berechtigungsanfragen.
     permissions: permissions::Shared,
+    settings: settings::Settings,
 }
 
 impl Browser {
@@ -760,6 +762,37 @@ impl Browser {
         self.show_permission();
     }
 
+    /// Werbeblocker-Ausnahmen haben sich geändert: allen Seiten die neue Liste geben.
+    fn refresh_adblock_flags(&self) {
+        for tab in &self.tabs {
+            if let Some(wv) = &tab.webview {
+                set_adblock_flag(wv, &tab.adblock_flag);
+            }
+        }
+    }
+
+    /// Seiteninfo (Schloss rechts oben): Verbindung, Zoom, Werbeblocker und Berechtigungen der aktiven Seite.
+    fn site_info(&self) {
+        let Some(tab) = self.tabs.get(self.active).filter(|t| t.shows_page()) else { return };
+        let info = json!({
+            "host": sites::host(&tab.url), "origin": sites::origin(&tab.url), "secure": tab.url.starts_with("https://"),
+            "zoom": tab.zoom, "adblock": !blocker::is_allowed(&tab.url), "blocked": tab.blocked, "private": tab.private,
+            "permissions": self.sites.permissions(Some(&tab.url)),
+        });
+        let _ = self.ui.evaluate_script(&format!("window.setSiteInfo?.({info})"));
+    }
+
+    /// Stand für das Einstellungsfenster.
+    fn settings_info(&self) {
+        let download_dir = self.settings.download_dir.clone().unwrap_or_else(|| profile_download_dir(&self.ui.webview()));
+        let info = json!({
+            "restore": self.settings.restore_session, "downloadDir": download_dir, "customDir": self.settings.download_dir.is_some(),
+            "adblockOff": blocker::allowed_sites(), "permissions": self.sites.permissions(None),
+            "build": update::current_build(),
+        });
+        let _ = self.ui.evaluate_script(&format!("window.setSettings?.({info})"));
+    }
+
     /// Rechtsklick-Menü einer Webseite an die Oberfläche: Stelle in Fensterkoordinaten umrechnen.
     fn show_context_menu(&mut self, id: u32, mut menu: Value) {
         let menu_id = menu["menu"].as_u64().unwrap_or_default() as u32;
@@ -808,6 +841,10 @@ impl Browser {
                     page_menu::watch(&wv.webview(), &self.menus, move |menu| { let _ = proxy.send_event(UserEvent::ContextMenu(id, menu)); });
                     let proxy = self.proxy.clone();
                     permissions::watch(&wv.webview(), id, &self.permissions, move |request| { let _ = proxy.send_event(UserEvent::Permission(request)); });
+                    // Private Tabs haben ein eigenes Profil – auch dort gilt der gewählte Download-Ordner
+                    if tab.private {
+                        set_download_dir(&wv.webview(), self.settings.download_dir.as_deref());
+                    }
                     tab.zoom = self.sites.zoom(&url);
                     tab.zoom_host = sites::host(&url);
                     let _ = wv.zoom(tab.zoom);
@@ -1049,6 +1086,87 @@ impl Browser {
                     }
                 }
             }
+            // ---- Seiteninfo ----
+            "site_info" => self.site_info(),
+            // Antwort ändern (`allow`: true/false) oder vergessen (null); ohne `origin` für die aktive Seite
+            "site_permission" => {
+                let url = msg["origin"].as_str().map(str::to_owned).or_else(|| self.tabs.get(self.active).map(|t| t.url.clone()));
+                if let Some(url) = url {
+                    self.sites.set_permission(&url, value, msg["allow"].as_bool());
+                }
+                if msg["origin"].is_string() { self.settings_info() } else { self.site_info() }
+            }
+            // Cookies und gespeicherte Daten der aktiven Website löschen, dann neu laden
+            "site_clear_data" => {
+                if let Some(tab) = self.tabs.get(self.active).filter(|t| t.shows_page()) {
+                    let params = json!({ "origin": sites::origin(&tab.url), "storageTypes": "all" }).to_string();
+                    if let Some(wv) = &tab.webview {
+                        let done = webview2_com::CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+                        unsafe {
+                            let _ = wv.webview().CallDevToolsProtocolMethod(
+                                &windows::core::HSTRING::from("Storage.clearDataForOrigin"), &windows::core::HSTRING::from(params), &done);
+                        }
+                        let _ = wv.reload();
+                    }
+                }
+            }
+            // ---- Einstellungen ----
+            "settings" => {
+                let _ = self.ui.focus();
+                let _ = self.ui.evaluate_script("window.uiAction?.('settings')");
+            }
+            "settings_get" => self.settings_info(),
+            "settings_restore" => {
+                self.settings.restore_session = msg["on"].as_bool().unwrap_or(true);
+                self.settings.save();
+            }
+            "settings_download_dir" => {
+                let current = self.settings.download_dir.clone().unwrap_or_else(|| profile_download_dir(&self.ui.webview()));
+                if let Some(dir) = settings::pick_folder(self.window.hwnd() as isize, &current) {
+                    self.settings.download_dir = Some(dir);
+                    self.settings.save();
+                    self.apply_download_dir();
+                }
+                self.settings_info();
+            }
+            "settings_download_default" => {
+                self.settings.download_dir = None;
+                self.settings.save();
+                self.apply_download_dir();
+                self.settings_info();
+            }
+            "adblock_site" => {
+                blocker::toggle(&format!("https://{value}/"));
+                self.refresh_adblock_flags();
+                self.settings_info();
+                self.sync_ui();
+            }
+            "permissions_clear" => {
+                self.sites.clear_permissions();
+                self.settings_info();
+            }
+            // Cookies, Cache und gespeicherte Daten aller Websites (normales Profil), dazu der Verlauf
+            "clear_browsing_data" => {
+                use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Profile2, ICoreWebView2_13};
+                use windows::core::Interface;
+                let profile = unsafe { self.ui.webview().cast::<ICoreWebView2_13>().and_then(|w| w.Profile()) };
+                if let Ok(p2) = profile.and_then(|p| p.cast::<ICoreWebView2Profile2>()) {
+                    let done = webview2_com::ClearBrowsingDataCompletedHandler::create(Box::new(|_| Ok(())));
+                    let _ = unsafe { p2.ClearBrowsingDataAll(&done) };
+                }
+                if let Ok(mut h) = self.history.lock() {
+                    h.clear();
+                }
+            }
+            // F11: ganzes Fenster über den Bildschirm, ohne Leiste
+            "window_fullscreen" => {
+                if self.fullscreen {
+                    self.active_script("document.exitFullscreen?.()");
+                }
+                self.apply_fullscreen(!self.fullscreen);
+                self.layout();
+                self.sync_ui();
+            }
             "permission" => {
                 if let Some(request) = id {
                     self.answer_permission(request, value == "allow");
@@ -1094,11 +1212,7 @@ impl Browser {
             "adblock_toggle" => {
                 let url = self.tabs[self.active].url.clone();
                 blocker::toggle(&url);
-                for tab in &self.tabs {
-                    if let Some(wv) = &tab.webview {
-                        set_adblock_flag(wv, &tab.adblock_flag);
-                    }
-                }
+                self.refresh_adblock_flags();
                 let tab = &mut self.tabs[self.active];
                 tab.blocked = 0;
                 if let Some(wv) = &tab.webview {
@@ -1298,7 +1412,7 @@ impl Browser {
                 }
                 let tab_number = cmd.len() == 5 && cmd.starts_with("tab_") && cmd.as_bytes()[4].is_ascii_digit() && cmd.as_bytes()[4] != b'0';
                 if tab_number || matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug" | "reopen_tab"
-                    | "history" | "downloads" | "favorite" | "find" | "zoom_in" | "zoom_out" | "zoom_reset") {
+                    | "history" | "downloads" | "favorite" | "find" | "zoom_in" | "zoom_out" | "zoom_reset" | "settings" | "window_fullscreen") {
                     return self.command(&cmd, &Value::Null);
                 }
             }
@@ -1662,6 +1776,52 @@ fn build_content_webview(
     Ok(webview)
 }
 
+/// Download-Ordner eines Profils setzen (`None`: der von Windows, also „Downloads“).
+fn set_download_dir(webview: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2, dir: Option<&str>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_13;
+    use windows::core::{Interface, HSTRING};
+    let dir = dir.map(str::to_owned).or_else(windows_downloads).unwrap_or_default();
+    if dir.is_empty() {
+        return;
+    }
+    if let Ok(profile) = unsafe { webview.cast::<ICoreWebView2_13>().and_then(|w| w.Profile()) } {
+        let _ = unsafe { profile.SetDefaultDownloadFolderPath(&HSTRING::from(dir)) };
+    }
+}
+
+/// Aktueller Download-Ordner eines Profils.
+fn profile_download_dir(webview: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2) -> String {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_13;
+    use windows::core::{Interface, PWSTR};
+    let mut path = PWSTR::null();
+    let ok = unsafe { webview.cast::<ICoreWebView2_13>().and_then(|w| w.Profile()).and_then(|p| p.DefaultDownloadFolderPath(&mut path)) };
+    if ok.is_ok() { webview2_com::take_pwstr(path) } else { windows_downloads().unwrap_or_default() }
+}
+
+/// Der Downloads-Ordner von Windows (kann vom Nutzer verlegt worden sein).
+fn windows_downloads() -> Option<String> {
+    use windows::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    unsafe {
+        let path = SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, None).ok()?;
+        let s = path.to_string().ok();
+        windows::Win32::System::Com::CoTaskMemFree(Some(path.0 as _));
+        s
+    }
+}
+
+impl Browser {
+    /// Gewählten Download-Ordner an alle Profile geben (normales und die privater Tabs).
+    fn apply_download_dir(&self) {
+        let dir = self.settings.download_dir.as_deref();
+        set_download_dir(&self.ui.webview(), dir);
+        for tab in self.tabs.iter().filter(|t| t.private) {
+            if let Some(wv) = &tab.webview {
+                set_download_dir(&wv.webview(), dir);
+            }
+        }
+    }
+}
+
 /// Zoom und Ton eines Tabs an Glass melden (Prozentanzeige im Adressfeld, Lautsprecher am Tab).
 fn watch_zoom_and_audio(webview: &WebView, id: u32, proxy: &EventLoopProxy<UserEvent>) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
@@ -1943,6 +2103,7 @@ fn main() -> wry::Result<()> {
     let session = session::Session::new(&data_dir);
     let history = history::History::load(&data_dir);
     let sites = sites::Sites::load(&data_dir);
+    let settings = settings::Settings::load(&data_dir);
     let h_protocol = history.clone();
     let mut web_context = WebContext::new(Some(data_dir));
 
@@ -2016,12 +2177,18 @@ fn main() -> wry::Result<()> {
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         clips: clipboard::History::default(), clip: None, drawings, downloads, parked: Vec::new(),
         session, closed: Vec::new(), history, sites, find_hooked: Default::default(),
-        menus: Default::default(), permissions: Default::default(),
+        menus: Default::default(), permissions: Default::default(), settings,
     };
+    if browser.settings.download_dir.is_some() {
+        browser.apply_download_dir();
+    }
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
-    // Tabs der letzten Sitzung zurückholen; nur der aktive lädt sofort
-    let (restored, active) = browser.session.load();
+    // Tabs der letzten Sitzung zurückholen (falls gewünscht); nur der aktive lädt sofort
+    let (mut restored, active) = browser.session.load();
+    if !browser.settings.restore_session {
+        restored.clear();
+    }
     for entry in restored {
         browser.insert_lazy(usize::MAX, entry);
     }

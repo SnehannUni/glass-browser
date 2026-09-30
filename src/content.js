@@ -3,6 +3,11 @@
 (() => {
   if (window.top !== window) return;
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'F11' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      window.ipc.postMessage('window_fullscreen');
+      return;
+    }
     if (!e.ctrlKey || e.altKey) return;
     const key = e.key.toLowerCase();
     if (key === 'f8' && e.shiftKey && e.repeat) { e.preventDefault(); return; }
@@ -14,6 +19,7 @@
       key === 'j' && !e.shiftKey ? 'downloads' :
       key === 'd' && !e.shiftKey ? 'favorite' :
       key === 'f' && !e.shiftKey ? 'find' :
+      key === ',' ? 'settings' :
       key === '+' || key === '=' ? 'zoom_in' :
       key === '-' ? 'zoom_out' :
       key === '0' ? 'zoom_reset' :

@@ -181,6 +181,30 @@ try {
   assert.equal(await again.gesture(`new Promise(r => navigator.geolocation.getCurrentPosition(() => r('ok'), (e) => r('error ' + e.code)))`), 'error 1');
   assert.equal(await ui(`document.getElementById('perm').classList.contains('open')`), false, 'no second prompt');
 
+  // 7. Seiteninfo: Verbindung, Zoom, Werbeblocker, gemerkte Berechtigungen – eine davon wieder vergessen
+  await ui(`document.getElementById('btn-site').click()`);
+  await waitFor(() => ui(`document.querySelector('#site-info.open .si-host')?.textContent === '127.0.0.1'`), 'site info open');
+  const info = await ui(`[...document.querySelectorAll('#site-info .si-label')].map(e => e.textContent)`);
+  assert.deepEqual(info.sort(), ['Mitteilungen', 'Standort', 'Werbeblocker', 'Zoom']);
+  assert.match(await ui(`document.querySelector('#site-info .si-sub').textContent`), /nicht sicher/);
+  await ui(`[...document.querySelectorAll('#site-info .si-row')].find(r => r.textContent.includes('Standort')).querySelector('.rm').click()`);
+  await waitFor(async () => !(await ui(`document.getElementById('site-info').textContent`)).includes('Standort'), 'permission forgotten');
+  await ui(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+
+  // 8. Einstellungen: Abschnitte da, „Tabs wiederherstellen“ landet in settings.json
+  await ui(`window.uiAction('settings')`);
+  await waitFor(() => ui(`document.querySelectorAll('#st-body .si-title').length >= 7`), 'settings rendered');
+  console.log('settings', await ui(`[...document.querySelectorAll('#st-body .si-title')].map(e => e.textContent).join(' | ')`));
+  assert.ok((await ui(`document.getElementById('st-body').textContent`)).includes('Downloads'), 'download dir shown');
+  await ui(`document.querySelector('#st-body .switch').click()`);
+  await waitFor(async () => {
+    try { return JSON.parse(await readFile(resolve(profile, 'GlassBrowser/settings.json'), 'utf8')).restoreSession === false; } catch { return false; }
+  }, 'restore setting saved');
+  await ui(`document.querySelector('#st-body .switch').click()`); // wieder an – der Neustart unten braucht es
+  await waitFor(async () => JSON.parse(await readFile(resolve(profile, 'GlassBrowser/settings.json'), 'utf8')).restoreSession === true, 'restore back on');
+  await ui(`document.getElementById('st-close').click()`);
+  assert.equal(await ui(`document.body.classList.contains('modal')`), false);
+
   // 4. Neustart: beide Tabs sind wieder da, der aktive lädt, der andere erst beim Anschauen
   const session = JSON.parse(await readFile(resolve(profile, 'GlassBrowser/session.json'), 'utf8'));
   assert.equal(session.tabs.length, 2);
