@@ -530,7 +530,10 @@
     font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); pointer-events: none;
   }
   .ml-box .badge.warn { background: #ff9f0a; color: #1c1c1e; font-weight: 800; }
-  .ml-box .badge.add { background: rgba(120, 122, 132, .95); font-size: 12px; }
+  .ml-box .badge.add { background: rgba(120, 122, 132, .95); }
+  /* „+“ und „!“: genau mittig im Kreis (Zeichen sitzen je nach Schrift sonst zu tief) */
+  .ml-box .badge:is(.add, .warn) { width: 16px; padding: 0; display: grid; place-items: center; }
+  .ml-box .badge svg { width: 10px; height: 10px; }
   /* Verbunden, aber abgemeldet: oranger Rand und „!“ */
   .ml-box.out { box-shadow: inset 0 0 0 1px rgba(255, 159, 10, .7); }
   .ml-box {
@@ -2165,7 +2168,13 @@
       if (badge) {
         const n = document.createElement('span');
         n.className = `badge ${badge[1]}`;
-        n.textContent = badge[0];
+        // „+“ und „!“ als Zeichnung, damit sie genau in der Mitte stehen
+        const GLYPH = {
+          add: '<svg viewBox="0 0 10 10"><path d="M5 1.5v7M1.5 5h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>',
+          warn: '<svg viewBox="0 0 10 10"><path d="M5 1.6v4.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="5" cy="8.3" r="1.05" fill="currentColor"/></svg>',
+        };
+        if (GLYPH[badge[1]]) n.innerHTML = GLYPH[badge[1]];
+        else n.textContent = badge[0];
         el.append(n);
       }
       if (b.connected) {
