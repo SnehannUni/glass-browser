@@ -148,9 +148,9 @@
   /* ---------- Toolbar ---------- */
   #toolbar {
     --glass-fill-top: .12; --glass-fill-bottom: .065; --glass-brightness: .94;
-    /* --side (aus balanceSides im Skript): beide Seiten mindestens so breit wie die breitere – sonst gäbe bei vielen
-       Tabs nur die schmale rechte Seite nach, und die Tabs rutschten aus der Mitte */
-    height: 42px; display: grid; grid-template-columns: minmax(var(--side, auto), 1fr) minmax(0, auto) minmax(var(--side, auto), 1fr);
+    /* --side-left/-right (aus balanceSides im Skript): beide Seiten mindestens so breit wie die breitere – sonst gäbe bei
+       vielen Tabs nur die schmale rechte Seite nach, und die Tabs rutschten aus der Mitte (bei schmalem Fenster je die eigene) */
+    height: 42px; display: grid; grid-template-columns: minmax(var(--side-left, auto), 1fr) minmax(0, auto) minmax(var(--side-right, auto), 1fr);
     align-items: center; gap: 10px; padding: 0 12px 0 16px;
     transition: transform var(--chrome-slide), opacity var(--chrome-slide);
   }
@@ -334,6 +334,8 @@
     transition: transform .6s var(--spring), width .6s var(--spring), height .6s var(--spring);
   }
   #lens.instant { transition: none; }
+  /* Beim Ziehen am Fensterrand folgen Adressfeld und Linse sofort – mit Feder hinkten sie dem Rand hinterher */
+  html.window-resizing :is(.address, #lens) { transition: none !important; }
   /* Der aktive Tab steht links im Adressfeld (renderTabList: .in-slot). Ein geteiltes Paar bleibt als Einheit
      unter der Linse in der Leiste – so lässt es sich wie gewohnt tauschen und wieder trennen. */
   #lens.off { opacity: 0; }
@@ -917,9 +919,29 @@
   // Für jedes Glas-Element wird eine Displacement-Map erzeugt, die den Hintergrund
   // zum Rand hin nach innen zieht – wie eine dicke, abgerundete Glasscheibe.
   let lensSeq = 0;
+  // Fenstergröße wird gerade verändert: Glas, das dabei seine Größe ändert, läuft bis zum Loslassen mit schlichtem
+  // Blur – eine neue Karte pro Bild kostet zu viel, und die alte passt nicht mehr zur Größe.
+  let windowResizing = 0;
+  const lensLater = new Set();
+  addEventListener('resize', () => {
+    clearTimeout(windowResizing);
+    document.documentElement.classList.add('window-resizing');
+    windowResizing = setTimeout(() => {
+      windowResizing = 0;
+      document.documentElement.classList.remove('window-resizing');
+      lensLater.forEach(lens); lensLater.clear();
+    }, 180);
+  });
   function lens(el) {
     const w = Math.round(el.offsetWidth), h = Math.round(el.offsetHeight);
     if (!w || !h || el.dataset.lensSize === `${w}x${h}`) return;
+    if (windowResizing) {
+      el.style.backdropFilter = '';
+      delete el.dataset.lensSize;
+      el.dataset.lensToken = 'resize'; // noch ausstehende Linsen verwerfen
+      lensLater.add(el);
+      return;
+    }
     el.dataset.lensSize = `${w}x${h}`;
     const radius = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2);
     const bezel = Math.min(20, h / 2, w / 2);
@@ -2546,7 +2568,7 @@
     reportSideOverlay();
     // Feld und Tabs sind jetzt anders angeordnet: alles neu vermessen
     address.classList.remove('resizing');
-    if (left) { toolbar.style.removeProperty('--side'); toolbar.style.removeProperty('--address-width'); }
+    if (left) { toolbar.style.removeProperty('--side-left'); toolbar.style.removeProperty('--side-right'); toolbar.style.removeProperty('--address-width'); }
     renderTabs();
     lastActive = null;
     $('lens').classList.add('instant');
@@ -2804,7 +2826,7 @@
   };
   // Wird es eng, gibt zuerst das Adressfeld nach (bis ADDRESS_MIN) – erst danach werden die Tabs schmaler.
   // TAB_WIDTH/TAB_GAP wie .tab und #tabs, TABBAR_EXTRA = „+“ samt Abstand (30 − 10 + 16) und Innenabstand (2 × 10).
-  const TAB_WIDTH = 180, TAB_GAP = 4, TABBAR_EXTRA = 56, ADDRESS_MIN = 160, ADDRESS_MAX = 260;
+  const TAB_WIDTH = 180, TAB_MIN = 34, TAB_GAP = 4, TABBAR_EXTRA = 56, ADDRESS_MIN = 160, ADDRESS_MAX = 260;
   const toolbar = $('toolbar'), center = document.querySelector('.center');
   let sidesFrame = 0;
   const balanceSides = () => {
@@ -2818,8 +2840,13 @@
     const dock = center.classList.contains('docked') ? parseFloat(getComputedStyle(center).getPropertyValue('--dock-width')) : 0;
     const width = Math.round(Math.max(ADDRESS_MIN, Math.min(ADDRESS_MAX, inner * .2, (inner - tabsNeed) / 2 - fixed - dock)));
     toolbar.style.setProperty('--address-width', `${width}px`);
-    const side = Math.max(fixed + width + dock, contentWidth(sides[1]));
-    toolbar.style.setProperty('--side', `${Math.ceil(side)}px`);
+    const left = fixed + width + dock, right = contentWidth(sides[1]), side = Math.max(left, right);
+    // Ist das Fenster zu schmal für mittige Tabs (schon in Kompaktbreite), reserviert jede Seite nur ihren eigenen
+    // Platz – sonst hielte rechts ungenutzte Fläche frei, und die Tabs liefen unter das „+“.
+    const tabsMin = document.body.classList.contains('multi') ? n * TAB_MIN + Math.max(0, n - 1) * TAB_GAP + TABBAR_EXTRA : 0;
+    const centered = inner - 2 * side >= tabsMin;
+    toolbar.style.setProperty('--side-left', `${Math.ceil(centered ? side : left)}px`);
+    toolbar.style.setProperty('--side-right', `${Math.ceil(centered ? side : right)}px`);
   };
   const scheduleSides = () => { if (!sidesFrame) sidesFrame = requestAnimationFrame(balanceSides); };
   const sidesObserver = new ResizeObserver(scheduleSides);
