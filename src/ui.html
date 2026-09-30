@@ -479,6 +479,84 @@
   }
   #favs.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
 
+  /* ---------- Mail (mail.rs): Knopf ganz rechts oben, führt zur Mail-Ansicht ---------- */
+  .mail-btn { position: relative; margin-left: -4px; }
+  .mail-btn svg { width: 15px; height: 15px; }
+  /* Zahl der Ungelesenen aller Postfächer, oben rechts am Knopf */
+  .mail-badge {
+    position: absolute; top: -3px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: #ff3b30; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+    font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); pointer-events: none;
+  }
+  .mail-badge:empty { display: none; }
+  /* In der Mail-Ansicht selbst braucht es den Knopf nicht */
+  body.mail-view .mail-btn { display: none; }
+  /* Mail-Ansicht: links die gemeinsame Liste (Breite = LIST_WIDTH in mail.rs), rechts das Postfach als WebView */
+  #mailview {
+    position: fixed; display: none; flex-direction: column; border-radius: var(--pane-radius); overflow: hidden;
+    --glass-fill-top: .1; --glass-fill-bottom: .045;
+    backdrop-filter: blur(14px) saturate(1.6) brightness(.86);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 0 0 .5px rgba(255, 255, 255, .1), 0 12px 40px rgba(0, 0, 0, .35);
+  }
+  body.mail-view #mailview { display: flex; }
+  .mv-head { display: flex; align-items: baseline; gap: 8px; padding: 14px 16px 10px; }
+  .mv-head h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  .mv-head .sub { color: var(--label-3); font-size: 12px; }
+  .mv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 6px; scrollbar-width: thin; }
+  .mv-list .fv-empty { padding: 16px 12px; }
+  /* Rechts, solange kein Postfach dort steht: Hinweis statt leerer Fläche */
+  #mail-hint {
+    position: fixed; display: none; place-items: center; text-align: center; padding: 24px;
+    color: var(--label-2); line-height: 1.5; pointer-events: none;
+  }
+  body.mail-view #mail-hint.on { display: grid; }
+  #mail-hint b { display: block; margin-bottom: 4px; color: var(--label); font-size: 15px; }
+  .ml.sel { background: rgba(255, 255, 255, .16); }
+  /* Postfächer und Filter als Kapseln: Symbol, Name, Ungelesene; noch nicht verbundene mit „+“ */
+  .ml-boxes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+  .ml-box.sel { background: rgba(255, 255, 255, .24); color: var(--label); }
+  .ml-box.filter { flex: none; }
+  /* Postfächer in derselben Zeile wie die Filter: nur Symbol und Zahl (der Name steht im Tooltip), sie wachsen,
+     schrumpfen aber nicht unter ihren Inhalt */
+  .ml-box:not(.filter) { flex: 1 0 auto; justify-content: center; }
+  .ml-box .name:empty { display: none; }
+  .ml-boxes { flex-wrap: nowrap; }
+  #mailview { container-type: inline-size; }
+  /* Schmale Liste: nur noch Symbole – die Zahl steht im Tooltip, das „!“ für „nicht angemeldet“ bleibt */
+  @container (max-width: 360px) { .ml-box:not(.filter):not(.out) .n { display: none; } }
+  .ml-box:not(.filter) .name { flex: none; }
+  /* Verbunden, aber abgemeldet: oranger Rand und „Anmelden“ statt der Zahl */
+  .ml-box.out { box-shadow: inset 0 0 0 1px rgba(255, 159, 10, .7); }
+  .ml-box.out .n { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+                   background: #ff9f0a; color: #1c1c1e; font-weight: 800; font-size: 11px; }
+  .ml-box {
+    position: relative; flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: 15px;
+    display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, .08); color: var(--label-2); font-size: 12px;
+  }
+  .ml-box:is(:hover, .vh) { background: rgba(255, 255, 255, .15); color: var(--label); }
+  .ml-box.off { background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
+  .ml-box .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+  .ml-box .n { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--label); }
+  .ml-box .rm { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; background: rgba(60, 62, 72, .95); }
+  .ml-box:is(:hover, .vh) .rm { opacity: .85; }
+  .ml-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--label-2); }
+  .ml-ic img { width: 16px; height: 16px; border-radius: 4px; }
+  .ml-ic svg { width: 14px; height: 14px; }
+  /* Gemeinsame Liste: neueste zuerst, ungelesene fett mit blauem Punkt */
+  .ml { display: grid; grid-template-columns: 8px 16px 1fr auto; column-gap: 8px; align-items: center;
+        padding: 7px 10px 7px 6px; border-radius: 12px; }
+  .ml:is(:hover, .vh) { background: rgba(255, 255, 255, .1); }
+  .ml .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .ml.unread .dot { background: #0a84ff; }
+  .ml .from, .ml .line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ml .from { color: var(--label); }
+  .ml.unread .from { font-weight: 600; }
+  .ml .time { font-size: 11px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .ml .line { grid-column: 3 / -1; font-size: 12px; color: var(--label-2); }
+  .ml .line span { color: var(--label-3); }
+  .ml.unread .line b { color: var(--label); font-weight: 500; }
+  .ml .line b { font-weight: 400; }
+
   /* ---------- Update-Modal ---------- */
   #update {
     position: fixed; z-index: 30; left: 50%; top: 50%; width: 360px; margin: -110px 0 0 -180px;
@@ -740,6 +818,7 @@
     </div>
     <button class="glass tab-new private-btn" id="btn-private" title="Neuer privater Tab (Strg+Umschalt+N)" data-lens><svg viewBox="0 0 16 16"><path d="M1.6 7.4h12.8M3.2 7.4l1.1-3.9c.1-.4.6-.6 1-.4L8 4l2.7-.9c.4-.2.9 0 1 .4l1.1 3.9"/><circle cx="4.9" cy="11" r="2"/><circle cx="11.1" cy="11" r="2"/><path d="M6.9 11c.7-.5 1.5-.5 2.2 0"/></svg></button>
     <button class="glass tab-new fav-btn" id="btn-favs" title="Favoriten" data-lens><svg viewBox="0 0 16 16"><path d="M4.6 2.6h6.8v10.8L8 11 4.6 13.4z"/></svg></button>
+    <button class="glass tab-new mail-btn" id="btn-mail" title="Mail" data-lens><svg viewBox="0 0 16 16"><rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2"/><path d="m2.8 4.6 5.2 4 5.2-4"/></svg><span class="mail-badge"></span></button>
     </div>
   </header>
   </div>
@@ -764,6 +843,9 @@
   <div id="suggest" class="glass"></div>
   <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
+  <!-- Mail-Ansicht (mail.rs): Liste links; rechts liegt das Postfach als eigene WebView darüber -->
+  <div id="mailview" class="glass"></div>
+  <div id="mail-hint"></div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
   <div id="scrim"></div>
@@ -811,6 +893,7 @@
     check: '<path d="m3.5 8.5 3 3 6-7"/>',
     pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
     penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
+    mail: '<rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2"/><path d="m2.8 4.6 5.2 4 5.2-4"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
   };
   const svg = (name, cls = '') => `<svg class="${cls}" viewBox="0 0 16 16">${ICON[name]}</svg>`;
@@ -988,7 +1071,7 @@
   // ---------- Schriftfarbe je nach Hintergrund ----------
   // Glass zeichnet das Wallpaper selbst hinter das Glas – also lässt sich messen, wie hell es unter jeder
   // Glasfläche ist. Wäre dunkle Schrift dort besser lesbar als helle, bekommt die Fläche .ink-dark.
-  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#private-note'];
+  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#mailview', '#private-note'];
   const probe = document.createElement('canvas');
   probe.width = 24; probe.height = 8;
   const probeCtx = probe.getContext('2d', { willReadFrequently: true });
@@ -1152,9 +1235,10 @@
   function updateFavicon(el, tab) {
     const fav = el.querySelector('.fav');
     const icon = tab.favicon?.startsWith('data:image/png;base64,') ? tab.favicon : '';
-    const key = tab.loading ? 'loading' : tab.private ? 'private' : icon;
+    const key = tab.mail ? 'mail' : tab.loading ? 'loading' : tab.private ? 'private' : icon;
     if (fav.dataset.key === key) return;
     fav.dataset.key = key;
+    if (tab.mail) { fav.innerHTML = svg('mail'); return; } // Mail-Ansicht (mail.rs)
     if (tab.loading) { fav.innerHTML = '<div class="spinner"></div>'; return; }
     // Privat: kein Favicon laden – die Oberfläche läuft im normalen Profil und würde den Besuch dort im Cache hinterlassen
     if (tab.private) { fav.innerHTML = svg('private'); return; }
@@ -1985,6 +2069,182 @@
   }
   const closeFavoritesSoon = () => { clearTimeout(favTimer); favTimer = setTimeout(closeFavorites, 250); };
 
+  // ---------- Mail: alle Postfächer in einer Ansicht (Rust: mail.rs, Seiten: mail-content.js) ----------
+  // Der Knopf oben rechts führt zur Mail-Ansicht (einem eigenen Tab). Links steht die gemeinsame Liste, rechts
+  // legt Rust das Postfach der gewählten Mail als WebView darüber – die Oberfläche zeichnet nur dessen Rahmen.
+  const mailBtn = $('btn-mail'), mailView = $('mailview'), mailHint = $('mail-hint');
+  let mail = { boxes: [] };
+  let mailFilter = 'all', mailSelected = null; // „all“, „unread“ oder ein Postfach
+  const plural = (n) => (n > 999 ? '999+' : String(n));
+  const inMailView = () => !!activeTab()?.mail;
+  window.mailState = (next) => {
+    mail = next;
+    const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
+    mailBtn.querySelector('.mail-badge').textContent = total ? plural(total) : '';
+    mailBtn.title = total ? `Mail – ${total.toLocaleString('de-DE')} ungelesen` : 'Mail';
+    if (!mail.boxes.some((b) => b.key === mailFilter)) mailFilter = mailFilter === 'unread' ? 'unread' : 'all';
+    if (inMailView()) renderMailView();
+  };
+  const mailIcon = (box) => {
+    const ic = document.createElement('span');
+    ic.className = 'ml-ic';
+    if (box.icon) { const img = new Image(); img.src = box.icon; ic.append(img); }
+    else ic.innerHTML = svg('mail');
+    return ic;
+  };
+  // Heute die Uhrzeit, gestern „Gestern“, in dieser Woche der Wochentag, sonst das Datum
+  function mailTime(ms) {
+    const d = new Date(ms), now = new Date();
+    const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((day(now) - day(d)) / 864e5);
+    if (days <= 0) return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    if (days === 1) return 'Gestern';
+    if (days < 7) return d.toLocaleDateString('de-DE', { weekday: 'short' });
+    return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  }
+  function chip(label, { sel = false, off = false, cls = '', title = '', onClick }) {
+    const el = document.createElement('button');
+    el.className = `ml-box ${cls}${sel ? ' sel' : ''}${off ? ' off' : ''}`;
+    el.title = title;
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = label;
+    el.append(name);
+    el.addEventListener('click', onClick);
+    return el;
+  }
+  function renderMailView() {
+    const view = state.mailView;
+    if (!view) return;
+    const pane = view.pane;
+    Object.assign(mailView.style, { left: `${view.x}px`, top: `${view.y}px`, width: `${pane.x - view.x - 6}px`, height: `${view.h}px` });
+    const connected = mail.boxes.filter((b) => b.connected);
+    const unread = connected.reduce((sum, b) => sum + (b.unread || 0), 0);
+    if (!mail.boxes.some((b) => b.shown)) mailSelected = null; // rechts nichts offen: auch links nichts markiert
+
+    const head = document.createElement('div');
+    head.className = 'mv-head';
+    head.innerHTML = '<h1>Mail</h1><span class="sub"></span>';
+    head.querySelector('.sub').textContent = unread ? `${unread.toLocaleString('de-DE')} ungelesen` : '';
+
+    // Filter: alle, nur ungelesene, einzelne Postfächer (zeigt es auch rechts); „+ Gmail“ verbindet
+    const chips = document.createElement('div');
+    chips.className = 'ml-boxes';
+    if (connected.length) {
+      chips.append(
+        chip('Alle', { cls: 'filter', sel: mailFilter === 'all', onClick: () => { mailFilter = 'all'; renderMailView(); } }),
+        chip('Ungelesen', { cls: 'filter', sel: mailFilter === 'unread', onClick: () => { mailFilter = mailFilter === 'unread' ? 'all' : 'unread'; renderMailView(); } }),
+      );
+    }
+    for (const b of mail.boxes) {
+      const el = chip(b.connected ? '' : '+', {
+        sel: mailFilter === b.key, off: !b.connected, cls: b.signedOut ? 'out' : '',
+        title: !b.connected ? `${b.name} verbinden – rechts erscheint die Anmeldung`
+          : b.signedOut ? `${b.name}: nicht angemeldet – klicken, um dich rechts anzumelden`
+          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach`,
+        onClick: () => { mailFilter = b.key; mailSelected = null; send('mail_show', { value: b.key }); renderMailView(); },
+      });
+      el.prepend(mailIcon(b));
+      if (b.signedOut) {
+        const n = document.createElement('span');
+        n.className = 'n';
+        n.textContent = '!';
+        el.append(n);
+      } else if (b.connected && b.unread) {
+        const n = document.createElement('span');
+        n.className = 'n';
+        n.textContent = plural(b.unread);
+        el.append(n);
+      }
+      if (b.connected) {
+        const rm = document.createElement('span');
+        rm.className = 'rm';
+        rm.title = `${b.name} trennen (du bleibst dort angemeldet)`;
+        rm.innerHTML = svg('close');
+        rm.addEventListener('click', (e) => { e.stopPropagation(); send('mail_forget', { value: b.key }); });
+        el.append(rm);
+      }
+      chips.append(el);
+    }
+
+    // Die Mails aller (bzw. des gewählten) Postfächer, neueste zuerst
+    const items = connected
+      .filter((b) => mailFilter === 'all' || mailFilter === 'unread' || b.key === mailFilter)
+      .flatMap((b) => (b.list || []).map((m) => ({ ...m, box: b })))
+      .filter((m) => mailFilter !== 'unread' || m.unread)
+      .sort((a, b) => b.time - a.time);
+    const list = document.createElement('div');
+    list.className = 'mv-list';
+    for (const m of items) {
+      const row = document.createElement('div');
+      const id = `${m.box.key}:${m.key}`;
+      row.className = `ml${m.unread ? ' unread' : ''}${id === mailSelected ? ' sel' : ''}`;
+      row.title = `${m.box.name}: ${m.subject || '(kein Betreff)'}`;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const from = document.createElement('span');
+      from.className = 'from';
+      from.textContent = m.from || m.box.name;
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = mailTime(m.time);
+      const line = document.createElement('div');
+      line.className = 'line';
+      const subject = document.createElement('b');
+      subject.textContent = m.subject || '(kein Betreff)';
+      line.append(subject);
+      if (m.snippet) { const snip = document.createElement('span'); snip.textContent = ` – ${m.snippet}`; line.append(snip); }
+      row.append(dot, mailIcon(m.box), from, time, line);
+      row.addEventListener('click', () => {
+        mailSelected = id;
+        list.querySelectorAll('.ml.sel').forEach((r) => r.classList.remove('sel'));
+        row.classList.add('sel');
+        send('mail_show', { value: m.box.key, item: m.key });
+      });
+      list.append(row);
+    }
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'fv-empty';
+      empty.textContent = !connected.length ? 'Tippe oben auf ein Postfach und melde dich rechts an. Danach stehen hier die Mails aus allen Postfächern zusammen.'
+        : mailFilter === 'unread' ? 'Keine ungelesenen Mails in den geladenen Posteingängen.'
+        : connected.some((b) => b.list?.length) ? 'Hier ist gerade nichts.'
+        : 'Die Postfächer laden – gleich erscheinen hier die neuesten Mails. Falls rechts eine Anmeldung steht, melde dich dort an.';
+      list.append(empty);
+    }
+    const scroll = mailView.querySelector('.mv-list')?.scrollTop || 0;
+    mailView.replaceChildren(head, chips, list);
+    list.scrollTop = scroll;
+
+    // Rechts: Hinweis, solange dort kein Postfach steht – beim Öffnen der Ansicht ist noch keine Mail offen
+    const shown = mail.boxes.find((b) => b.shown && b.connected);
+    mailHint.classList.toggle('on', !shown);
+    Object.assign(mailHint.style, { left: `${pane.x}px`, top: `${pane.y}px`, width: `${pane.w}px`, height: `${pane.h}px` });
+    mailHint.innerHTML = connected.length
+      ? '<div><b>Keine Mail ausgewählt</b>Wähle links eine Mail aus – oder ein Postfach, um es ganz zu sehen.</div>'
+      : '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Glass sieht dein Passwort nie.</div>';
+    scheduleInk();
+    reportMailList();
+  }
+  mailBtn.addEventListener('click', () => send('mail_view'));
+  // Die Liste reicht bis unter das rechte Ende der Such-Kapsel – die wächst mit dem Fenster und schrumpft mit vielen
+  // Tabs, also nachmessen, sobald sie sich ändert (kurz verzögert: sie gleitet dabei). Beim Suchen fährt die Kapsel
+  // aus; die Liste bleibt dann stehen. Leiste links: keine Kapsel darüber, Rust nimmt die Standardbreite.
+  let mailListSent, mailListTimer = 0;
+  function reportMailList() {
+    clearTimeout(mailListTimer);
+    mailListTimer = setTimeout(() => {
+      const view = state.mailView;
+      if (!inMailView() || !view || editing() || address.classList.contains('editing')) return;
+      const width = sideLeft() ? null : Math.round(address.getBoundingClientRect().right - view.x);
+      if (width === mailListSent) return;
+      mailListSent = width;
+      send('mail_list', { value: width });
+    }, 120);
+  }
+  new ResizeObserver(reportMailList).observe(address);
+  addEventListener('resize', reportMailList);
+
   // ---------- Update-Modal (Rust meldet ein neueres Release von GitHub) ----------
   const upBox = $('update'), upInstall = $('up-install');
   let upDismissed = 0; // „Später“ gilt bis zum nächsten Start bzw. bis eine noch neuere Version kommt
@@ -2070,7 +2330,9 @@
   function renderPanes(from = null) {
     if (resizeDrag) return;
     const panes = (state.panes || []).filter((p) => hasPage(p.id));
-    $('panes').replaceChildren(...panes.map((p) => {
+    // Mail-Ansicht: Rahmen um das Postfach rechts (dessen WebView gehört keinem Tab)
+    const mailPane = state.mailView ? [{ ...state.mailView.pane, id: state.active }] : [];
+    $('panes').replaceChildren(...panes.concat(mailPane).map((p) => {
       const el = document.createElement('div');
       el.className = `pane${p.id === state.active ? ' focus' : ''}`;
       Object.assign(el.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
@@ -2390,6 +2652,7 @@
   window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
+    const wasMail = !switched && !!activeTab()?.mail; // Mail-Ansicht schon vorher (ein leerer Tab wird zu ihr)
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
     const wasHost = switched ? null : hostOf(activeTab()?.url || ''); // Website vor diesem Stand
     const slideFrom = !!next.chromeHidden !== !!state.chromeHidden ? state.panes : null; // Leiste fährt aus/ein
@@ -2402,19 +2665,29 @@
     document.body.classList.toggle('inactive', !state.focused);
     const hasPage = !!activeTab()?.page; // Rust meldet, ob der Tab eine Webseite hat (die URL kann leer sein)
     // Ein leerer Tab wird per Knopf umgeschaltet (Rust: "private_tab"), sonst öffnet er einen neuen privaten Tab
-    const isPrivate = !!activeTab()?.private, empty = !hasPage && !activeTab()?.url;
+    const isPrivate = !!activeTab()?.private, empty = !hasPage && !activeTab()?.url && !activeTab()?.mail;
     document.body.classList.toggle('private', isPrivate);
     privateBtn.title = empty && isPrivate ? 'Privates Surfen beenden'
       : `${empty ? 'Privat surfen' : 'Neuer privater Tab'} (Strg+Umschalt+N)`;
     document.body.classList.toggle('has-page', hasPage);
     document.body.classList.toggle('home-back', !!activeTab()?.home);
-    setStartMode(!hasPage && !activeTab()?.url);
+    setStartMode(empty);
+    document.body.classList.toggle('mail-view', !!activeTab()?.mail);
+    if (activeTab()?.mail) renderMailView();
+    // Vom Startbildschirm in die Mail-Ansicht: Das Suchfeld hatte dort den Fokus und bliebe ausgefahren
+    // (Ohne Fokus im Fenster kommt dabei kein blur-Ereignis – also selbst einfahren, sonst bliebe .searching und
+    // mit ihm das „+“ ausgeblendet)
+    if (!wasMail && activeTab()?.mail && editing()) {
+      input.blur();
+      if (address.classList.contains('editing')) { closeWheel(); closeSuggest(); slide(false); renderAddress(); }
+      document.body.classList.remove('searching'); // (setStartMode hat es eben nach dem Fokus gesetzt)
+    }
     recordSearches();
     renderTabs();
     renderPanes(slideFrom);
     if (slideFrom) window.clipboardFollow?.(slideFrom, state.panes || []);
     renderAddress();
-    if (switched && !hasPage && !activeTab()?.url) window.focusAddress();
+    if (switched && empty) window.focusAddress();
     // Tabwechsel, neuer Tab oder eine andere Website → Leiste zeigen; Startbildschirm → immer sichtbar.
     // Innerhalb derselben Website (z. B. auf YouTube ein Video öffnen) bleibt sie weg.
     if (!hasPage) setChromeHidden(false);
