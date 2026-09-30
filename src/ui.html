@@ -370,8 +370,10 @@
     animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(1turn); } }
+  /* z-index: Das Favicon darunter blendet beim Drüberfahren nur aus – mit opacity bekommt es eine eigene Ebene und läge
+     sonst über dem ✕ (im Adressfeld öffnete ein Klick darauf die Suche, statt den Tab zu schließen) */
   .close {
-    position: absolute; left: 3px; top: 3px; width: calc(var(--toolbar-control-height) - 6px); height: calc(var(--toolbar-control-height) - 6px); border-radius: 50%;
+    position: absolute; z-index: 1; left: 3px; top: 3px; width: calc(var(--toolbar-control-height) - 6px); height: calc(var(--toolbar-control-height) - 6px); border-radius: 50%;
     display: grid; place-items: center; color: var(--label-2);
     opacity: 0;
   }
