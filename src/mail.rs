@@ -16,7 +16,8 @@ use wry::{MemoryUsageLevel, WebView, WebViewExtWindows};
 pub const REFRESH_EVERY: Duration = Duration::from_secs(5 * 60);
 /// … und so lange bleiben sie dann wach: genug, um neue Mails zu holen und die Liste neu aufzubauen.
 const AWAKE_FOR: Duration = Duration::from_secs(60);
-/// Breite der gemeinsamen Liste links in der Mail-Ansicht (wie MAIL_LIST in ui.html) und Abstand zum Postfach.
+/// Breite der gemeinsamen Liste links in der Mail-Ansicht, solange die Oberfläche keine meldet (Leiste links), und
+/// Abstand zum Postfach. Mit der Leiste oben reicht die Liste bis unter das rechte Ende der Such-Kapsel.
 const LIST_WIDTH: f64 = 380.0;
 const LIST_GAP: f64 = 6.0;
 
@@ -76,6 +77,8 @@ pub struct Mail {
     /// Rechts nur die Mail, ohne die Leisten des Postfachs (nach Klick auf eine Mail) – oder das ganze Postfach
     /// (nach Klick auf seine Kapsel).
     reader: bool,
+    /// Breite der Liste, wie die Oberfläche sie aus der Such-Kapsel ableitet (`None`: LIST_WIDTH).
+    list_width: Option<f64>,
     /// Ist die Mail-Ansicht gerade zu sehen? (Dann schläft kein Postfach.)
     view_open: Cell<bool>,
     /// Zählt die Weckrunden – ein spätes „wieder schlafen“ einer früheren Runde wird ignoriert.
@@ -101,8 +104,8 @@ impl Mail {
             list: json!([]),
             ..Default::default()
         });
-        let shown = (0..PROVIDERS.len()).find(|&p| boxes[p].url.is_some());
-        Mail { boxes, file, shown, reader: false, view_open: Cell::new(false), round: Cell::new(0), click: None, kept: None }
+        // Rechts ist zu Beginn nichts offen – erst ein Klick auf eine Mail (oder eine Kapsel) zeigt ein Postfach
+        Mail { boxes, file, shown: None, reader: false, list_width: None, view_open: Cell::new(false), round: Cell::new(0), click: None, kept: None }
     }
 
     fn save(&self) {
@@ -246,8 +249,24 @@ impl Browser {
 
     /// Fläche des Postfachs rechts neben der Liste (innerhalb der Seitenfläche `area`).
     pub fn mail_pane(&self, [x, y, w, h]: Area) -> Area {
-        let list = LIST_WIDTH.min(w / 2.0);
+        let list = self.mail.list_width.unwrap_or(LIST_WIDTH).min(w / 2.0);
         [x + list + LIST_GAP, y, w - list - LIST_GAP, h]
+    }
+
+    /// Die Oberfläche meldet, wie breit die Liste sein soll (bis unter das Ende der Such-Kapsel), `None`: Standard.
+    pub fn mail_list_width(&mut self, width: Option<f64>) {
+        let width = width.map(|w| w.clamp(280.0, 720.0));
+        let same = match (width, self.mail.list_width) {
+            (Some(a), Some(b)) => (a - b).abs() < 0.5,
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if !same {
+            self.mail.list_width = width;
+            if self.mail_view_active() {
+                self.layout();
+                self.sync_ui();
+            }
+        }
     }
 
     /// Zustand für den Mail-Knopf und die Mail-Ansicht.
@@ -269,10 +288,17 @@ impl Browser {
         let _ = self.ui.evaluate_script(&format!("window.mailState?.({})", json!({ "boxes": boxes })));
     }
 
-    /// Mail-Knopf: zur Mail-Ansicht (es gibt höchstens eine). Ein leerer Tab wird dazu, sonst ein neuer.
+    /// Mail-Knopf: zur Mail-Ansicht, rechts noch ohne Mail – die zeigt erst ein Klick in der Liste.
     pub fn mail_view(&mut self) {
+        self.mail.shown = None;
+        self.mail_view_open();
+    }
+
+    /// Zur Mail-Ansicht (es gibt höchstens eine). Ein leerer Tab wird dazu, sonst ein neuer.
+    fn mail_view_open(&mut self) {
         if let Some(i) = self.tabs.iter().position(|t| t.mail_view) {
             self.activate(i);
+            self.sync_mail();
             return;
         }
         let blank = self.tabs.get(self.active).is_some_and(|t| t.webview.is_none() && t.url.is_empty() && !t.private);
@@ -301,7 +327,7 @@ impl Browser {
         self.mail.shown = Some(p);
         self.mail.reader = item.is_some();
         if !self.mail_view_active() {
-            self.mail_view();
+            self.mail_view_open();
         }
         self.layout();
         if let Some(tab) = &self.mail.boxes[p].tab {
@@ -322,7 +348,7 @@ impl Browser {
         let Some(p) = provider_by_key(key) else { return };
         self.mail.boxes[p] = Mailbox { list: json!([]), ..Default::default() };
         if self.mail.shown == Some(p) {
-            self.mail.shown = (0..PROVIDERS.len()).find(|&q| self.mail.boxes[q].url.is_some());
+            self.mail.shown = None;
         }
         self.mail.save();
         self.layout();

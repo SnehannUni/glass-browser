@@ -788,6 +788,7 @@ impl Browser {
             "mail_view" => self.mail_view(),
             "mail_show" => self.mail_show(value, msg["item"].as_str()),
             "mail_forget" => self.mail_forget(value),
+            "mail_list" => self.mail_list_width(msg["value"].as_f64()),
             // Update-Modal: „Jetzt installieren“ – Download und Austausch laufen im Hintergrund
             "update_install" => {
                 if let Some((_, _, url)) = self.update.clone() {
