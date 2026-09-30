@@ -181,6 +181,22 @@ try {
   assert.equal(await again.gesture(`new Promise(r => navigator.geolocation.getCurrentPosition(() => r('ok'), (e) => r('error ' + e.code)))`), 'error 1');
   assert.equal(await ui(`document.getElementById('perm').classList.contains('open')`), false, 'no second prompt');
 
+  // 9. Ton: Tab erst stummschalten (damit aus den Lautsprechern nichts kommt), dann spielt die Seite einen Ton →
+  // durchgestrichener Lautsprecher am Tab im Adressfeld; Klick schaltet den Ton wieder ein
+  await ui(send('mute', { id: await ui(uiState('state.tabs[1].id')) }));
+  await waitFor(() => ui(uiState(`state.tabs[1].muted === true`)), 'muted');
+  await waitFor(() => ui(`!document.querySelector('#addr-tab .audio').hidden && document.querySelector('#addr-tab .audio').classList.contains('muted')`), 'muted speaker shown');
+  console.log('tone', await beta.gesture(`(() => { const c = new AudioContext(); const o = c.createOscillator(); const g = c.createGain();
+    g.gain.value = 0.2; o.connect(g).connect(c.destination); o.start(); window.__tone = c; return c.state; })()`));
+  await delay(1500);
+  console.log('audio state', await ui(uiState(`JSON.stringify([state.tabs[1].audio, state.tabs[1].muted])`)));
+  await waitFor(() => ui(uiState(`state.tabs[1].audio === true`)), 'tab reports audio', 200);
+  await beta(`window.__tone.close()`);
+  await waitFor(() => ui(uiState(`state.tabs[1].audio === false`)), 'sound stopped', 300);
+  await ui(`document.querySelector('#addr-tab .audio').click()`);
+  await waitFor(() => ui(uiState(`state.tabs[1].muted === false`)), 'unmuted');
+  await waitFor(() => ui(`document.querySelector('#addr-tab .audio').hidden`), 'speaker gone');
+
   // 7. Seiteninfo: Verbindung, Zoom, Werbeblocker, gemerkte Berechtigungen – eine davon wieder vergessen
   await ui(`document.getElementById('btn-site').click()`);
   await waitFor(() => ui(`document.querySelector('#site-info.open .si-host')?.textContent === '127.0.0.1'`), 'site info open');
