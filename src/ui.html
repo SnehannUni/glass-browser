@@ -489,7 +489,8 @@
     font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); pointer-events: none;
   }
   .mail-badge:empty { display: none; }
-  .mail-btn.on { color: #0a84ff; }
+  /* In der Mail-Ansicht selbst braucht es den Knopf nicht */
+  body.mail-view .mail-btn { display: none; }
   /* Mail-Ansicht: links die gemeinsame Liste (Breite = LIST_WIDTH in mail.rs), rechts das Postfach als WebView */
   #mailview {
     position: fixed; display: none; flex-direction: column; border-radius: var(--pane-radius); overflow: hidden;
@@ -2106,6 +2107,7 @@
     Object.assign(mailView.style, { left: `${view.x}px`, top: `${view.y}px`, width: `${pane.x - view.x - 6}px`, height: `${view.h}px` });
     const connected = mail.boxes.filter((b) => b.connected);
     const unread = connected.reduce((sum, b) => sum + (b.unread || 0), 0);
+    if (!mail.boxes.some((b) => b.shown)) mailSelected = null; // rechts nichts offen: auch links nichts markiert
 
     const head = document.createElement('div');
     head.className = 'mv-head';
@@ -2194,14 +2196,34 @@
     mailView.replaceChildren(head, chips, list);
     list.scrollTop = scroll;
 
-    // Rechts: Hinweis, solange dort (noch) kein Postfach steht
+    // Rechts: Hinweis, solange dort kein Postfach steht – beim Öffnen der Ansicht ist noch keine Mail offen
     const shown = mail.boxes.find((b) => b.shown && b.connected);
     mailHint.classList.toggle('on', !shown);
     Object.assign(mailHint.style, { left: `${pane.x}px`, top: `${pane.y}px`, width: `${pane.w}px`, height: `${pane.h}px` });
-    mailHint.innerHTML = '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Glass sieht dein Passwort nie.</div>';
+    mailHint.innerHTML = connected.length
+      ? '<div><b>Keine Mail ausgewählt</b>Wähle links eine Mail aus – oder ein Postfach, um es ganz zu sehen.</div>'
+      : '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Glass sieht dein Passwort nie.</div>';
     scheduleInk();
+    reportMailList();
   }
   mailBtn.addEventListener('click', () => send('mail_view'));
+  // Die Liste reicht bis unter das rechte Ende der Such-Kapsel – die wächst mit dem Fenster und schrumpft mit vielen
+  // Tabs, also nachmessen, sobald sie sich ändert (kurz verzögert: sie gleitet dabei). Beim Suchen fährt die Kapsel
+  // aus; die Liste bleibt dann stehen. Leiste links: keine Kapsel darüber, Rust nimmt die Standardbreite.
+  let mailListSent, mailListTimer = 0;
+  function reportMailList() {
+    clearTimeout(mailListTimer);
+    mailListTimer = setTimeout(() => {
+      const view = state.mailView;
+      if (!inMailView() || !view || editing() || address.classList.contains('editing')) return;
+      const width = sideLeft() ? null : Math.round(address.getBoundingClientRect().right - view.x);
+      if (width === mailListSent) return;
+      mailListSent = width;
+      send('mail_list', { value: width });
+    }, 120);
+  }
+  new ResizeObserver(reportMailList).observe(address);
+  addEventListener('resize', reportMailList);
 
   // ---------- Update-Modal (Rust meldet ein neueres Release von GitHub) ----------
   const upBox = $('update'), upInstall = $('up-install');
@@ -2610,6 +2632,7 @@
   window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
+    const wasMail = !switched && !!activeTab()?.mail; // Mail-Ansicht schon vorher (ein leerer Tab wird zu ihr)
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
     const wasHost = switched ? null : hostOf(activeTab()?.url || ''); // Website vor diesem Stand
     const slideFrom = !!next.chromeHidden !== !!state.chromeHidden ? state.panes : null; // Leiste fährt aus/ein
@@ -2630,8 +2653,15 @@
     document.body.classList.toggle('home-back', !!activeTab()?.home);
     setStartMode(empty);
     document.body.classList.toggle('mail-view', !!activeTab()?.mail);
-    mailBtn.classList.toggle('on', !!activeTab()?.mail);
     if (activeTab()?.mail) renderMailView();
+    // Vom Startbildschirm in die Mail-Ansicht: Das Suchfeld hatte dort den Fokus und bliebe ausgefahren
+    // (Ohne Fokus im Fenster kommt dabei kein blur-Ereignis – also selbst einfahren, sonst bliebe .searching und
+    // mit ihm das „+“ ausgeblendet)
+    if (!wasMail && activeTab()?.mail && editing()) {
+      input.blur();
+      if (address.classList.contains('editing')) { closeWheel(); closeSuggest(); slide(false); renderAddress(); }
+      document.body.classList.remove('searching'); // (setStartMode hat es eben nach dem Fokus gesetzt)
+    }
     recordSearches();
     renderTabs();
     renderPanes(slideFrom);
