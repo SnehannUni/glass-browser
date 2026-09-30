@@ -924,8 +924,8 @@
   // Für jedes Glas-Element wird eine Displacement-Map erzeugt, die den Hintergrund
   // zum Rand hin nach innen zieht – wie eine dicke, abgerundete Glasscheibe.
   let lensSeq = 0;
-  // Fenstergröße wird gerade verändert: Glas, das dabei seine Größe ändert, läuft bis zum Loslassen mit schlichtem
-  // Blur – eine neue Karte pro Bild kostet zu viel, und die alte passt nicht mehr zur Größe.
+  // Fenstergröße wird gerade verändert: Eine neue Karte pro Bild kostet zu viel. Ändert sich nur die Breite, wird
+  // die vorhandene gestreckt (stretchLens); sonst läuft das Glas bis zum Loslassen mit schlichtem Blur.
   let windowResizing = 0;
   const lensLater = new Set();
   addEventListener('resize', () => {
@@ -941,6 +941,7 @@
     const w = Math.round(el.offsetWidth), h = Math.round(el.offsetHeight);
     if (!w || !h || el.dataset.lensSize === `${w}x${h}`) return;
     if (windowResizing) {
+      if (stretchLens(el, w, h)) return;
       el.style.backdropFilter = '';
       delete el.dataset.lensSize;
       el.dataset.lensToken = 'resize'; // noch ausstehende Linsen verwerfen
@@ -948,8 +949,7 @@
       return;
     }
     el.dataset.lensSize = `${w}x${h}`;
-    const radius = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2);
-    const bezel = Math.min(20, h / 2, w / 2);
+    const { radius, bezel } = lensShape(el, w, h);
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
@@ -983,20 +983,53 @@
     probe.src = map;
     probe.decode().catch(() => {}).then(() => {
       if (el.dataset.lensToken !== String(token)) return; // inzwischen neu vermessen
-      installLens(el, map, w, h, token);
+      installLens(el, map, w, h, token, radius, bezel);
       // feImage lädt seine Karte intern noch einmal; ein zweiter Anstoß stellt sicher, dass sie greift
       setTimeout(() => {
         if (el.dataset.lensToken !== String(token)) return;
         const again = ++lensSeq;
         el.dataset.lensToken = again;
-        installLens(el, map, w, h, again);
+        installLens(el, map, w, h, again, radius, bezel);
       }, 150);
     });
+  }
+  function lensShape(el, w, h) {
+    const radius = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2);
+    return { radius, bezel: Math.min(20, h / 2, w / 2) };
+  }
+  // kleiner als das Element selbst, sonst greift die Brechung bei kleinen Knöpfen zu weit
+  const lensScale = (w, h) => Math.min(44, Math.min(w, h) * .8);
+
+  // Die Karte ist nur an den Enden (Rundung bzw. Kante, `cap` breit) von x abhängig – dazwischen ist jede Spalte
+  // gleich. Der Filter setzt sie deshalb aus drei Teilen zusammen: linkes Ende, gestreckte Mitte, rechtes Ende.
+  // Ändert sich nur die Breite, wandern Mitte und rechtes Ende mit – ohne neue Karte, Bild für Bild.
+  const lensParts = new WeakMap();
+  function placeLensParts(p, w) {
+    const { filter, wide, mid, end, right, w0, cap } = p;
+    const s = (w - 2 * cap) / (w0 - 2 * cap);
+    filter.setAttribute('width', w);
+    wide.setAttribute('x', cap - cap * s); wide.setAttribute('width', w0 * s);
+    mid.setAttribute('width', w - 2 * cap);
+    // 1 px Überlappung mit der Mitte (dort gleiche Werte): Beim Runden auf Bildschirmpixel bleibt keine Fuge
+    // Das rechte Ende als eigenes Bild bündig an der neuen Kante: Verschieben ginge nicht – beim Schmalerwerden läge
+    // es vorher außerhalb des Filterbereichs und wäre schon abgeschnitten
+    end.setAttribute('x', w - w0); right.setAttribute('x', w - cap - 1);
+  }
+  function stretchLens(el, w, h) {
+    const p = lensParts.get(el);
+    if (!p || !p.filter.isConnected || p.filter.id !== el.dataset.lensId || p.h !== h || w < 2 * p.cap + 1) return false;
+    const { radius, bezel } = lensShape(el, w, h);
+    if (radius !== p.radius || bezel !== p.bezel || lensScale(w, h) !== p.scale) return false;
+    placeLensParts(p, w);
+    el.dataset.lensSize = `${w}x${h}`;
+    el.dataset.lensToken = 'stretch'; // eine noch ausstehende Karte der alten Breite verwerfen
+    return true;
   }
 
   // Jede Linse bekommt eine neue Filter-ID: Chromium zeichnet backdrop-filter nicht neu, wenn sich
   // nur der Inhalt eines SVG-Filters ändert – eine neue url(#…) erzwingt das sofort.
-  function installLens(el, map, w, h, token) {
+  // (Beim Strecken ändert sich mit dem Filter zugleich die Größe des Elements – das zeichnet ohnehin neu.)
+  function installLens(el, map, w, h, token, radius, bezel) {
     const id = `lens-${token}`;
     const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
     filter.id = id;
@@ -1004,18 +1037,30 @@
       filter.setAttribute(k, v);
     }
     // Rot, Grün und Blau werden unterschiedlich stark gebrochen → feine Farbsäume an der Kante
-    // kleiner als das Element selbst, sonst greift die Brechung bei kleinen Knöpfen zu weit
-    const scale = Math.min(44, Math.min(w, h) * .8);
+    const scale = lensScale(w, h);
     const channel = (k, s, matrix) =>
       `<feDisplacementMap in="SourceGraphic" in2="map" scale="${s}" xChannelSelector="R" yChannelSelector="G" result="d${k}"/>` +
       `<feColorMatrix in="d${k}" type="matrix" values="${matrix}" result="${k}"/>`;
+    const cap = Math.ceil(Math.max(radius, bezel));
+    const parts = w >= 2 * cap + 1;
+    const image = (result) => `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="${result}"/>`;
     filter.innerHTML =
-      `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>` +
+      (parts
+        ? image('full') + image('wide') + image('end') +
+          `<feOffset in="full" x="0" y="0" width="${cap + 1}" height="${h}" result="left"/>` +
+          `<feOffset in="wide" x="${cap}" y="0" width="${w - 2 * cap}" height="${h}" result="mid"/>` +
+          `<feOffset in="end" x="${w - cap - 1}" y="0" width="${cap + 1}" height="${h}" result="right"/>` +
+          `<feMerge result="map"><feMergeNode in="mid"/><feMergeNode in="left"/><feMergeNode in="right"/></feMerge>`
+        : image('map')) +
       channel('r', scale, '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0') +
       channel('g', scale * .98, '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0') +
       channel('b', scale * .96, '0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0') +
       `<feBlend in="r" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="b" mode="screen"/>`;
     $('filters').appendChild(filter);
+    if (parts) {
+      const [wide, end, mid, right] = ['feImage[result="wide"]', 'feImage[result="end"]', 'feOffset[result="mid"]', 'feOffset[result="right"]'].map((s) => filter.querySelector(s));
+      lensParts.set(el, { filter, wide, end, mid, right, w0: w, h, cap, radius, bezel, scale });
+    } else lensParts.delete(el);
     const old = el.dataset.lensId && document.getElementById(el.dataset.lensId);
     el.dataset.lensId = id;
     // leicht abdunkeln statt aufhellen: Text im Glas bleibt auf jedem Wallpaper lesbar
