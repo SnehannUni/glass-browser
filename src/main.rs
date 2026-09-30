@@ -30,7 +30,7 @@ const CONTENT_JS: &str = include_str!("content.js");
 /// Die Oberfläche wird über ein eigenes Protokoll ausgeliefert (unter Windows `http://glass.localhost/`).
 const UI_URL: &str = "http://glass.localhost/";
 
-/// Die eine Zeile oben: Ampel, Vor/Zurück, Tabs, Adressfeld und Knöpfe.
+/// Die eine Zeile oben: Vor/Zurück, Tabs, Adressfeld, Knöpfe und Fensterknöpfe.
 const TOOLBAR_HEIGHT: f64 = 42.0;
 /// Breite der Leiste, wenn sie links statt oben steht (Rechtsklick auf die Leiste → „Leiste links“).
 const SIDEBAR_WIDTH: f64 = 240.0;
