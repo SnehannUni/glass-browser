@@ -14,10 +14,7 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Private Tabs** (Strg+Umschalt+N) – InPrivate-Profil nur im Arbeitsspeicher, strenger Tracking-Schutz
 - **Werbeblocker** – Brave-Filter-Engine mit EasyList, EasyPrivacy, EasyList Germany und uBlock-Listen;
   blendet Werbeflächen aus, entfernt YouTube-Werbung und lässt sich pro Website abschalten
-- **Auf Webseiten zeichnen** – Stift rechts oben: Stift, Textmarker, Radierer, Farben, Rückgängig (Strg+Z);
-  die Zeichnung bleibt pro Adresse gespeichert und erscheint beim nächsten Besuch wieder (privat: nur bis zum Schließen).
-  Der Textmarker rastet auf den überstrichenen Text ein und folgt ihm, wenn die Seite anders umbricht
-- **Mail an einem Ort** – Briefumschlag rechts oben: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten
+- **Mail an einem Ort** – Briefumschlag rechts oben auf dem Startbildschirm: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten
   Mails aller Postfächer zusammen, rechts das echte Postfach mit der gewählten Mail (siehe unten)
 
 ## Bauen
@@ -39,7 +36,6 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/ui.html` | Oberfläche (Glas, Tabs, Adressfeld, Vorschläge, Favoriten) |
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
-| `src/drawing.rs`, `src/drawing-content.js` | Zeichnen auf Webseiten: Speicher je Adresse, Zeichenfläche und Werkzeuge in der Seite |
 | `src/mail.rs`, `src/mail-content.js` | Mail-Ansicht: Postfächer im Hintergrund, Ungelesene und neueste Mails aus den Web-Postfächern |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
@@ -49,7 +45,7 @@ Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter 
 
 ## Mail
 
-Der Briefumschlag rechts oben öffnet die Mail-Ansicht (ein eigener Tab); die rote Zahl zählt die ungelesenen Mails
+Der Briefumschlag rechts oben auf dem Startbildschirm öffnet die Mail-Ansicht (ein eigener Tab); die rote Zahl zählt die ungelesenen Mails
 aller Postfächer. Links stehen die neuesten Mails aus iCloud Mail, Outlook und Gmail zusammen, neueste zuerst –
 filterbar nach „Ungelesen“ oder einem Postfach. Ein Klick auf eine Mail zeigt rechts nur diese Mail im echten
 Web-Postfach, ohne dessen Leisten; Antworten, Anhänge und Löschen laufen dort wie gewohnt. Ein Klick auf ein Postfach
