@@ -2494,8 +2494,9 @@
   divider.addEventListener('dblclick', () => send('split_ratio', { value: 0.5 }));
 
   // ---------- Leiste oben automatisch ausblenden ----------
-  // Nach ein paar Sekunden Ruhe auf einer Webseite verschwindet die Leiste, die Seite reicht dann bis an den Rand
-  // (Rust: chrome_hidden). Zurück kommt sie über den oberen Fensterrand, Strg+L/T/Tab oder beim Wechsel auf eine andere Website.
+  // Scrollt man eine Webseite nach unten, verschwindet die Leiste, die Seite reicht dann bis an den Rand
+  // (Rust: chrome_hidden). Zurück kommt sie beim Hochscrollen, über den oberen Fensterrand, Strg+L/T/Tab oder beim
+  // Wechsel auf eine andere Website – und bleibt dann, bis wieder nach unten gescrollt wird.
   const TOOLBAR_PIN_KEY = 'glass.toolbarPinned';
   let toolbarPinned = false;
   try { toolbarPinned = localStorage.getItem(TOOLBAR_PIN_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
@@ -2591,7 +2592,7 @@
     closeToolbarMenu();
     toolbarSide.blur();
     applySide(left);
-    showChrome(); // zurück nach oben: der Countdown zum Ausblenden läuft wieder
+    showChrome(); // zurück nach oben: sichtbar, bis wieder nach unten gescrollt wird
   });
 
   // Aufgeklappt über der Seite: Rust schneidet die Leiste aus der Webseite aus – Bild für Bild genau so breit,
@@ -2665,8 +2666,8 @@
   }, true);
   window.addEventListener('blur', closeToolbarMenu);
   window.addEventListener('resize', closeToolbarMenu);
-  const CHROME_IDLE = 3500, REVEAL_ZONE = 6;
-  let chromeHidden = false, chromeTimer = 0, pointerAt = null;
+  const REVEAL_ZONE = 6;
+  let chromeHidden = false, pointerAt = null;
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || activeTab()?.drawing // beim Zeichnen bleibt der Stift zum Beenden sichtbar
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
@@ -2679,16 +2680,12 @@
     document.body.classList.toggle('chrome-hidden', hidden);
     send('chrome_hidden', { value: hidden });
   }
-  // Leiste zeigen und den Countdown neu starten; solange etwas offen ist, wird später erneut geprüft
-  function showChrome() {
-    setChromeHidden(false);
-    clearTimeout(chromeTimer);
-    if (chromeKept()) return;
-    chromeTimer = setTimeout(function idle() {
-      if (chromeBusy()) chromeTimer = setTimeout(idle, CHROME_IDLE);
-      else setChromeHidden(true);
-    }, CHROME_IDLE);
-  }
+  const showChrome = () => setChromeHidden(false);
+  // Scrollrichtung der sichtbaren Seite (content.js → Rust): runter blendet aus, außer gerade ist etwas offen
+  window.pageScrolled = (down) => {
+    if (!down) showChrome();
+    else if (!chromeBusy()) setChromeHidden(true);
+  };
   // Mausposition von hoverAt: ausgeblendet reicht der Fensterrand (oben bzw. links), eingeblendet hält jede
   // Bewegung auf der Leiste sie offen
   function chromeHover(x, y) {

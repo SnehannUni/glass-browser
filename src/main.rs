@@ -988,7 +988,7 @@ impl Browser {
                 let cmd = msg["cmd"].as_str().unwrap_or_default().to_owned();
                 return self.command(&cmd, &msg);
             }
-            // Webseiten dürfen nur Tastenkürzel melden, sonst nichts steuern.
+            // Webseiten dürfen nur Tastenkürzel und ihre Scrollrichtung melden, sonst nichts steuern.
             UserEvent::Content(cmd) => {
                 // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
                 // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
@@ -998,6 +998,10 @@ impl Browser {
                         "window_maximize" => self.window.set_maximized(!self.window.is_maximized()),
                         _ => {}
                     }
+                }
+                // Scrollrichtung der Seite: Die Oberfläche blendet die Leiste oben danach aus bzw. ein
+                if matches!(cmd.as_str(), "scroll_down" | "scroll_up") && !self.chrome_left && !self.fullscreen {
+                    let _ = self.ui.evaluate_script(&format!("window.pageScrolled?.({})", cmd == "scroll_down"));
                 }
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
