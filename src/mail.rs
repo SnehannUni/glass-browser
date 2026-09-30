@@ -16,6 +16,9 @@ use wry::{MemoryUsageLevel, WebView, WebViewExtWindows};
 pub const REFRESH_EVERY: Duration = Duration::from_secs(5 * 60);
 /// … und so lange bleiben sie dann wach: genug, um neue Mails zu holen und die Liste neu aufzubauen.
 const AWAKE_FOR: Duration = Duration::from_secs(60);
+/// So lange darf ein Postfach nach dem Laden brauchen, bis es sich mit einer Zahl meldet – danach gilt es als
+/// nicht angemeldet (iCloud zeigt seine Anmeldung unter derselben Adresse wie das Postfach).
+const SIGN_IN_GRACE: Duration = Duration::from_secs(15);
 /// So oft macht Glass Anmeldungen aus Sitzungs-Cookies dauerhaft (siehe `keep_signed_in`). WebView2 schreibt
 /// Cookies erst nach bis zu 30 s auf die Platte – das Sichern beim Beenden allein reicht deshalb nicht.
 pub const KEEP_EVERY: Duration = Duration::from_secs(60);
@@ -85,6 +88,8 @@ struct Mailbox {
     heard: Option<Instant>,
     /// Eingefroren (`mail_sleep`) – dann auch wirklich unsichtbar.
     asleep: Cell<bool>,
+    /// Wann die Seite zuletzt fertig geladen hat (siehe `signed_out`).
+    loaded: Option<Instant>,
 }
 
 pub struct Mail {
@@ -181,6 +186,16 @@ fn deny_notifications(wv: &WebView) {
     }));
     let mut token = 0;
     let _ = unsafe { wv.webview().add_PermissionRequested(&handler, &mut token) };
+}
+
+/// Verbunden, aber nicht angemeldet? Die Seite steht auf einer fremden Anmeldeseite (Outlook → Microsoft) oder hat
+/// sich nach dem Laden nicht mit einer Zahl gemeldet. Während sie noch lädt, gilt sie als angemeldet.
+fn signed_out(p: usize, b: &Mailbox) -> bool {
+    let Some(tab) = &b.tab else { return false };
+    if tab.loading || b.unread.is_some() {
+        return false;
+    }
+    provider_of(&tab.url) != Some(p) || b.loaded.is_some_and(|t| t.elapsed() >= SIGN_IN_GRACE)
 }
 
 /// Postfach aufwecken (siehe `mail_sleep`); `mail_layout` macht es danach wieder „sichtbar“.
@@ -281,6 +296,25 @@ fn keep(
 }
 
 impl Browser {
+    /// Ein Postfach lädt eine neue Seite bzw. ist damit fertig. Eine neue Seite muss sich neu melden: Zahl und Liste
+    /// der alten gelten nicht mehr (etwa nach dem Abmelden). Kurz danach steht fest, ob sie angemeldet ist.
+    pub fn mail_loaded(&mut self, id: u32, loading: bool) {
+        let Some(b) = self.mail.boxes.iter_mut().find(|b| b.tab.as_ref().is_some_and(|t| t.id == id)) else { return };
+        if loading {
+            b.unread = None;
+            b.list = json!([]);
+            b.loaded = None;
+        } else {
+            b.loaded = Some(Instant::now());
+            let proxy = self.proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(SIGN_IN_GRACE + Duration::from_millis(200));
+                let _ = proxy.send_event(UserEvent::MailSync);
+            });
+        }
+        self.sync_mail();
+    }
+
     /// Jede Minute (UserEvent::MailKeep) und gleich nach dem Anmelden: Anmeldungen aus Sitzungs-Cookies dauerhaft
     /// machen – für jedes verbundene, angemeldete Postfach, das das braucht (iCloud). Auch wenn sich im Postfach
     /// nichts ändert: Apple tauscht sein Token trotzdem aus.
@@ -346,7 +380,8 @@ impl Browser {
                 let icon = b.tab.as_ref().map(|t| if t.page_favicon.is_empty() { &t.favicon } else { &t.page_favicon });
                 json!({ "key": p.key, "name": p.name, "connected": b.url.is_some(), "unread": b.unread,
                         "list": b.list, "icon": icon, "shown": self.mail.shown == Some(i),
-                        "loading": b.tab.as_ref().is_some_and(|t| t.loading) })
+                        "loading": b.tab.as_ref().is_some_and(|t| t.loading),
+                        "signedOut": b.url.is_some() && signed_out(i, b) })
             })
             .collect();
         let _ = self.ui.evaluate_script(&format!("window.mailState?.({})", json!({ "boxes": boxes })));
