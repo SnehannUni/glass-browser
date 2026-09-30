@@ -16,6 +16,8 @@ use wry::{MemoryUsageLevel, WebView, WebViewExtWindows};
 pub const REFRESH_EVERY: Duration = Duration::from_secs(5 * 60);
 /// … und so lange bleiben sie dann wach: genug, um neue Mails zu holen und die Liste neu aufzubauen.
 const AWAKE_FOR: Duration = Duration::from_secs(60);
+/// Meldet sich ein Postfach so lange nicht, lädt Glass es neu (siehe `mail_tick`).
+const SILENT_FOR: Duration = Duration::from_secs(15 * 60);
 /// Breite der gemeinsamen Liste links in der Mail-Ansicht, solange die Oberfläche keine meldet (Leiste links), und
 /// Abstand zum Postfach. Mit der Leiste oben reicht die Liste bis unter das rechte Ende der Such-Kapsel.
 const LIST_WIDTH: f64 = 380.0;
@@ -26,30 +28,39 @@ pub struct Provider {
     pub name: &'static str,
     url: &'static str,
     hosts: &'static [&'static str],
-    /// Erscheint in der Oberfläche. Outlook fehlt noch: Dessen Liste liest mail-content.js noch nicht aus.
+    /// Erscheint in der Oberfläche.
     listed: bool,
     /// Die Anmeldung besteht nur aus Sitzungs-Cookies (Apple ohne „Angemeldet bleiben“) – siehe `keep_signed_in`.
     keep: &'static [&'static str],
+    /// Einstieg zum Anmelden, solange Glass noch keine echte Postfach-Adresse kennt. Outlook: url führt abgemeldet
+    /// nur auf eine Werbeseite; Microsofts eigener Anmelde-Link landet danach im Postfach.
+    login: Option<&'static str>,
 }
 
 /// Gleiche Hosts wie in mail-content.js.
 pub const PROVIDERS: [Provider; 3] = [
-    Provider { key: "icloud", name: "iCloud", url: "https://www.icloud.com/mail/", hosts: &["www.icloud.com", "icloud.com"], listed: true, keep: &["icloud.com", "apple.com"] },
+    Provider { key: "icloud", name: "iCloud", url: "https://www.icloud.com/mail/", hosts: &["www.icloud.com", "icloud.com"], listed: true, keep: &["icloud.com", "apple.com"], login: None },
     Provider {
         key: "outlook",
         name: "Outlook",
         url: "https://outlook.live.com/mail/",
         hosts: &["outlook.live.com", "outlook.office.com", "outlook.office365.com", "outlook.cloud.microsoft"],
-        listed: false,
+        listed: true,
         keep: &[],
+        login: Some("https://go.microsoft.com/fwlink/p/?LinkID=2125442&deeplink=mail%2F"),
     },
-    Provider { key: "gmail", name: "Gmail", url: "https://mail.google.com/mail/", hosts: &["mail.google.com"], listed: true, keep: &[] },
+    Provider { key: "gmail", name: "Gmail", url: "https://mail.google.com/mail/", hosts: &["mail.google.com"], listed: true, keep: &[], login: None },
 ];
 
 /// Welches Postfach gehört zu dieser Adresse (nur https)?
 pub fn provider_of(url: &str) -> Option<usize> {
     let host = url.strip_prefix("https://")?.split(['/', '?', '#', ':']).next()?;
     PROVIDERS.iter().position(|p| p.hosts.contains(&host))
+}
+
+/// Adresse ohne Suchteil und Sprungmarke – nur so wird sie gespeichert.
+fn bare_url(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or_default()
 }
 
 fn provider_by_key(key: &str) -> Option<usize> {
@@ -67,6 +78,10 @@ struct Mailbox {
     url: Option<String>,
     /// Zuletzt an die Seite gegebene Leseansicht (siehe `__glassMailReader` in mail-content.js).
     reader: Cell<bool>,
+    /// Wann sich die Seite zuletzt gemeldet hat (bzw. geladen wurde) – siehe `mail_tick`.
+    heard: Option<Instant>,
+    /// Eingefroren (`mail_sleep`) – dann auch wirklich unsichtbar.
+    asleep: Cell<bool>,
 }
 
 pub struct Mail {
@@ -98,7 +113,7 @@ impl Mail {
             // Nur Adressen des eigenen Anbieters – die Datei könnte von Hand geändert sein
             url: saved[PROVIDERS[p].key]
                 .as_str()
-                .and_then(|u| u.split('#').next())
+                .map(bare_url)
                 .filter(|u| provider_of(u) == Some(p) && PROVIDERS[p].listed)
                 .map(str::to_owned),
             list: json!([]),
@@ -136,6 +151,43 @@ impl Mail {
     pub fn shown_tab(&self) -> Option<&Tab> {
         self.boxes[self.shown?].tab.as_ref()
     }
+}
+
+/// Größe eines Postfachs, solange es unsichtbar ist: breit genug, dass Outlook seine Ordner (mit der Zahl der
+/// Ungelesenen) aufgeklappt zeigt und iCloud mehr Zeilen der Liste aufbaut. Zu sehen ist davon nichts.
+/// Es liegt dabei links außerhalb des Fensters.
+fn hidden_bounds([_, y, w, h]: Area) -> Area {
+    let (w, h) = (w.max(1400.0), h.max(900.0));
+    [-w - 64.0, y, w, h]
+}
+
+/// Postfächer bekommen keine Benachrichtigungen: Die Zahl zeigt Glass selbst, und der Dialog eines unsichtbaren
+/// Postfachs käme aus dem Nichts (Outlook fragt gleich nach dem Anmelden). Andere Berechtigungen fragen wie sonst.
+fn deny_notifications(wv: &WebView) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, COREWEBVIEW2_PERMISSION_STATE_DENY,
+    };
+    let handler = webview2_com::PermissionRequestedEventHandler::create(Box::new(|_, args| {
+        let Some(args) = args else { return Ok(()) };
+        let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+        unsafe {
+            args.PermissionKind(&mut kind)?;
+            if kind == COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS {
+                args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+            }
+        }
+        Ok(())
+    }));
+    let mut token = 0;
+    let _ = unsafe { wv.webview().add_PermissionRequested(&handler, &mut token) };
+}
+
+/// Postfach aufwecken (siehe `mail_sleep`); `mail_layout` macht es danach wieder „sichtbar“.
+fn wake(b: &Mailbox) {
+    if let Some(tab) = &b.tab {
+        suspend(tab, false);
+    }
+    b.asleep.set(false);
 }
 
 /// WebView2 friert die Seite ein (Skripte und Timer stehen, Speicher wird frei) bzw. taut sie wieder auf.
@@ -360,6 +412,15 @@ impl Browser {
     pub fn mail_layout(&self) {
         let view = self.mail_view_active() && !self.fullscreen;
         let pane = self.mail_pane(self.content_area());
+        if view != self.mail.view_open.replace(view) {
+            if view {
+                for b in &self.mail.boxes {
+                    wake(b);
+                }
+            } else {
+                self.mail_sleep_later();
+            }
+        }
         for (p, b) in self.mail.boxes.iter().enumerate() {
             let Some(wv) = b.tab.as_ref().and_then(|t| t.webview.as_ref()) else { continue };
             // Leseansicht nur, solange es rechts zu sehen ist: Im Hintergrund braucht mail-content.js die Mail-Liste
@@ -377,17 +438,11 @@ impl Browser {
                 let _ = wv.set_visible(true);
                 let _ = wv.set_memory_usage_level(MemoryUsageLevel::Normal);
             } else {
-                let _ = wv.set_visible(false);
+                // Wach: „sichtbar“, aber links außerhalb des Fensters – sonst baut Outlook seine Mail-Liste gar nicht
+                // erst auf (unsichtbare Seiten bekommen keine Animationsbilder). Schlafen geht nur unsichtbar.
+                let _ = wv.set_bounds(to_rect(hidden_bounds(pane)));
+                let _ = wv.set_visible(!b.asleep.get());
                 let _ = wv.set_memory_usage_level(MemoryUsageLevel::Low);
-            }
-        }
-        if view != self.mail.view_open.replace(view) {
-            if view {
-                for tab in self.mail.boxes.iter().filter_map(|b| b.tab.as_ref()) {
-                    suspend(tab, false);
-                }
-            } else {
-                self.mail_sleep_later();
             }
         }
     }
@@ -400,11 +455,18 @@ impl Browser {
             }
             match &self.mail.boxes[p].tab {
                 Some(tab) => {
-                    suspend(tab, false);
+                    wake(&self.mail.boxes[p]);
                     // Nicht gerade angezeigt: zurück in den Posteingang, damit die Liste frisch wird
                     let shown = self.mail.view_open.get() && self.mail.shown == Some(p);
                     if let (false, Some(wv)) = (shown, &tab.webview) {
                         let _ = wv.evaluate_script("window.__glassMailHome?.()");
+                        // Lange nichts gehört, obwohl die Seite beim Postfach steht (z. B. Fehlerseite nach einem
+                        // Netzaussetzer beim Start): neu laden. Nicht auf Anmeldeseiten – dort wartet sie auf den Nutzer.
+                        let silent = self.mail.boxes[p].heard.is_none_or(|t| t.elapsed() > SILENT_FOR);
+                        if silent && !tab.loading && provider_of(&tab.url) == Some(p) {
+                            let _ = wv.reload();
+                            self.mail.boxes[p].heard = Some(Instant::now());
+                        }
                     }
                 }
                 None => self.mail_load(p),
@@ -419,18 +481,22 @@ impl Browser {
     /// Postfach unsichtbar laden.
     fn mail_load(&mut self, p: usize) {
         let Some(url) = self.mail.boxes[p].url.clone() else { return };
+        // Noch keine echte Adresse gemeldet (nie angemeldet): über den Anmelde-Einstieg, falls es einen gibt
+        let start = PROVIDERS[p].login.filter(|_| url == PROVIDERS[p].url).unwrap_or(&url).to_owned();
         let id = self.next_id;
         self.next_id += 1;
-        let bounds = to_rect(self.mail_pane(self.content_area()));
-        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &url, bounds, false) else { return };
+        let bounds = to_rect(hidden_bounds(self.mail_pane(self.content_area())));
+        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &start, bounds, false) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+        deny_notifications(&webview);
         let adblock_flag = ScriptSlot::default();
         set_adblock_flag(&webview, &adblock_flag);
         self.mail.boxes[p].tab = Some(Tab {
-            id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url, loading: true, private: false,
+            id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: start, loading: true, private: false,
             blocked: 0, adblock_flag, webview: Some(webview), home: false, pending_prompt: None,
             hidden_since: Cell::new(Some(Instant::now())), drawing: false, mail_view: false,
         });
+        self.mail.boxes[p].heard = Some(Instant::now());
     }
 
     fn mail_sleep_later(&self) {
@@ -447,8 +513,17 @@ impl Browser {
         if round != self.mail.round.get() || self.mail.view_open.get() {
             return;
         }
-        for tab in self.mail.boxes.iter().filter_map(|b| b.tab.as_ref()) {
-            suspend(tab, true);
+        // Nur Postfächer, die wirklich im Postfach stehen: Mitten in einer Anmeldung (Microsoft leitet mehrmals weiter
+        // und probiert Windows-Anmeldung) bliebe die Seite sonst eingefroren hängen
+        for (p, b) in self.mail.boxes.iter().enumerate() {
+            if let Some(tab) = b.tab.as_ref().filter(|t| b.unread.is_some() && provider_of(&t.url) == Some(p)) {
+                // Einfrieren lässt WebView2 nur unsichtbare Seiten
+                if let Some(wv) = &tab.webview {
+                    let _ = wv.set_visible(false);
+                }
+                b.asleep.set(true);
+                suspend(tab, true);
+            }
         }
     }
 
@@ -460,6 +535,7 @@ impl Browser {
         if mb.url.is_none() || !mb.tab.as_ref().is_some_and(|t| t.id == id) {
             return;
         }
+        mb.heard = Some(Instant::now());
         let msg: Value = serde_json::from_str(raw).unwrap_or_default();
         if let Some([x, y]) = msg["mail"]["click"].as_array().and_then(|a| Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?])) {
             let allowed = self.mail.click.take().is_some_and(|(tab, until)| tab == id && Instant::now() < until);
@@ -490,8 +566,8 @@ impl Browser {
             mb.list = list;
         }
         // Wo das Postfach nach der Anmeldung gelandet ist (z. B. /mail/u/1/), gilt beim nächsten Start
-        // (ohne #…: Gmail schreibt dort die gerade offene Mail hin)
-        let url = mb.tab.as_ref().map(|t| t.url.split('#').next().unwrap_or_default().to_owned()).filter(|u| provider_of(u) == Some(p));
+        // (ohne #… und ?…: Gmail schreibt dort die gerade offene Mail hin, Outlook nach der Anmeldung einen login_hint)
+        let url = mb.tab.as_ref().map(|t| bare_url(&t.url).to_owned()).filter(|u| provider_of(u) == Some(p));
         if url.is_some() && url != mb.url {
             mb.url = url;
             self.mail.save();
@@ -514,8 +590,10 @@ mod tests {
         assert_eq!(provider_of("http://mail.google.com/"), None);
         assert_eq!(provider_of("https://mail.google.com.evil.de/"), None);
         assert_eq!(provider_of("https://accounts.google.com/"), None);
-        // Outlook steht noch nicht in der Oberfläche
-        assert_eq!(provider_by_key("outlook"), None);
+        assert_eq!(provider_by_key("outlook"), Some(1));
         assert_eq!(provider_by_key("gmail"), Some(2));
+        assert_eq!(provider_by_key("yahoo"), None);
+        assert_eq!(bare_url("https://outlook.office.com/mail/?deeplink=mail%2F&login_hint=x"), "https://outlook.office.com/mail/");
+        assert_eq!(bare_url("https://mail.google.com/mail/u/0/#inbox/abc"), "https://mail.google.com/mail/u/0/");
     }
 }

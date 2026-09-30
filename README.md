@@ -17,7 +17,7 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Auf Webseiten zeichnen** – Stift rechts oben: Stift, Textmarker, Radierer, Farben, Rückgängig (Strg+Z);
   die Zeichnung bleibt pro Adresse gespeichert und erscheint beim nächsten Besuch wieder (privat: nur bis zum Schließen).
   Der Textmarker rastet auf den überstrichenen Text ein und folgt ihm, wenn die Seite anders umbricht
-- **Mail an einem Ort** – Briefumschlag rechts oben: iCloud Mail und Gmail in einer Ansicht, links die neuesten
+- **Mail an einem Ort** – Briefumschlag rechts oben: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten
   Mails aller Postfächer zusammen, rechts das echte Postfach mit der gewählten Mail (siehe unten)
 
 ## Bauen
@@ -50,22 +50,29 @@ Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter 
 ## Mail
 
 Der Briefumschlag rechts oben öffnet die Mail-Ansicht (ein eigener Tab); die rote Zahl zählt die ungelesenen Mails
-aller Postfächer. Links stehen die neuesten Mails aus iCloud Mail und Gmail zusammen, neueste zuerst – filterbar
-nach „Ungelesen“ oder einem Postfach. Ein Klick zeigt rechts das echte Web-Postfach mit dieser Mail; Antworten,
-Anhänge und Löschen laufen dort wie gewohnt. Ein noch nicht verbundenes Postfach („+ Gmail“) zeigt rechts seine
-Anmeldung.
+aller Postfächer. Links stehen die neuesten Mails aus iCloud Mail, Outlook und Gmail zusammen, neueste zuerst –
+filterbar nach „Ungelesen“ oder einem Postfach. Ein Klick auf eine Mail zeigt rechts nur diese Mail im echten
+Web-Postfach, ohne dessen Leisten; Antworten, Anhänge und Löschen laufen dort wie gewohnt. Ein Klick auf ein Postfach
+zeigt es ganz, ein noch nicht verbundenes („+ Gmail“) seine Anmeldung. Beim Öffnen der Ansicht ist rechts nichts offen.
 
 - Glass meldet sich nirgends selbst an und kennt keine Passwörter. Die Postfächer sind unsichtbare Webseiten im
   normalen Profil; `mail-content.js` liest daraus nur Zahl, Absender, Betreff, Vorschau und Zeit des Posteingangs –
   nur im Arbeitsspeicher. Gespeichert wird allein, welche Postfächer verbunden sind (`GlassBrowser\mail.json`).
 - Solange die Mail-Ansicht offen ist, bleiben alle Postfächer wach. Sonst schlafen sie und wachen alle 5 Minuten
-  für eine Minute auf, um Zahl und Liste aufzufrischen.
+  für eine Minute auf, um Zahl und Liste aufzufrischen. Wach liegen sie „sichtbar“ links außerhalb des Fensters und
+  mindestens 1400 px breit – sonst baut Outlook weder seine Mail-Liste noch die Ordner mit der Zahl auf. Eingefroren
+  wird nur ein Postfach, das im Posteingang steht (nicht mitten in einer Anmeldung); eines, das 15 Minuten schweigt
+  (etwa auf einer Fehlerseite nach einem Netzaussetzer), lädt Glass neu.
 - Apple meldet in eingebetteten Browsern nur mit Sitzungs-Cookies an (kein „Angemeldet bleiben“) und tauscht das
   Token laufend aus. Glass gibt diesen Cookies deshalb jede Minute und beim Beenden ein Ablaufdatum in 30 Tagen –
   sonst wäre iCloud nach jedem Neustart abgemeldet. Abmelden in iCloud löscht sie wie gewohnt.
-- Eine iCloud-Mail öffnet Glass mit einem echten Klick (DevTools `Input.dispatchMouseEvent`): Nachgemachte
+- iCloud- und Outlook-Mails öffnet Glass mit einem echten Klick (DevTools `Input.dispatchMouseEvent`): Nachgemachte
   Ereignisse wählen dort nichts aus, und ein `pointerdown` ohne echten Zeiger bringt iCloud Mail zum Absturz.
-- Outlook ist vorbereitet, aber noch ausgeblendet: Dessen Liste wird noch nicht ausgelesen.
+- Outlook: Verbinden startet über Microsofts Anmelde-Link (`outlook.live.com` zeigt abgemeldet nur Werbung).
+  Geschäftskonten auf nicht verwalteten PCs verlangen je nach Firmenvorgabe nach jedem Start von Glass das Kennwort.
+  Benachrichtigungen lehnen die Postfächer still ab – die Zahl zeigt Glass selbst.
+- Gespeichert wird nur die Adresse ohne `?…` und `#…` (Gmail schreibt dort die offene Mail hin, Microsoft nach der
+  Anmeldung einen `login_hint`).
 
 Prüfen: `node tests/mail-content.mjs` (nachgebaute Posteingänge unter den echten Adressen, ohne Netz).
 

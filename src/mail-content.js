@@ -45,6 +45,8 @@
       const t = ownText(n).replace(/\s+/g, ' ').trim();
       if (!INBOX.test(t) || t.length > 40) break;
       const rest = t.replace(INBOX, '');
+      const said = UNREAD.exec(rest); // Outlook: „Posteingang634ungelesen“ (Zahl und Wort für Screenreader im Text)
+      if (said) return toNumber(said[1] || said[2]);
       if (/^\W*\d[\d.,  ]*\W*$/.test(rest)) return firstNumber(rest);
       if (rest.trim() && depth > 0) break; // ein anderer Ordner steht mit darin
     }
@@ -103,6 +105,8 @@
   // key: womit __glassMailOpen die Mail wiederfindet. Ohne eigene Id (iCloud) aus Absender, Betreff und Zeit.
   const keyOf = (...parts) => parts.join('␟').slice(0, 300);
   const icloudRows = () => all('[role="treeitem"].thread-list-item');
+  const outlookRows = () => [...document.querySelectorAll('div[role="option"][data-convid]')];
+  const UNREAD_ROW = /^\s*(ungelesen|unread)\b/i; // Outlook beginnt die Beschriftung ungelesener Zeilen so
   const icloudParts = (row) => ['.thread-participants', '.thread-subject > span', '.thread-timestamp'].map((s) => text(row.querySelector(s)));
   const LISTS = {
     gmail() {
@@ -131,14 +135,28 @@
       });
     },
     outlook() {
-      return null; // TODO: Aufbau der Outlook-Liste
+      return outlookRows().map((row) => {
+        const sender = row.querySelector('span[title*="@"]');
+        // Zweite Zeile: Betreff und Zeit (deren title trägt das volle Datum „Mi, 30.09.2026 14:04“)
+        const stamp = [...row.querySelectorAll('span[title]')].find((s) => /\d{1,2}\.\d{1,2}\.\d{4}|\d{4}/.test(s.title) && s !== sender);
+        const line = stamp?.parentElement;
+        const subject = line && [...line.children].find((c) => c !== stamp);
+        // Vorschau: die Zeile danach
+        const snippet = line?.nextElementSibling;
+        return {
+          key: row.getAttribute('data-convid'), from: text(sender), subject: text(subject), snippet: text(snippet),
+          time: parseTime(stamp?.getAttribute('title') || text(stamp)),
+          unread: UNREAD_ROW.test(row.getAttribute('aria-label') || '') || +getComputedStyle(sender || row).fontWeight >= 600,
+        };
+      }).filter((m) => m.key);
     },
   };
   // Nur solange der Posteingang zu sehen ist – sonst stünde z. B. „Gesendet“ in der gemeinsamen Liste
   const inInbox = () => ({
     gmail: () => /^#inbox\/?$/.test(location.hash) || location.hash === '',
     icloud: () => INBOX.test(document.title),
-    outlook: () => /\/mail\/(inbox\/?)?$/.test(location.pathname) || /\/mail\/(0\/)?inbox/.test(location.pathname),
+    // Outlook zeigt die Liste auch neben einer offenen Mail (/mail/inbox/id/…); nur andere Ordner zählen nicht
+    outlook: () => /^\/mail\/(\d+\/)?(inbox(\/id\/.*)?|id\/.*)?\/?$/i.test(location.pathname),
   })[provider]();
 
   function readList() {
@@ -176,7 +194,11 @@
         flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important; max-width: none !important; }
       .secondary-outer-container, .thread-detail-pane { width: 100% !important; max-width: none !important; }
       #app-body { top: 0 !important; }`,
-    outlook: '',
+    // Outlook: Die Lesefläche legt sich über alles (Kopfzeile, App-Leiste, Ordner, Liste) – die Liste bleibt darunter
+    // erhalten; für den Klick auf eine Zeile lässt html.glass-pick die Lesefläche kurz durch
+    outlook: `#ReadingPaneContainerId { position: fixed !important; inset: 0 !important; width: auto !important;
+        height: auto !important; max-width: none !important; z-index: 1000 !important; }
+      html.glass-pick #ReadingPaneContainerId { pointer-events: none !important; }`,
   };
   let reader = false;
   function applyReader() {
@@ -205,7 +227,8 @@
     // iCloud: Zeile mit gleichem Absender, Betreff und Zeit (die Liste verwendet ihre Zeilen wieder). Anklicken muss
     // Glass selbst mit einem echten Mausklick: Nachgemachte Ereignisse wählen nichts aus, und ein pointerdown ohne
     // echten Zeiger lässt iCloud Mail abstürzen (setPointerCapture schlägt fehl). Die Seite meldet nur, wohin.
-    const row = provider === 'icloud' && icloudRows().find((r) => keyOf(...icloudParts(r)) === key);
+    const row = provider === 'icloud' ? icloudRows().find((r) => keyOf(...icloudParts(r)) === key)
+      : provider === 'outlook' ? outlookRows().find((r) => r.getAttribute('data-convid') === key) : null;
     if (!row) return;
     // Leseansicht: Die unsichtbare Liste für den Klick nach vorn holen, nach dem echten Klick (oder spätestens nach
     // 3 s) wieder zurück unter die Mail
@@ -269,5 +292,7 @@
   else start();
   // Nach dem Aufwecken (mail.rs) sofort nachsehen, auch wenn sich seitdem nichts geändert hat
   document.addEventListener('resume', () => { sent = ''; schedule(); });
+  // Lebenszeichen, auch wenn sich nichts ändert: Glass lädt ein Postfach neu, das lange schweigt (mail.rs, SILENT_FOR)
+  setInterval(() => { sent = ''; schedule(); }, 4 * 60_000);
   addEventListener('hashchange', schedule);
 })();
