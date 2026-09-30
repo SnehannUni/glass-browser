@@ -32,6 +32,15 @@ const ICLOUD_APP = `<!doctype html><style>body{margin:0}</style>
 <ul><li role="option" aria-label="Eingang"><p>Eingang</p><p>5</p></li></ul>
 ${row('Carla', 'Heute', '10:37', true)}${row('Dora', 'Gestern', 'Gestern', false)}${row('Emil', 'Alt', '28.9.2026', true)}`;
 
+const olRow = (id, from, subject, stamp, unread) => `<div role="option" data-convid="${id}" aria-label="${unread ? 'Ungelesen ' : ''}${from} ${subject}">
+  <div><span title="${from.toLowerCase()}@example.invalid">${from}</span></div>
+  <div><span>${subject}</span><span title="${stamp}">${stamp.slice(-5)}</span></div>
+  <div><span>Vorschau ${subject}</span></div></div>`;
+const OUTLOOK = `<!doctype html><title>E-Mail – Test – Outlook</title>
+<div role="tree"><div role="treeitem" title="Posteingang"><span>Posteingang</span><span>634</span><span>ungelesen</span></div></div>
+<div id="MailList" role="listbox">${olRow('c1', 'Fritz', 'Neu', 'Mi, 30.09.2026 14:04', true)}${olRow('c2', 'Gabi', 'Alt', 'Di, 29.09.2026 09:46', false)}</div>
+<div id="ReadingPaneContainerId"></div>`;
+
 await mkdir('target/mail-test', { recursive: true });
 const profile = await mkdtemp(resolve('target/mail-test/profile-'));
 const edge = spawn(process.env.EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', [
@@ -52,6 +61,7 @@ try {
   let seq = 0;
   const pending = new Map(), errors = [];
   const serve = (url) => (url.startsWith('https://mail.google.com/') ? GMAIL
+    : url.startsWith('https://outlook.office.com/') ? OUTLOOK
     : url.startsWith('https://www.icloud.com/applications/') ? ICLOUD_APP
     : url.startsWith('https://www.icloud.com/') ? ICLOUD_TOP : '<!doctype html><title>Andere Seite</title><a href="#inbox">Posteingang 3</a>');
   ws.onmessage = ({ data }) => {
@@ -130,7 +140,22 @@ try {
   await run(`window.__glassMailReader(true)`);
   assert.match(await run(`document.querySelector('iframe').contentDocument.getElementById('__glass-reader').textContent`), /thread-detail-pane/);
 
-  // 3. Andere Seiten: kein Zählen, keine Funktionen
+  // 3. Outlook: Zahl aus der Ordnerliste („Posteingang634ungelesen“), Liste mit ungelesen aus der Beschriftung,
+  // Öffnen per Klick-Stelle; die Leseansicht legt die Lesefläche über alles
+  await open('https://outlook.office.com/mail/');
+  ({ unread, list } = (await run('window.__sent')).at(-1).mail);
+  assert.equal(unread, 634);
+  assert.deepEqual(list.map((m) => [m.key, m.from, m.subject, m.snippet, m.unread, m.time]), [
+    ['c1', 'Fritz', 'Neu', 'Vorschau Neu', true, at(2026, 9, 30, 14, 4)],
+    ['c2', 'Gabi', 'Alt', 'Vorschau Alt', false, at(2026, 9, 29, 9, 46)],
+  ]);
+  await run(`window.__glassMailReader(true)`);
+  assert.equal(await run(`getComputedStyle(document.getElementById('ReadingPaneContainerId')).position`), 'fixed');
+  await run(`window.__glassMailOpen('c2'); new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50)))`);
+  assert.ok((await run('window.__sent')).at(-1).mail.click, 'Outlook meldet die Klick-Stelle');
+  assert.ok(await run(`document.documentElement.classList.contains('glass-pick')`), 'Lesefläche lässt den Klick durch');
+
+  // 4. Andere Seiten: kein Zählen, keine Funktionen
   await open('https://example.invalid/');
   assert.equal(await run('window.__sent'), undefined);
   assert.equal(await run('typeof window.__glassMailOpen'), 'undefined');
