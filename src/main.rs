@@ -117,6 +117,8 @@ enum UserEvent {
     MailTick,
     /// … und nach einer Minute wieder schlafen legen (Nummer der Weckrunde).
     MailSleep(u64),
+    /// Jede Minute: Anmeldungen aus Sitzungs-Cookies dauerhaft machen (iCloud, siehe `keep_signed_in`).
+    MailKeep,
     /// Beim Beenden: Die Anmeldungen der Postfächer sind gesichert (`mail_before_exit`), Glass darf zu.
     ExitReady,
 }
@@ -1032,6 +1034,7 @@ impl Browser {
             UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
             UserEvent::MailTick => self.mail_tick(),
             UserEvent::MailSleep(round) => self.mail_sleep(round),
+            UserEvent::MailKeep => self.mail_keep(),
             UserEvent::ExitReady => {} // in der Ereignisschleife behandelt
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
@@ -1606,6 +1609,12 @@ fn main() -> wry::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(4));
         while p_mail.send_event(UserEvent::MailTick).is_ok() {
             std::thread::sleep(mail::REFRESH_EVERY);
+        }
+    });
+    let p_keep = proxy.clone();
+    std::thread::spawn(move || {
+        while p_keep.send_event(UserEvent::MailKeep).is_ok() {
+            std::thread::sleep(mail::KEEP_EVERY);
         }
     });
 

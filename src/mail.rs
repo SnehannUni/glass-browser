@@ -16,6 +16,9 @@ use wry::{MemoryUsageLevel, WebView, WebViewExtWindows};
 pub const REFRESH_EVERY: Duration = Duration::from_secs(5 * 60);
 /// … und so lange bleiben sie dann wach: genug, um neue Mails zu holen und die Liste neu aufzubauen.
 const AWAKE_FOR: Duration = Duration::from_secs(60);
+/// So oft macht Glass Anmeldungen aus Sitzungs-Cookies dauerhaft (siehe `keep_signed_in`). WebView2 schreibt
+/// Cookies erst nach bis zu 30 s auf die Platte – das Sichern beim Beenden allein reicht deshalb nicht.
+pub const KEEP_EVERY: Duration = Duration::from_secs(60);
 /// Meldet sich ein Postfach so lange nicht, lädt Glass es neu (siehe `mail_tick`).
 const SILENT_FOR: Duration = Duration::from_secs(15 * 60);
 /// Breite der gemeinsamen Liste links in der Mail-Ansicht, solange die Oberfläche keine meldet (Leiste links), und
@@ -101,8 +104,6 @@ pub struct Mail {
     /// Gerade in der Liste angeklickte Mail: Das Postfach (Tab-Id) darf bis dahin einmal melden, wo Glass für
     /// sie klicken soll (iCloud, siehe `__glassMailOpen`). Sonst darf keine Seite Klicks bestellen.
     click: Option<(u32, Instant)>,
-    /// Wann `keep_signed_in` zuletzt lief.
-    kept: Option<Instant>,
 }
 
 impl Mail {
@@ -120,7 +121,7 @@ impl Mail {
             ..Default::default()
         });
         // Rechts ist zu Beginn nichts offen – erst ein Klick auf eine Mail (oder eine Kapsel) zeigt ein Postfach
-        Mail { boxes, file, shown: None, reader: false, list_width: None, view_open: Cell::new(false), round: Cell::new(0), click: None, kept: None }
+        Mail { boxes, file, shown: None, reader: false, list_width: None, view_open: Cell::new(false), round: Cell::new(0), click: None }
     }
 
     fn save(&self) {
@@ -280,6 +281,17 @@ fn keep(
 }
 
 impl Browser {
+    /// Jede Minute (UserEvent::MailKeep) und gleich nach dem Anmelden: Anmeldungen aus Sitzungs-Cookies dauerhaft
+    /// machen – für jedes verbundene, angemeldete Postfach, das das braucht (iCloud). Auch wenn sich im Postfach
+    /// nichts ändert: Apple tauscht sein Token trotzdem aus.
+    pub fn mail_keep(&self) {
+        for (b, p) in self.mail.boxes.iter().zip(&PROVIDERS) {
+            if let (false, true, Some(wv)) = (p.keep.is_empty(), b.unread.is_some(), b.tab.as_ref().and_then(|t| t.webview.as_ref())) {
+                keep_signed_in(wv, p.keep, None);
+            }
+        }
+    }
+
     /// Glass wird beendet: Anmeldungen, die nur aus Sitzungs-Cookies bestehen, noch mit dem neuesten Token sichern.
     /// `true`: Es läuft etwas – beenden erst mit UserEvent::ExitReady (oder nach kurzer Frist).
     pub fn mail_before_exit(&self) -> bool {
@@ -553,14 +565,9 @@ impl Browser {
         let unread = msg["mail"]["unread"].as_u64();
         let list = msg["mail"]["list"].clone();
         let changed = unread.is_some_and(|n| mb.unread != Some(n)) || (list.is_array() && mb.list != list);
+        let signed_in = unread.is_some() && mb.unread.is_none(); // eine Zahl heißt: angemeldet
         if let Some(n) = unread {
             mb.unread = Some(n);
-            // Eine Zahl heißt: angemeldet. Dann (höchstens alle 10 Minuten) die Anmeldung dauerhaft machen
-            let due = self.mail.kept.is_none_or(|t| t.elapsed() > Duration::from_secs(60));
-            if let (true, false, Some(wv)) = (due, PROVIDERS[p].keep.is_empty(), mb.tab.as_ref().and_then(|t| t.webview.as_ref())) {
-                keep_signed_in(wv, PROVIDERS[p].keep, None);
-                self.mail.kept = Some(Instant::now());
-            }
         }
         if list.is_array() {
             mb.list = list;
@@ -571,6 +578,9 @@ impl Browser {
         if url.is_some() && url != mb.url {
             mb.url = url;
             self.mail.save();
+        }
+        if signed_in {
+            self.mail_keep();
         }
         if changed {
             self.sync_mail();
