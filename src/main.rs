@@ -10,6 +10,9 @@ mod resize_preview;
 mod clipboard;
 mod drawing;
 mod downloads;
+mod session;
+mod history;
+mod sites;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -113,6 +116,12 @@ enum UserEvent {
     Drawing(u32, String, String),
     /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
     Download(u32, downloads::Change),
+    /// Suche auf der Seite: aktiver Treffer (ab 1, 0 = keiner) und Anzahl.
+    Found(u32, i32, i32),
+    /// Zoom der Seite hat sich geändert (Strg+Mausrad, Strg +/−, Glass selbst).
+    Zoom(u32, f64),
+    /// Ton: spielt gerade etwas, ist der Tab stumm?
+    Audio(u32, bool, bool),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -174,9 +183,26 @@ struct Tab {
     drawing: bool,
     /// Von einer Webseite geöffnet (Link in neuem Tab): War darin nur ein Download, schließt Glass ihn wieder.
     popup: bool,
+    /// Aus der letzten Sitzung oder wieder geöffnet: Die Seite lädt erst, wenn der Tab angezeigt wird.
+    lazy: bool,
+    /// Zoom der Seite (1.0 = 100 %) und die Website, zu der er gehört.
+    zoom: f64,
+    zoom_host: String,
+    /// Die Seite spielt Ton ab / ist stummgeschaltet (Lautsprecher am Tab).
+    audio: bool,
+    muted: bool,
 }
 
 impl Tab {
+    fn blank(id: u32, private: bool) -> Tab {
+        Tab {
+            id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: String::new(), loading: false,
+            private, blocked: 0, adblock_flag: ScriptSlot::default(), webview: None, home: false, pending_prompt: None,
+            hidden_since: Cell::new(None), drawing: false, popup: false, lazy: false, zoom: 1.0, zoom_host: String::new(),
+            audio: false, muted: false,
+        }
+    }
+
     /// Zeigt der Tab gerade eine Webseite (und nicht den Startbildschirm)?
     fn shows_page(&self) -> bool {
         self.webview.is_some() && !self.home
@@ -227,6 +253,16 @@ struct Browser {
     downloads: downloads::Shared,
     /// WebViews geschlossener Tabs, deren Downloads noch laufen – mit der WebView endete sonst auch der Download.
     parked: Vec<(u32, WebView)>,
+    /// Offene Tabs für den nächsten Start.
+    session: session::Session,
+    /// Zuletzt geschlossene Tabs (Platz in der Leiste, Adresse) für Strg+Umschalt+T, neuester zuletzt.
+    closed: Vec<(usize, session::Entry)>,
+    /// Besuchte Seiten (Vorschläge im Adressfeld, Strg+H).
+    history: history::Shared,
+    /// Zoom und Berechtigungen je Website.
+    sites: sites::Sites,
+    /// Tabs, deren Suche schon an Glass meldet (siehe `find`).
+    find_hooked: std::collections::HashSet<u32>,
 }
 
 impl Browser {
@@ -535,6 +571,7 @@ impl Browser {
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
                     "page": t.shows_page(), "home": t.home, "blocked": t.blocked, "adblock": !blocker::is_allowed(&t.url),
                     "drawing": t.drawing && t.shows_page(),
+                    "zoom": t.zoom, "audio": t.audio, "muted": t.muted,
                 })
             })
             .collect();
@@ -553,6 +590,49 @@ impl Browser {
             "panes": self.panes_in(self.resting_area()).iter().map(|(i, [x, y, w, h])| json!({ "id": self.tabs[*i].id, "x": x, "y": y, "w": w, "h": h })).collect::<Vec<_>>(),
         });
         let _ = self.ui.evaluate_script(&format!("window.render({state})"));
+        self.save_session();
+    }
+
+    /// Was von einem Tab für später bleibt: Adresse, Titel und Symbol (private und leere Tabs nichts).
+    fn entry_of(tab: &Tab) -> Option<session::Entry> {
+        let favicon = if tab.page_favicon.is_empty() { &tab.favicon } else { &tab.page_favicon };
+        (!tab.private && !tab.home && !tab.url.is_empty())
+            .then(|| session::Entry { url: tab.url.clone(), title: tab.title.clone(), favicon: favicon.clone() })
+    }
+
+    fn save_session(&self) {
+        let mut active = 0;
+        let mut entries = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if let Some(entry) = Self::entry_of(tab) {
+                if i <= self.active {
+                    active = entries.len();
+                }
+                entries.push(entry);
+            }
+        }
+        self.session.save(&entries, active.min(entries.len().saturating_sub(1)));
+    }
+
+    /// Gemerkten Tab an Stelle `index` einfügen, ohne ihn schon zu laden (siehe `Tab::lazy`).
+    fn insert_lazy(&mut self, index: usize, entry: session::Entry) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        let index = index.min(self.tabs.len());
+        self.tabs.insert(index, Tab { title: entry.title, favicon: entry.favicon, url: entry.url, lazy: true, ..Tab::blank(id, false) });
+        index
+    }
+
+    /// Strg+Umschalt+T: den zuletzt geschlossenen Tab an seinem alten Platz wieder öffnen. Steht nur ein leerer Tab
+    /// da (Startbildschirm), tritt der wieder geöffnete an seine Stelle.
+    fn reopen_tab(&mut self) {
+        let Some((index, entry)) = self.closed.pop() else { return };
+        let lone_empty = self.tabs.len() == 1 && self.tabs[0].webview.is_none() && self.tabs[0].url.is_empty();
+        if lone_empty {
+            self.tabs.clear();
+        }
+        let at = self.insert_lazy(index, entry);
+        self.activate(at);
     }
 
     fn index_of(&self, id: u32) -> Option<usize> {
@@ -565,8 +645,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), drawing: false, popup: false });
+        self.tabs.push(Tab { url: url_text, loading, ..Tab::blank(id, private) });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -588,6 +667,12 @@ impl Browser {
             self.split = None;
         }
         let tab = self.tabs.remove(idx);
+        if let Some(entry) = Self::entry_of(&tab) {
+            self.closed.push((idx, entry));
+            if self.closed.len() > 25 {
+                self.closed.remove(0);
+            }
+        }
         self.park(tab.id, tab.webview);
         if idx < self.active || self.active >= self.tabs.len() {
             self.active = self.active.saturating_sub(1);
@@ -630,6 +715,11 @@ impl Browser {
             self.apply_fullscreen(false);
         }
         self.active = idx.min(self.tabs.len() - 1);
+        // Gemerkter Tab: erst jetzt laden (navigate_to legt die Seite gleich richtig aus)
+        if std::mem::take(&mut self.tabs[self.active].lazy) {
+            let url = self.tabs[self.active].url.clone();
+            self.navigate_to(url);
+        }
         self.layout();
         if let Some(wv) = &self.tabs[self.active].webview {
             let _ = wv.focus();
@@ -665,6 +755,10 @@ impl Browser {
                     let (id, proxy) = (tab.id, self.proxy.clone());
                     let notify: downloads::Notify = Rc::new(move |change| { let _ = proxy.send_event(UserEvent::Download(id, change)); });
                     downloads::watch(&wv.webview(), tab.id, tab.private, &self.downloads, notify);
+                    watch_zoom_and_audio(wv, tab.id, &self.proxy);
+                    tab.zoom = self.sites.zoom(&url);
+                    tab.zoom_host = sites::host(&url);
+                    let _ = wv.zoom(tab.zoom);
                 }
                 self.layout();
             }
@@ -752,6 +846,74 @@ impl Browser {
         }
     }
 
+    /// Suche auf der Seite (Leiste der Oberfläche, Strg+F): WebView2 sucht und markiert, Glass zeigt nur das Feld.
+    fn find(&mut self, what: &str, term: &str) {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Environment15, ICoreWebView2_28};
+        use windows::core::{Interface, HSTRING};
+        let Some(tab) = self.tabs.get(self.active).filter(|t| t.shows_page()) else { return };
+        let (id, Some(wv)) = (tab.id, tab.webview.as_ref()) else { return };
+        let Ok(find) = (unsafe { wv.webview().cast::<ICoreWebView2_28>().and_then(|w| w.Find()) }) else { return };
+        if self.find_hooked.insert(id) {
+            let report = |proxy: EventLoopProxy<UserEvent>| {
+                move |find: Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Find>, _| {
+                    if let Some(find) = find {
+                        let (mut active, mut count) = (0, 0);
+                        unsafe {
+                            let _ = find.ActiveMatchIndex(&mut active);
+                            let _ = find.MatchCount(&mut count);
+                        }
+                        let _ = proxy.send_event(UserEvent::Found(id, active, count));
+                    }
+                    Ok(())
+                }
+            };
+            let mut token = 0;
+            unsafe {
+                let h = webview2_com::FindActiveMatchIndexChangedEventHandler::create(Box::new(report(self.proxy.clone())));
+                let _ = find.add_ActiveMatchIndexChanged(&h, &mut token);
+                let h = webview2_com::FindMatchCountChangedEventHandler::create(Box::new(report(self.proxy.clone())));
+                let _ = find.add_MatchCountChanged(&h, &mut token);
+            }
+        }
+        unsafe {
+            match what {
+                "start" if !term.is_empty() => {
+                    let Ok(env) = self.ui.environment().cast::<ICoreWebView2Environment15>() else { return };
+                    let Ok(options) = env.CreateFindOptions() else { return };
+                    let _ = options.SetFindTerm(&HSTRING::from(term));
+                    let _ = options.SetSuppressDefaultFindDialog(true);
+                    let _ = options.SetShouldHighlightAllMatches(true);
+                    let done = webview2_com::FindStartCompletedHandler::create(Box::new(|_| Ok(())));
+                    let _ = find.Start(&options, &done);
+                }
+                "next" => { let _ = find.FindNext(); }
+                "prev" => { let _ = find.FindPrevious(); }
+                _ => {
+                    let _ = find.Stop();
+                    let _ = self.ui.evaluate_script("window.setFound?.(0, 0)");
+                }
+            }
+        }
+    }
+
+    /// Zoom des aktiven Tabs: Stufen wie in Chrome, `0` = zurück auf 100 %.
+    fn zoom_step(&mut self, step: i32) {
+        const LEVELS: [f64; 15] = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+        let Some(tab) = self.tabs.get(self.active).filter(|t| t.shows_page()) else { return };
+        let now = tab.zoom;
+        let next = match step {
+            0 => 1.0,
+            s if s > 0 => LEVELS.iter().copied().find(|l| *l > now + 0.001).unwrap_or(now),
+            _ => LEVELS.iter().rev().copied().find(|l| *l < now - 0.001).unwrap_or(now),
+        };
+        if let Some(wv) = &tab.webview {
+            let _ = wv.zoom(next);
+        }
+        // Eigene Änderungen meldet WebView2 nicht zuverlässig über ZoomFactorChanged
+        let id = tab.id;
+        let _ = self.proxy.send_event(UserEvent::Zoom(id, next));
+    }
+
     /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
     fn show_update(&self) {
         if let Some((build, notes, _)) = &self.update {
@@ -807,6 +969,36 @@ impl Browser {
                 }
             }
             "new_tab" => self.new_tab(None, false),
+            "reopen_tab" => self.reopen_tab(),
+            "find_start" => self.find("start", value),
+            "find_next" => self.find("next", ""),
+            "find_prev" => self.find("prev", ""),
+            "find_stop" => self.find("stop", ""),
+            "zoom_in" => self.zoom_step(1),
+            "zoom_out" => self.zoom_step(-1),
+            "zoom_reset" => self.zoom_step(0),
+            "mute" => {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+                use windows::core::Interface;
+                let tab = id.and_then(|id| self.index_of(id)).map(|i| &self.tabs[i]);
+                if let Some(wv8) = tab.and_then(|t| t.webview.as_ref()).and_then(|wv| wv.webview().cast::<ICoreWebView2_8>().ok()) {
+                    let _ = unsafe { wv8.SetIsMuted(!tab.unwrap().muted) };
+                }
+            }
+            "history_remove" => { if let Ok(mut h) = self.history.lock() { h.remove(value) } }
+            "history_clear" => { if let Ok(mut h) = self.history.lock() { h.clear() } }
+            // Tastenkürzel aus einer Webseite, die Tafeln der Oberfläche öffnen (Verlauf, Downloads …)
+            "history" | "downloads" | "favorite" | "find" => {
+                let _ = self.ui.focus();
+                let _ = self.ui.evaluate_script(&format!("window.uiAction?.('{cmd}')"));
+            }
+            // Strg+1 … Strg+8: dieser Tab, Strg+9: der letzte
+            tab if tab.starts_with("tab_") => {
+                if let Ok(n) = tab[4..].parse::<usize>() {
+                    let last = self.tabs.len() - 1;
+                    self.activate(if n >= 9 { last } else { (n - 1).min(last) });
+                }
+            }
             // Schutzschild im Adressfeld: Werbeblocker für die Seite des aktiven Tabs an/aus, dann neu laden
             // Stift in der Leiste: Zeichenmodus der aktiven Seite an/aus (die Seite meldet den neuen Stand zurück)
             "draw" => {
@@ -1020,7 +1212,9 @@ impl Browser {
                         _ => {}
                     }
                 }
-                if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
+                let tab_number = cmd.len() == 5 && cmd.starts_with("tab_") && cmd.as_bytes()[4].is_ascii_digit() && cmd.as_bytes()[4] != b'0';
+                if tab_number || matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug" | "reopen_tab"
+                    | "history" | "downloads" | "favorite" | "find" | "zoom_in" | "zoom_out" | "zoom_reset") {
                     return self.command(&cmd, &Value::Null);
                 }
             }
@@ -1054,6 +1248,30 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
+            UserEvent::Found(id, active, count) => {
+                if self.tabs.get(self.active).is_some_and(|t| t.id == id) {
+                    let _ = self.ui.evaluate_script(&format!("window.setFound?.({active}, {count})"));
+                }
+            }
+            UserEvent::Zoom(id, factor) => {
+                if let Some(i) = self.index_of(id) {
+                    let tab = &mut self.tabs[i];
+                    tab.zoom = factor;
+                    if !tab.private && tab.shows_page() {
+                        self.sites.set_zoom(&tab.url, factor);
+                    }
+                    self.sync_ui();
+                }
+            }
+            UserEvent::Audio(id, audio, muted) => {
+                if let Some(i) = self.index_of(id) {
+                    let tab = &mut self.tabs[i];
+                    if (tab.audio, tab.muted) != (audio, muted) {
+                        (tab.audio, tab.muted) = (audio, muted);
+                        self.sync_ui();
+                    }
+                }
+            }
             UserEvent::Download(id, change) => {
                 let started = matches!(change, downloads::Change::Started { .. });
                 if let downloads::Change::Started { fresh: true } = change {
@@ -1105,9 +1323,15 @@ impl Browser {
             UserEvent::Title(id, title) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     tab.title = title;
-                    // Single-Page-Apps ändern die URL oft ohne echte Navigation.
+                    // Single-Page-Apps ändern die URL oft ohne echte Navigation – das ist dann auch ein Besuch.
+                    let before = tab.url.clone();
                     if let Some(Ok(url)) = tab.webview.as_ref().map(|wv| wv.url()) {
                         tab.url = url;
+                    }
+                    if !tab.private && !tab.loading {
+                        if let Ok(mut h) = self.history.lock() {
+                            if tab.url != before { h.visit(&tab.url, &tab.title) } else { h.title(&tab.url, &tab.title) }
+                        }
                     }
                     self.sync_ui();
                 }
@@ -1125,6 +1349,15 @@ impl Browser {
                 if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
                 if loading && self.clip.as_ref().is_some_and(|s| s.tab == id) { self.clip_end(true); }
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                    // Andere Website: deren gemerkten Zoom übernehmen
+                    if loading && !url.is_empty() && sites::host(&url) != tab.zoom_host {
+                        tab.zoom_host = sites::host(&url);
+                        let zoom = self.sites.zoom(&url);
+                        if let Some(wv) = tab.webview.as_ref().filter(|_| (zoom - tab.zoom).abs() > 0.001) {
+                            tab.zoom = zoom;
+                            let _ = wv.zoom(zoom);
+                        }
+                    }
                     if loading {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
@@ -1134,6 +1367,11 @@ impl Browser {
                     tab.loading = loading;
                     if !url.is_empty() {
                         tab.url = url;
+                    }
+                    if !loading && !tab.private {
+                        if let Ok(mut h) = self.history.lock() {
+                            h.visit(&tab.url, &tab.title);
+                        }
                     }
                     self.sync_ui();
                 }
@@ -1219,6 +1457,8 @@ fn build_content_webview(
         .with_url(url)
         .with_bounds(bounds)
         .with_devtools(true)
+        // Strg+Mausrad und Strg +/−/0 zoomen die Seite (wry schaltet das sonst ab)
+        .with_hotkeys_zoom(true)
         .with_initialization_script(if private { "" } else { include_str!("favicon-content.js") })
         .with_initialization_script(CONTENT_JS)
         .with_initialization_script(include_str!("passkey-policy.js"))
@@ -1320,6 +1560,43 @@ fn build_content_webview(
     }));
     let _ = unsafe { webview.controller().add_GotFocus(&handler, &mut token) };
     Ok(webview)
+}
+
+/// Zoom und Ton eines Tabs an Glass melden (Prozentanzeige im Adressfeld, Lautsprecher am Tab).
+fn watch_zoom_and_audio(webview: &WebView, id: u32, proxy: &EventLoopProxy<UserEvent>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+    use windows::core::Interface;
+    let mut token = 0;
+    let p = proxy.clone();
+    let zoom = webview2_com::ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+        if let Some(c) = controller {
+            let mut factor = 1.0;
+            unsafe { c.ZoomFactor(&mut factor)? };
+            let _ = p.send_event(UserEvent::Zoom(id, factor));
+        }
+        Ok(())
+    }));
+    let _ = unsafe { webview.controller().add_ZoomFactorChanged(&zoom, &mut token) };
+    let Ok(wv8) = webview.webview().cast::<ICoreWebView2_8>() else { return };
+    let audio = |p: EventLoopProxy<UserEvent>| {
+        move |sender: Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2>, _| {
+            if let Some(wv8) = sender.and_then(|s| s.cast::<ICoreWebView2_8>().ok()) {
+                let (mut playing, mut muted) = (windows::core::BOOL::default(), windows::core::BOOL::default());
+                unsafe {
+                    let _ = wv8.IsDocumentPlayingAudio(&mut playing);
+                    let _ = wv8.IsMuted(&mut muted);
+                }
+                let _ = p.send_event(UserEvent::Audio(id, playing.as_bool(), muted.as_bool()));
+            }
+            Ok(())
+        }
+    };
+    unsafe {
+        let h = webview2_com::IsDocumentPlayingAudioChangedEventHandler::create(Box::new(audio(proxy.clone())));
+        let _ = wv8.add_IsDocumentPlayingAudioChanged(&h, &mut token);
+        let h = webview2_com::IsMutedChangedEventHandler::create(Box::new(audio(proxy.clone())));
+        let _ = wv8.add_IsMutedChanged(&h, &mut token);
+    }
 }
 
 /// Werbeblocker: jede Anfrage der Seite (auch aus iframes und Service Workern) läuft durch die Filter-Engine;
@@ -1563,12 +1840,18 @@ fn main() -> wry::Result<()> {
     blocker::init(data_dir.clone());
     let drawings = drawing::Store::new(&data_dir);
     let downloads = downloads::Downloads::load(&data_dir);
+    let session = session::Session::new(&data_dir);
+    let history = history::History::load(&data_dir);
+    let sites = sites::Sites::load(&data_dir);
+    let h_protocol = history.clone();
     let mut web_context = WebContext::new(Some(data_dir));
 
     let p_ui = proxy.clone();
     let ui = WebViewBuilder::new_with_web_context(&mut web_context)
-        .with_asynchronous_custom_protocol("glass".into(), |_, request, responder| {
-            if request.uri().path() == "/suggest" {
+        .with_asynchronous_custom_protocol("glass".into(), move |_, request, responder| {
+            if request.uri().path() == "/history" {
+                responder.respond(history::respond(&h_protocol, request.uri().query()));
+            } else if request.uri().path() == "/suggest" {
                 // Netzwerkabruf im Hintergrund, damit die Oberfläche nicht hängt
                 let query = request.uri().query().map(str::to_owned);
                 std::thread::spawn(move || responder.respond(suggest::respond(query.as_deref())));
@@ -1632,10 +1915,19 @@ fn main() -> wry::Result<()> {
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         clips: clipboard::History::default(), clip: None, drawings, downloads, parked: Vec::new(),
+        session, closed: Vec::new(), history, sites, find_hooked: Default::default(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
-    if start_urls.is_empty() {
+    // Tabs der letzten Sitzung zurückholen; nur der aktive lädt sofort
+    let (restored, active) = browser.session.load();
+    for entry in restored {
+        browser.insert_lazy(usize::MAX, entry);
+    }
+    if !browser.tabs.is_empty() && start_urls.is_empty() {
+        browser.activate(active);
+    }
+    if browser.tabs.is_empty() && start_urls.is_empty() {
         browser.new_tab(None, false);
     }
     for url in start_urls {

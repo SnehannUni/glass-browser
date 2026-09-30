@@ -508,6 +508,82 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 50px -12px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
   }
   #downloads.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
+  /* ---------- Suchen auf der Seite (Strg+F) ---------- */
+  /* Schwebt rechts oben über der Seite, im dichten Glas der übrigen Tafeln über Webseiten */
+  #findbar {
+    position: fixed; z-index: 22; display: none; align-items: center; gap: 4px; width: 360px; height: 40px; padding: 0 5px 0 14px;
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(44, 46, 56, .92), rgba(28, 30, 38, .94));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 14px 40px -10px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #findbar.open { display: flex; animation: drop-in .35s var(--spring); transform-origin: top right; }
+  #findbar > svg { width: 14px; height: 14px; margin-right: 5px; color: var(--label-3); }
+  #find-input { flex: 1; height: 100%; }
+  #find-input::placeholder { color: var(--label-3); }
+  #find-count { padding: 0 4px; font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #find-count.none { color: #ff8a80; }
+  .find-sep { width: 1px; height: 18px; margin: 0 3px; background: rgba(255, 255, 255, .12); }
+  .find-key {
+    width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--label-2);
+    transition: background-color .15s, color .15s, opacity .15s;
+  }
+  .find-key svg { width: 14px; height: 14px; }
+  .find-key:is(:hover, .vh):not(:disabled) { background: rgba(255, 255, 255, .12); color: var(--label); }
+  .find-key:disabled { opacity: .35; }
+  /* ---------- Zoom und Ton ---------- */
+  /* Nur wenn die Seite nicht auf 100 % steht; ein Klick setzt zurück */
+  .zoom-pill {
+    height: 20px; min-width: 0; margin: 0 3px; padding: 0 7px; border-radius: 10px; flex: none;
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--label-2);
+    background: rgba(255, 255, 255, .1); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14);
+  }
+  .zoom-pill:is(:hover, .vh) { color: var(--label); background: rgba(255, 255, 255, .18); }
+  .zoom-pill.pop { animation: star-pop .45s var(--spring); }
+  /* Lautsprecher am Tab: spielt Ton ab oder ist stumm – ein Klick schaltet stumm */
+  .audio {
+    width: 20px; height: 20px; margin: 0 -4px 0 0; border-radius: 50%; flex: none; display: grid; place-items: center;
+    color: var(--label-2); transition: background-color .15s, color .15s;
+  }
+  .audio svg { width: 13px; height: 13px; }
+  .audio:is(:hover, .vh) { background: var(--control-hover); color: var(--label); }
+  .audio.muted { color: var(--label-3); }
+  .tab.compact .audio, body.side-slim .tab .audio { display: none; }
+  /* ---------- Verlauf (Strg+H) ---------- */
+  #history {
+    position: fixed; z-index: 20; display: none; flex-direction: column; width: 420px; height: min(560px, calc(100vh - 80px));
+    padding: 8px; border-radius: 18px;
+    background: linear-gradient(180deg, rgba(44, 46, 56, .92), rgba(28, 30, 38, .94));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 50px -12px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #history.open { display: flex; animation: drop-in .4s var(--spring); transform-origin: top right; }
+  #history.up { transform-origin: bottom left; }
+  .hs-search {
+    flex: none; display: flex; align-items: center; gap: 9px; height: 34px; margin-bottom: 4px; padding: 0 12px;
+    border-radius: 11px; background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .1);
+  }
+  .hs-search svg { width: 14px; height: 14px; color: var(--label-3); }
+  .hs-search input { flex: 1; height: 100%; }
+  .hs-search input::placeholder { color: var(--label-3); }
+  .hs-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .2) transparent; }
+  .hs-day { padding: 12px 10px 4px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
+  .hs-time { flex: none; font-size: 11px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .fv:is(:hover, .vh) .hs-time { display: none; }
+  .hs-foot { flex: none; display: flex; justify-content: flex-end; gap: 6px; padding: 8px 4px 0; border-top: 1px solid rgba(255, 255, 255, .07); }
+  .hs-btn { height: 26px; padding: 0 11px; border-radius: 13px; font-size: 12px; color: var(--label-2); transition: background-color .15s, color .15s; }
+  .hs-btn:is(:hover, .vh) { background: rgba(255, 255, 255, .1); color: var(--label); }
+  .hs-btn.danger { color: #ff8a80; }
+  .hs-btn.danger:is(:hover, .vh) { background: rgba(255, 110, 100, .16); color: #ffb3ab; }
+  /* Unten in den Favoriten: zum Verlauf */
+  .fv-more { display: flex; align-items: center; gap: 10px; height: 36px; margin-top: 4px; padding: 0 10px; border-radius: 12px; color: var(--label-2); }
+  .fv-more:is(:hover, .vh) { background: rgba(255, 255, 255, .1); color: var(--label); }
+  .fv-more svg { width: 14px; height: 14px; }
+  .fv-more .key-hint { margin-left: auto; font-size: 11px; color: var(--label-3); }
+  /* Besuchte Seite in den Vorschlägen: Titel, dahinter die Adresse */
+  .sg-url { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--label-3); }
+  .sg .sg-ic { width: 18px; height: 18px; flex: none; display: grid; place-items: center; }
+  .sg .sg-ic img { width: 16px; height: 16px; border-radius: 4px; }
   #downloads.up { transform-origin: bottom left; }
   .dl-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 8px 8px 10px; }
   .dl-head > span { font-size: 13px; font-weight: 600; color: var(--label); }
@@ -788,9 +864,10 @@
     <div class="center" data-drag>
       <form id="address" class="glass capsule address" data-lens data-button-group>
         <button type="button" class="key" id="addr-search" title="Suchen (Strg+L)" aria-label="Suche öffnen"><svg class="ic" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg></button>
-        <span id="addr-tab" data-group-skip><button type="button" class="close" id="addr-close" title="Tab schließen (Strg+W)"></button><span class="fav"></span><span class="title"></span></span>
+        <span id="addr-tab" data-group-skip><button type="button" class="close" id="addr-close" title="Tab schließen (Strg+W)"></button><span class="fav"></span><span class="title"></span><button type="button" class="audio" hidden></button></span>
         <input id="addr-input" spellcheck="false" autocomplete="off" placeholder="Suchbegriff oder Websitename eingeben">
         <button type="button" class="key shield" id="btn-shield" hidden></button>
+        <button type="button" class="key zoom-pill" id="btn-zoom" title="Zoom zurücksetzen (Strg+0)" hidden></button>
         <button type="button" class="key star" id="btn-star" hidden></button>
         <button type="button" class="key" id="btn-reload"></button>
         <button type="button" class="key engine" id="btn-engine"></button>
@@ -840,6 +917,20 @@
   <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
   <div id="downloads" class="glass" role="dialog" aria-label="Downloads"></div>
+  <div id="findbar" role="search" aria-label="Auf der Seite suchen">
+    <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg>
+    <input id="find-input" spellcheck="false" autocomplete="off" placeholder="Auf der Seite suchen">
+    <span id="find-count"></span>
+    <span class="find-sep"></span>
+    <button class="find-key" id="find-prev" title="Vorheriger Treffer (Umschalt+Eingabe)" disabled><svg viewBox="0 0 16 16"><path d="m4.5 9.8 3.5-3.5 3.5 3.5"/></svg></button>
+    <button class="find-key" id="find-next" title="Nächster Treffer (Eingabe)" disabled><svg viewBox="0 0 16 16"><path d="m4.5 6.3 3.5 3.5 3.5-3.5"/></svg></button>
+    <button class="find-key" id="find-close" title="Schließen (Esc)"><svg viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg></button>
+  </div>
+  <div id="history" class="glass" role="dialog" aria-label="Verlauf">
+    <label class="hs-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg><input id="hs-input" spellcheck="false" autocomplete="off" placeholder="Verlauf durchsuchen"></label>
+    <div class="hs-list" id="hs-list"></div>
+    <div class="hs-foot"><button class="hs-btn danger" id="hs-clear">Verlauf löschen</button></div>
+  </div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
   <div id="scrim"></div>
@@ -888,6 +979,8 @@
     pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
     penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
     doc: '<path d="M4.6 2h4.6L12 4.8v8.7c0 .3-.2.5-.5.5h-6.9a.5.5 0 0 1-.5-.5v-11c0-.3.2-.5.5-.5z"/><path d="M9.2 2v2.8H12"/>',
+    speaker: '<path d="M2.6 6.1h2.3l3.1-2.7v9.2L4.9 9.9H2.6z" fill="currentColor" fill-opacity=".18"/><path d="M10.4 5.7a3.2 3.2 0 0 1 0 4.6M12.3 3.9a5.8 5.8 0 0 1 0 8.2"/>',
+    speakerOff: '<path d="M2.6 6.1h2.3l3.1-2.7v9.2L4.9 9.9H2.6z" fill="currentColor" fill-opacity=".18"/><path d="m10.4 6.3 3.4 3.4m0-3.4-3.4 3.4"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
   };
   const svg = (name, cls = '') => `<svg class="${cls}" viewBox="0 0 16 16">${ICON[name]}</svg>`;
@@ -1065,7 +1158,7 @@
   // ---------- Schriftfarbe je nach Hintergrund ----------
   // Glass zeichnet das Wallpaper selbst hinter das Glas – also lässt sich messen, wie hell es unter jeder
   // Glasfläche ist. Wäre dunkle Schrift dort besser lesbar als helle, bekommt die Fläche .ink-dark.
-  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#downloads', '#private-note'];
+  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#private-note'];
   const probe = document.createElement('canvas');
   probe.width = 24; probe.height = 8;
   const probeCtx = probe.getContext('2d', { willReadFrequently: true });
@@ -1109,7 +1202,8 @@
     const el = document.createElement('div');
     el.className = 'tab';
     el.innerHTML = `<button class="close" title="Tab schließen (Strg+W)">${svg('close')}</button>
-                    <span class="tab-label"><span class="fav"></span><span class="title"></span></span>`;
+                    <span class="tab-label"><span class="fav"></span><span class="title"></span><button class="audio" hidden></button></span>`;
+    el.querySelector('.audio').addEventListener('click', () => send('mute', { id: tab.id }));
     el.dataset.id = tab.id;
     draggable(el, () => tab.id, () => send('activate', { id: tab.id }));
     el.addEventListener('auxclick', (e) => { if (e.button === 1) send('close_tab', { id: tab.id }); });
@@ -1122,7 +1216,7 @@
   function draggable(el, idOf, click) {
     el.addEventListener('pointerdown', (e) => {
       const id = idOf();
-      if (e.button !== 0 || e.target.closest('.close') || id == null) return;
+      if (e.button !== 0 || e.target.closest('.close, .audio') || id == null) return;
       // Partner für das Ablegen auf der Webseite: bei geteiltem Tab die andere Hälfte (→ Seiten tauschen),
       // sonst die gerade sichtbare Seite.
       const split = activeSplit();
@@ -1243,6 +1337,18 @@
     }
   }
 
+  // Lautsprecher, solange die Seite Ton abspielt – oder durchgestrichen, wenn sie stumm ist
+  function updateAudio(el, tab) {
+    const btn = el.querySelector('.audio');
+    const show = !!(tab.page && (tab.audio || tab.muted));
+    btn.hidden = !show;
+    if (!show) return;
+    const key = tab.muted ? 'speakerOff' : 'speaker';
+    if (btn.dataset.key !== key) { btn.dataset.key = key; btn.innerHTML = svg(key); }
+    btn.classList.toggle('muted', !!tab.muted);
+    btn.title = tab.muted ? 'Ton einschalten' : 'Tab stummschalten';
+  }
+
   // Tabs gleiten an ihren neuen Platz, wenn der aktive Tab die Leiste verlässt oder zurückkehrt (FLIP)
   const TAB_FLIP = { duration: 450, easing: 'cubic-bezier(.3, 1.2, .45, 1)' };
   function renderTabs() {
@@ -1303,6 +1409,7 @@
       const label = el.querySelector('.title');
       if (label.textContent !== title) { label.textContent = title; el.title = title; }
       updateFavicon(el, tab);
+      updateAudio(el, tab);
     });
     placeNewTab();
     requestAnimationFrame(placeLens);
@@ -1425,6 +1532,7 @@
     renderStar();
     renderShield();
     renderDraw();
+    renderZoom();
   }
 
   // ---------- Rechts oben: Zeichnen, nur auf Webseiten ----------
@@ -1438,6 +1546,72 @@
     drawBtn.classList.toggle('on', on);
     drawBtn.title = on ? 'Zeichnen beenden (Esc)' : 'Auf der Seite zeichnen';
   }
+  // Zoom der Seite, wenn nicht 100 %
+  const zoomBtn = $('btn-zoom');
+  let lastZoom = 1;
+  function renderZoom() {
+    const tab = activeTab(), zoom = tab?.zoom || 1;
+    zoomBtn.hidden = !tab?.page || Math.abs(zoom - 1) < .005;
+    zoomBtn.textContent = `${Math.round(zoom * 100)} %`;
+    if (Math.abs(zoom - lastZoom) > .005 && !zoomBtn.hidden) { zoomBtn.classList.remove('pop'); void zoomBtn.offsetWidth; zoomBtn.classList.add('pop'); }
+    lastZoom = zoom;
+  }
+  zoomBtn.addEventListener('click', () => send('zoom_reset'));
+  // Klick aufs Adressfeld öffnet sonst die Suche
+  $('addr-tab').querySelector('.audio').addEventListener('click', () => send('mute', { id: state.active }));
+
+  // ---------- Suchen auf der Seite (Strg+F; Rust: Browser::find) ----------
+  // WebView2 sucht und markiert die Treffer, die Leiste zeigt Feld, Zähler und Pfeile
+  const findBar = $('findbar'), findInput = $('find-input'), findCount = $('find-count');
+  let findTerm = '', findTimer = 0, findFor = '';
+  const findKey = () => `${state.active} ${activeTab()?.url}`;
+  function placeFind() {
+    if (!findBar.classList.contains('open')) return;
+    const pane = (state.panes || []).find((p) => p.id === state.active);
+    if (!pane) { closeFind(); return; }
+    const x = pane.x + pane.w - findBar.offsetWidth - 12, y = pane.y + 12;
+    Object.assign(findBar.style, { left: `${x}px`, top: `${y}px` });
+    send('overlay', { key: 'find', rect: { x, y, w: findBar.offsetWidth, h: findBar.offsetHeight, r: 20 } });
+  }
+  function openFind() {
+    if (!activeTab()?.page) return;
+    findFor = findKey();
+    findBar.classList.add('open');
+    placeFind();
+    findInput.focus({ preventScroll: true });
+    findInput.select();
+    if (findInput.value.trim()) runFind();
+  }
+  function closeFind() {
+    if (!findBar.classList.contains('open')) return;
+    findBar.classList.remove('open');
+    findTerm = '';
+    send('find_stop');
+    send('overlay', { key: 'find', rect: null });
+  }
+  function runFind() {
+    clearTimeout(findTimer);
+    findTerm = findInput.value;
+    if (!findTerm.trim()) { send('find_stop'); return; }
+    send('find_start', { value: findTerm });
+  }
+  window.setFound = (active, count) => {
+    const has = !!findTerm.trim();
+    findCount.textContent = !has ? '' : count ? `${Math.max(1, active)} von ${count}` : 'Keine Treffer';
+    findCount.classList.toggle('none', has && !count);
+    $('find-prev').disabled = $('find-next').disabled = !count;
+  };
+  findInput.addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(runFind, 120); });
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (findInput.value !== findTerm) runFind(); else send(e.shiftKey ? 'find_prev' : 'find_next');
+    } else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  });
+  $('find-next').addEventListener('click', () => send('find_next'));
+  $('find-prev').addEventListener('click', () => send('find_prev'));
+  $('find-close').addEventListener('click', closeFind);
+
   drawBtn.addEventListener('click', () => {
     send('draw');
     drawBtn.classList.remove('pop'); void drawBtn.offsetWidth; drawBtn.classList.add('pop');
@@ -1451,7 +1625,7 @@
     const title = tab ? tab.title || hostOf(tab.url) || 'Neuer Tab' : '';
     const label = slot.querySelector('.title');
     if (label.textContent !== title) label.textContent = title;
-    if (tab) updateFavicon(slot, tab);
+    if (tab) { updateFavicon(slot, tab); updateAudio(slot, tab); }
     // Neuer Tab rückt von den Tabs herüber ins Feld
     if (tab?.id !== slotTab) {
       if (slotTab !== null) { slot.classList.remove('swap'); void slot.offsetWidth; slot.classList.add('swap'); }
@@ -1630,23 +1804,38 @@
     clearTimeout(suggestTimer);
     const q = text.trim(), lower = q.toLowerCase();
     // Privat: frühere Suchen nicht anzeigen – der private Tab soll wie ein unbeschriebenes Blatt wirken
-    const past = (activeTab()?.private ? [] : q
+    const isPrivate = !!activeTab()?.private;
+    const past = (isPrivate ? [] : q
       ? historyOf(searchEngine().id).filter((h) => h.toLowerCase().includes(lower) && h.toLowerCase() !== lower).slice(0, 3)
       : historyOf(searchEngine().id).slice(0, 6)
     ).map((text) => ({ text, kind: 'history' }));
     const seq = ++suggestSeq;
-    // Ohne passende frühere Suchen nur ausblenden – closeSuggest() würde die folgende Google-Anfrage verwerfen
-    if (past.length) showSuggest(past); else hideSuggest();
+    // Besuchte Seiten zuerst, dann frühere Suchen, dann Google – höchstens acht Zeilen
+    let pages = [], more = [];
+    const render = () => {
+      if (seq !== suggestSeq || !editing()) return;
+      const items = [...pages, ...past, ...more].slice(0, 8);
+      // Ohne Treffer nur ausblenden – closeSuggest() würde die folgende Google-Anfrage verwerfen
+      if (items.length) showSuggest(items); else hideSuggest();
+    };
+    render();
     if (!q) return;
+    // Gleich gesucht (lokal, ohne Netz); verwandte Suchen zeigen keine Seiten
+    if (!isPrivate && !isRelated) {
+      fetch(`/history?q=${encodeURIComponent(q)}&limit=3`).then((r) => r.json()).then((list) => {
+        pages = list.map((p) => ({ text: p.title || hostOf(p.url), url: p.url, kind: 'page' }));
+        render();
+      }).catch(() => {});
+    }
     suggestTimer = setTimeout(async () => {
       try {
         const res = await fetch(`/suggest?q=${encodeURIComponent(q)}`);
         const list = res.ok ? await res.json() : [];
         if (seq !== suggestSeq || !editing()) return;
         const seen = new Set([...past.map((p) => p.text.toLowerCase()), ...(isRelated ? [lower] : [])]);
-        const more = list.filter((s) => !seen.has(s.toLowerCase())).slice(0, 7 - past.length)
+        more = list.filter((s) => !seen.has(s.toLowerCase())).slice(0, 7 - past.length)
           .map((text) => ({ text, kind: isRelated ? 'related' : 'suggest' }));
-        showSuggest([...past, ...more]);
+        render();
       } catch { /* offline: einfach keine Vorschläge */ }
     }, isRelated ? 0 : 50);
   }
@@ -1853,14 +2042,15 @@
   renderEngine();
 
   function showSuggest(items) {
-    suggestions = items.map((i) => i.text);
+    suggestions = items.map((i) => i.url || i.text); // Pfeiltasten: bei Seiten steht dann die Adresse im Feld
     if (!items.length) { closeSuggest(); return; }
     const lower = typed.trim().toLowerCase();
     const nodes = [];
     items.forEach((item, i) => {
       const row = document.createElement('div');
       row.className = 'sg';
-      row.innerHTML = svg(item.kind === 'history' ? 'clock' : 'search');
+      if (item.kind === 'page') row.append(siteIcon(item.url, 'sg-ic'));
+      else row.innerHTML = svg(item.kind === 'history' ? 'clock' : 'search');
       const label = document.createElement('span');
       label.className = 'sg-text';
       // Wie bei Google: getippter Teil normal, die Ergänzung fett
@@ -1870,6 +2060,12 @@
         label.append(item.text.slice(0, lower.length), rest);
       } else label.textContent = item.text;
       row.append(label);
+      if (item.kind === 'page') {
+        const url = document.createElement('span');
+        url.className = 'sg-url';
+        url.textContent = item.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+        row.append(url);
+      }
       if (item.kind === 'history') {
         const rm = document.createElement('button');
         rm.className = 'rm';
@@ -1884,7 +2080,7 @@
       }
       row.addEventListener('pointerdown', (e) => {
         e.preventDefault(); // Fokus im Feld behalten
-        input.value = item.text;
+        input.value = item.url || item.text;
         address.requestSubmit();
       });
       nodes.push(row);
@@ -2027,7 +2223,11 @@
       empty.textContent = 'Noch keine Favoriten. Tippe auf den Stern in der Adresszeile, um eine Seite zu speichern.';
       rows.push(empty);
     }
-    favPanel.replaceChildren(head, ...rows);
+    const more = document.createElement('div');
+    more.className = 'fv-more';
+    more.innerHTML = `${svg('clock')}<span>Verlauf</span><span class="key-hint">Strg+H</span>`;
+    more.addEventListener('click', () => { closeFavorites(); openHistory(); });
+    favPanel.replaceChildren(head, ...rows, more);
     placeFavorites();
   }
   function placeFavorites() {
@@ -2046,7 +2246,7 @@
   }
   function openFavorites() {
     clearTimeout(favTimer);
-    if (favPanel.classList.contains('open')) return;
+    if (favPanel.classList.contains('open') || histPanel.classList.contains('open')) return;
     closeSuggest(); closeDownloads();
     favPanel.classList.add('open');
     favBtn.classList.add('open');
@@ -2061,6 +2261,139 @@
     else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
   }
   const closeFavoritesSoon = () => { clearTimeout(favTimer); favTimer = setTimeout(closeFavorites, 250); };
+
+  // Logo einer Website (Favicon vom Server, sonst Weltkugel) – für Verlauf und Vorschläge
+  function siteIcon(url, cls) {
+    const box = document.createElement('span');
+    box.className = cls;
+    box.innerHTML = svg('globe');
+    const origin = parse(url)?.origin;
+    if (origin?.startsWith('http')) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = '';
+      img.onload = () => box.replaceChildren(img);
+      img.src = `${origin}/favicon.ico`;
+    }
+    return box;
+  }
+
+  // ---------- Verlauf (Strg+H; Rust: history.rs) ----------
+  // Tafel unter den Favoriten: Suchfeld, besuchte Seiten nach Tagen, Klick öffnet die Seite im aktuellen Tab.
+  const histPanel = $('history'), histInput = $('hs-input'), histList = $('hs-list'), histClear = $('hs-clear');
+  let histSeq = 0, histTimer = 0;
+  const dayName = (t) => {
+    const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((today - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+    if (days === 0) return 'Heute';
+    if (days === 1) return 'Gestern';
+    return d.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() !== today.getFullYear() && { year: 'numeric' }) });
+  };
+  async function loadHistory() {
+    const seq = ++histSeq, q = histInput.value.trim();
+    let list = [];
+    try { list = await (await fetch(`/history?q=${encodeURIComponent(q)}&limit=300`)).json(); } catch { /* leer */ }
+    if (seq !== histSeq) return;
+    const nodes = [];
+    let day = '';
+    for (const v of list) {
+      const name = dayName(v.time);
+      if (!q && name !== day) {
+        day = name;
+        nodes.push(Object.assign(document.createElement('div'), { className: 'hs-day', textContent: name }));
+      }
+      const row = document.createElement('div');
+      row.className = 'fv';
+      row.title = v.url;
+      row.append(siteIcon(v.url, 'fv-ic'));
+      const text = document.createElement('span');
+      text.className = 'fv-text';
+      text.innerHTML = '<span class="fv-title"></span><span class="fv-host"></span>';
+      text.firstChild.textContent = v.title || hostOf(v.url);
+      text.lastChild.textContent = q ? `${hostOf(v.url)} · ${dayName(v.time)}` : hostOf(v.url);
+      const time = Object.assign(document.createElement('span'), {
+        className: 'hs-time', textContent: new Date(v.time).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+      });
+      const rm = document.createElement('button');
+      rm.className = 'rm';
+      rm.title = 'Aus dem Verlauf entfernen';
+      rm.innerHTML = svg('close');
+      rm.addEventListener('click', (e) => { e.stopPropagation(); send('history_remove', { value: v.url }); row.remove(); });
+      row.append(text, time, rm);
+      row.addEventListener('click', () => { closeHistory(); send('navigate', { value: v.url }); });
+      nodes.push(row);
+    }
+    if (!nodes.length) {
+      nodes.push(Object.assign(document.createElement('div'), {
+        className: 'fv-empty', textContent: q ? 'Keine Treffer im Verlauf.' : 'Noch keine besuchten Seiten.',
+      }));
+    }
+    histList.replaceChildren(...nodes);
+    histClear.hidden = !list.length || !!q;
+  }
+  histInput.addEventListener('input', () => { clearTimeout(histTimer); histTimer = setTimeout(loadHistory, 80); });
+  histInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') histList.querySelector('.fv')?.click();
+  });
+  // Löschen mit Rückfrage im selben Knopf
+  let clearArmed = 0;
+  histClear.addEventListener('click', () => {
+    if (!clearArmed) {
+      histClear.textContent = 'Wirklich den ganzen Verlauf löschen?';
+      clearArmed = setTimeout(() => { clearArmed = 0; histClear.textContent = 'Verlauf löschen'; }, 4000);
+      return;
+    }
+    clearTimeout(clearArmed); clearArmed = 0;
+    histClear.textContent = 'Verlauf löschen';
+    send('history_clear');
+    loadHistory();
+  });
+  function placeHistory() {
+    if (!histPanel.classList.contains('open')) return;
+    const r = layoutRect(favBtn);
+    const up = sideLeft();
+    histPanel.classList.toggle('up', up);
+    Object.assign(histPanel.style, up
+      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - histPanel.offsetHeight)}px` }
+      : { left: `${Math.max(8, r.left + r.width - histPanel.offsetWidth)}px`, top: `${r.bottom + 8}px` });
+    send('overlay', { key: 'history', rect: { x: parseFloat(histPanel.style.left), y: parseFloat(histPanel.style.top),
+                                             w: histPanel.offsetWidth, h: histPanel.offsetHeight, r: 18 } });
+  }
+  function openHistory() {
+    if (!histPanel.classList.contains('open')) {
+      closeSuggest(); closeFavorites(); closeDownloads(); closeToolbarMenu();
+      histPanel.classList.add('open');
+      showChrome();
+    }
+    histInput.value = '';
+    placeHistory();
+    loadHistory();
+    histInput.focus({ preventScroll: true });
+  }
+  function closeHistory() {
+    if (!histPanel.classList.contains('open')) return;
+    histPanel.classList.remove('open');
+    send('overlay', { key: 'history', rect: null });
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (!histPanel.contains(e.target) && !e.target.closest?.('.fv-more')) closeHistory();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && histPanel.classList.contains('open')) { e.preventDefault(); closeHistory(); }
+  });
+  window.addEventListener('blur', closeHistory);
+  addEventListener('resize', placeHistory);
+
+  // Tastenkürzel, die eine Tafel öffnen (auch aus Webseiten, über Rust)
+  window.uiAction = (what) => {
+    if (what === 'find') openFind();
+    else if (what === 'history') histPanel.classList.contains('open') ? closeHistory() : openHistory();
+    else if (what === 'downloads') {
+      showChrome();
+      if (dlBtn.hidden) dlBtn.hidden = false; // Strg+J zeigt die Liste auch ohne Download in dieser Sitzung
+      dlPanel.classList.contains('open') ? closeDownloads() : openDownloads();
+    } else if (what === 'favorite' && activeTab()?.page) { showChrome(); star.click(); }
+  };
 
   // ---------- Downloads (Rust: downloads.rs) ----------
   // Das Symbol rechts oben erscheint erst mit dem ersten Download dieser Sitzung; ein Klick zeigt die letzten Downloads.
@@ -2551,7 +2884,7 @@
   }
   // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
   const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
-    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel, histPanel].some((el) => el.classList.contains('open'))
     || $('clipboard-history') // Zwischenablage-Liste: Ihr Glas zeigt ein Bild der Seite, die Seite darf nicht gleiten || document.body.matches('.modal, .wheel-open');
   // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
   let flyoutTimer = 0, flyoutPointer = null;
@@ -2598,7 +2931,7 @@
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || activeTab()?.drawing // beim Zeichnen bleibt der Stift zum Beenden sichtbar
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
-    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel, histPanel].some((el) => el.classList.contains('open'))
     || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
     hidden = hidden && !chromeKept();
@@ -2654,6 +2987,8 @@
     recordSearches();
     renderTabs();
     renderPanes(slideFrom);
+    // Anderer Tab oder andere Seite: Die Suche gehört zur alten
+    if (findBar.classList.contains('open')) { if (findKey() !== findFor) closeFind(); else placeFind(); }
     if (slideFrom) window.clipboardFollow?.(slideFrom, state.panes || []);
     renderAddress();
     if (switched && !hasPage && !activeTab()?.url) window.focusAddress();
@@ -2682,7 +3017,10 @@
     let cmd = null;
     if (e.ctrlKey && !e.altKey) {
       if (k === 'f8' && e.shiftKey) { e.preventDefault(); if (!e.repeat) window.AnimationDebug.toggle(); return; }
-      else if (k === 't') cmd = 'new_tab';
+      else if (k === 't') cmd = e.shiftKey ? 'reopen_tab' : 'new_tab';
+      else if (/^[1-9]$/.test(k) && !e.shiftKey) cmd = `tab_${k}`;
+      else if (['h', 'j', 'd', 'f'].includes(k) && !e.shiftKey) { e.preventDefault(); window.uiAction({ h: 'history', j: 'downloads', d: 'favorite', f: 'find' }[k]); return; }
+      else if (['+', '=', '-', '0'].includes(k) && activeTab()?.page) cmd = k === '0' ? 'zoom_reset' : k === '-' ? 'zoom_out' : 'zoom_in';
       else if (k === 'n' && e.shiftKey) cmd = 'private_tab';
       else if (k === 'w') cmd = 'close_tab';
       else if (k === 'r') cmd = 'reload';

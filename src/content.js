@@ -8,7 +8,15 @@
     if (key === 'f8' && e.shiftKey && e.repeat) { e.preventDefault(); return; }
     const cmd =
       key === 'f8' && e.shiftKey ? 'animation_debug' :
-      key === 't' ? 'new_tab' :
+      key === 't' ? (e.shiftKey ? 'reopen_tab' : 'new_tab') :
+      /^[1-9]$/.test(key) && !e.shiftKey ? `tab_${key}` :
+      key === 'h' && !e.shiftKey ? 'history' :
+      key === 'j' && !e.shiftKey ? 'downloads' :
+      key === 'd' && !e.shiftKey ? 'favorite' :
+      key === 'f' && !e.shiftKey ? 'find' :
+      key === '+' || key === '=' ? 'zoom_in' :
+      key === '-' ? 'zoom_out' :
+      key === '0' ? 'zoom_reset' :
       key === 'n' && e.shiftKey ? 'private_tab' :
       key === 'w' ? 'close_tab' :
       key === 'l' ? 'focus_address' :
@@ -18,6 +26,18 @@
     e.stopImmediatePropagation();
     window.ipc.postMessage(cmd);
   }, true);
+
+  // Strg+Mausrad (und Zusammenziehen auf dem Touchpad) zoomt über Glass – so kennt die Leiste immer den Stand.
+  // Das Touchpad schickt viele kleine Schritte: erst ab einer ganzen Rasterstufe weiterzoomen.
+  let wheelSum = 0;
+  window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    wheelSum += e.deltaY;
+    if (Math.abs(wheelSum) < 50) return;
+    window.ipc.postMessage(wheelSum < 0 ? 'zoom_in' : 'zoom_out');
+    wheelSum = 0;
+  }, { passive: false, capture: true });
 
   // ---------- Fenster am oberen Seitenrand anfassen ----------
   // Steht die Leiste links oder ist sie oben ausgeblendet, fehlt oben die Titelleiste. Leere Stellen im oberen
