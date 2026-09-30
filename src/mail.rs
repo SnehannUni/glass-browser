@@ -64,6 +64,21 @@ pub fn provider_of(url: &str) -> Option<usize> {
     PROVIDERS.iter().position(|p| p.hosts.contains(&host))
 }
 
+/// Eintrag in `mail.json`: `{"url": …, "signedIn": true}` – dann war man dort schon angemeldet. Alte Fassungen
+/// schrieben nur die Adresse, und zwar schon beim bloßen Anklicken: Solche Postfächer lädt Glass weiter, sie gelten
+/// aber erst als verbunden, wenn sie sich mit einer Zahl melden (sonst stünde „abgemeldet“ statt „+“ da).
+/// Nur Adressen des eigenen Anbieters – die Datei könnte von Hand geändert sein.
+fn saved_box(saved: &Value, p: usize) -> (Option<String>, bool) {
+    let entry = &saved[PROVIDERS[p].key];
+    let (url, known) = match entry.as_str() {
+        Some(url) => (Some(url), false),
+        None => (entry["url"].as_str(), entry["signedIn"].as_bool() == Some(true)),
+    };
+    let url = url.map(bare_url).filter(|u| provider_of(u) == Some(p) && PROVIDERS[p].listed).map(str::to_owned);
+    let known = known && url.is_some();
+    (url, known)
+}
+
 /// Adresse ohne Suchteil und Sprungmarke – nur so wird sie gespeichert.
 fn bare_url(url: &str) -> &str {
     url.split(['?', '#']).next().unwrap_or_default()
@@ -119,13 +134,8 @@ impl Mail {
         let file = data_dir.join("mail.json");
         let saved: Value = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         let boxes = std::array::from_fn(|p| {
-            // Nur Adressen des eigenen Anbieters – die Datei könnte von Hand geändert sein
-            let url = saved[PROVIDERS[p].key]
-                .as_str()
-                .map(bare_url)
-                .filter(|u| provider_of(u) == Some(p) && PROVIDERS[p].listed)
-                .map(str::to_owned);
-            Mailbox { known: url.is_some(), url, list: json!([]), ..Default::default() }
+            let (url, known) = saved_box(&saved, p);
+            Mailbox { known, url, list: json!([]), ..Default::default() }
         });
         // Rechts ist zu Beginn nichts offen – erst ein Klick auf eine Mail (oder eine Kapsel) zeigt ein Postfach
         Mail { boxes, file, shown: None, reader: false, list_width: None, view_open: Cell::new(false), round: Cell::new(0), click: None }
@@ -136,7 +146,7 @@ impl Mail {
             .boxes
             .iter()
             .zip(&PROVIDERS)
-            .filter_map(|(b, p)| Some((p.key.to_owned(), json!(b.url.as_ref().filter(|_| b.known)?))))
+            .filter_map(|(b, p)| Some((p.key.to_owned(), json!({ "url": b.url.as_ref().filter(|_| b.known)?, "signedIn": true }))))
             .collect();
         let _ = std::fs::write(&self.file, Value::Object(map).to_string());
     }
@@ -647,5 +657,18 @@ mod tests {
         assert_eq!(provider_by_key("yahoo"), None);
         assert_eq!(bare_url("https://outlook.office.com/mail/?deeplink=mail%2F&login_hint=x"), "https://outlook.office.com/mail/");
         assert_eq!(bare_url("https://mail.google.com/mail/u/0/#inbox/abc"), "https://mail.google.com/mail/u/0/");
+    }
+
+    #[test]
+    fn saved_mailboxes() {
+        let saved = json!({
+            "icloud": "https://www.icloud.com/mail/",                                    // alte Fassung: nur angeklickt?
+            "gmail": { "url": "https://mail.google.com/mail/u/0/", "signedIn": true },  // schon angemeldet
+            "outlook": { "url": "https://evil.example/mail/", "signedIn": true },       // fremder Host
+        });
+        assert_eq!(saved_box(&saved, 0), (Some("https://www.icloud.com/mail/".to_owned()), false));
+        assert_eq!(saved_box(&saved, 2), (Some("https://mail.google.com/mail/u/0/".to_owned()), true));
+        assert_eq!(saved_box(&saved, 1), (None, false));
+        assert_eq!(saved_box(&json!({}), 0), (None, false));
     }
 }
