@@ -82,6 +82,9 @@ struct Mailbox {
     list: Value,
     /// Adresse, unter der das Postfach zuletzt lief. `None`: nicht verbunden.
     url: Option<String>,
+    /// Hier war man schon einmal angemeldet – erst dann gilt das Postfach als verbunden (und wird gespeichert).
+    /// Nur angeklickt, aber nie angemeldet: in der Oberfläche weiter „+“, nicht „abgemeldet“.
+    known: bool,
     /// Zuletzt an die Seite gegebene Leseansicht (siehe `__glassMailReader` in mail-content.js).
     reader: Cell<bool>,
     /// Wann sich die Seite zuletzt gemeldet hat (bzw. geladen wurde) – siehe `mail_tick`.
@@ -115,15 +118,14 @@ impl Mail {
     pub fn new(data_dir: &std::path::Path) -> Self {
         let file = data_dir.join("mail.json");
         let saved: Value = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        let boxes = std::array::from_fn(|p| Mailbox {
+        let boxes = std::array::from_fn(|p| {
             // Nur Adressen des eigenen Anbieters – die Datei könnte von Hand geändert sein
-            url: saved[PROVIDERS[p].key]
+            let url = saved[PROVIDERS[p].key]
                 .as_str()
                 .map(bare_url)
                 .filter(|u| provider_of(u) == Some(p) && PROVIDERS[p].listed)
-                .map(str::to_owned),
-            list: json!([]),
-            ..Default::default()
+                .map(str::to_owned);
+            Mailbox { known: url.is_some(), url, list: json!([]), ..Default::default() }
         });
         // Rechts ist zu Beginn nichts offen – erst ein Klick auf eine Mail (oder eine Kapsel) zeigt ein Postfach
         Mail { boxes, file, shown: None, reader: false, list_width: None, view_open: Cell::new(false), round: Cell::new(0), click: None }
@@ -134,7 +136,7 @@ impl Mail {
             .boxes
             .iter()
             .zip(&PROVIDERS)
-            .filter_map(|(b, p)| Some((p.key.to_owned(), json!(b.url.as_ref()?))))
+            .filter_map(|(b, p)| Some((p.key.to_owned(), json!(b.url.as_ref().filter(|_| b.known)?))))
             .collect();
         let _ = std::fs::write(&self.file, Value::Object(map).to_string());
     }
@@ -378,10 +380,10 @@ impl Browser {
             .filter(|(_, (_, p))| p.listed)
             .map(|(i, (b, p))| {
                 let icon = b.tab.as_ref().map(|t| if t.page_favicon.is_empty() { &t.favicon } else { &t.page_favicon });
-                json!({ "key": p.key, "name": p.name, "connected": b.url.is_some(), "unread": b.unread,
+                json!({ "key": p.key, "name": p.name, "connected": b.known, "unread": b.unread,
                         "list": b.list, "icon": icon, "shown": self.mail.shown == Some(i),
                         "loading": b.tab.as_ref().is_some_and(|t| t.loading),
-                        "signedOut": b.url.is_some() && signed_out(i, b) })
+                        "signedOut": b.known && signed_out(i, b) })
             })
             .collect();
         let _ = self.ui.evaluate_script(&format!("window.mailState?.({})", json!({ "boxes": boxes })));
@@ -416,9 +418,9 @@ impl Browser {
     /// rechts erscheint dann seine Anmeldeseite.
     pub fn mail_show(&mut self, key: &str, item: Option<&str>) {
         let Some(p) = provider_by_key(key) else { return };
+        // (gespeichert erst nach der ersten Anmeldung, siehe `known`)
         if self.mail.boxes[p].url.is_none() {
             self.mail.boxes[p].url = Some(PROVIDERS[p].url.to_owned());
-            self.mail.save();
         }
         if self.mail.boxes[p].tab.is_none() {
             self.mail_load(p);
@@ -599,8 +601,11 @@ impl Browser {
         }
         let unread = msg["mail"]["unread"].as_u64();
         let list = msg["mail"]["list"].clone();
-        let changed = unread.is_some_and(|n| mb.unread != Some(n)) || (list.is_array() && mb.list != list);
         let signed_in = unread.is_some() && mb.unread.is_none(); // eine Zahl heißt: angemeldet
+        // Erste Anmeldung überhaupt: ab jetzt verbunden
+        let first = unread.is_some() && !mb.known;
+        mb.known |= first;
+        let changed = first || unread.is_some_and(|n| mb.unread != Some(n)) || (list.is_array() && mb.list != list);
         if let Some(n) = unread {
             mb.unread = Some(n);
         }
@@ -612,6 +617,8 @@ impl Browser {
         let url = mb.tab.as_ref().map(|t| bare_url(&t.url).to_owned()).filter(|u| provider_of(u) == Some(p));
         if url.is_some() && url != mb.url {
             mb.url = url;
+            self.mail.save();
+        } else if first {
             self.mail.save();
         }
         if signed_in {
