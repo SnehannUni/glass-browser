@@ -531,6 +531,44 @@
   .find-key svg { width: 14px; height: 14px; }
   .find-key:is(:hover, .vh):not(:disabled) { background: rgba(255, 255, 255, .12); color: var(--label); }
   .find-key:disabled { opacity: .35; }
+  /* ---------- Rechtsklick auf Webseiten ---------- */
+  #ctx-menu {
+    position: fixed; z-index: 40; display: none; min-width: 230px; max-width: 320px; padding: 5px; border-radius: 13px;
+    background: linear-gradient(180deg, rgba(46, 48, 58, .95), rgba(30, 32, 40, .96));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 0 0 .5px rgba(255, 255, 255, .08), 0 16px 44px -10px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #ctx-menu.open { display: block; animation: menu-in .18s var(--ease); }
+  @keyframes menu-in { from { opacity: 0; transform: scale(.97); } }
+  .cm-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; height: 28px; padding: 0 10px 0 26px; border-radius: 7px;
+    text-align: left; white-space: nowrap; color: var(--label); position: relative;
+  }
+  .cm-item > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .cm-item.sel:not(:disabled) { background: var(--blue); color: #fff; }
+  .cm-item:disabled { color: var(--label-3); }
+  .cm-key { font-size: 12px; color: var(--label-3); }
+  .cm-item.sel .cm-key { color: rgba(255, 255, 255, .75); }
+  .cm-item.checked::before { content: ""; position: absolute; left: 9px; top: 9px; width: 8px; height: 5px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; transform: rotate(-45deg); }
+  .cm-sep { height: 1px; margin: 5px 9px; background: rgba(255, 255, 255, .1); }
+  /* ---------- Berechtigungsanfragen ---------- */
+  /* Oben mittig über der Seite, bis man antwortet */
+  #perm {
+    position: fixed; z-index: 23; display: none; width: 420px; padding: 14px 14px 12px; border-radius: 20px;
+    background: linear-gradient(180deg, rgba(44, 46, 56, .94), rgba(28, 30, 38, .95));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 50px -12px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #perm.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top center; }
+  .perm-head { display: flex; gap: 12px; align-items: center; }
+  .perm-ic {
+    width: 34px; height: 34px; flex: none; border-radius: 11px; display: grid; place-items: center; color: #fff;
+    background: linear-gradient(180deg, #4ea3ff, #1f6fe8); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35);
+  }
+  .perm-ic svg { width: 17px; height: 17px; }
+  .perm-text { line-height: 1.4; color: var(--label-2); }
+  .perm-text b { color: var(--label); font-weight: 600; }
+  .perm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   /* ---------- Zoom und Ton ---------- */
   /* Nur wenn die Seite nicht auf 100 % steht; ein Klick setzt zurück */
   .zoom-pill {
@@ -917,6 +955,11 @@
   <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
   <div id="downloads" class="glass" role="dialog" aria-label="Downloads"></div>
+  <div id="ctx-menu" role="menu"></div>
+  <div id="perm" role="alertdialog" aria-labelledby="perm-text">
+    <div class="perm-head"><span class="perm-ic"></span><div class="perm-text" id="perm-text"></div></div>
+    <div class="perm-actions"><button class="up-btn" id="perm-deny">Nicht erlauben</button><button class="up-btn primary" id="perm-allow">Erlauben</button></div>
+  </div>
   <div id="findbar" role="search" aria-label="Auf der Seite suchen">
     <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></svg>
     <input id="find-input" spellcheck="false" autocomplete="off" placeholder="Auf der Seite suchen">
@@ -979,6 +1022,13 @@
     pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
     penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
     doc: '<path d="M4.6 2h4.6L12 4.8v8.7c0 .3-.2.5-.5.5h-6.9a.5.5 0 0 1-.5-.5v-11c0-.3.2-.5.5-.5z"/><path d="M9.2 2v2.8H12"/>',
+    camera: '<rect x="1.8" y="4.4" width="9" height="7.2" rx="1.8"/><path d="m10.8 7.2 3.4-2v5.6l-3.4-2"/>',
+    mic: '<rect x="5.8" y="1.8" width="4.4" height="7.6" rx="2.2"/><path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2"/>',
+    location: '<path d="M8 14.2s-4.6-4.1-4.6-7.6a4.6 4.6 0 0 1 9.2 0c0 3.5-4.6 7.6-4.6 7.6z"/><circle cx="8" cy="6.6" r="1.6"/>',
+    bell: '<path d="M4.2 11V7.2a3.8 3.8 0 0 1 7.6 0V11l1.2 1.3H3z"/><path d="M6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>',
+    clipboard: '<rect x="3.4" y="2.8" width="9.2" height="11.4" rx="1.8"/><path d="M6 2.8h4v2H6z"/>',
+    download: '<path d="M8 2.4v7.6M4.8 7 8 10.2 11.2 7"/><path d="M3 13.4h10"/>',
+    shieldQ: '<path d="M8 1.9 13 3.8v3.9c0 3-2.1 5.4-5 6.4-2.9-1-5-3.4-5-6.4V3.8z"/><path d="M8 10.6v.1M6.6 6.4a1.5 1.5 0 1 1 2 1.4c-.4.2-.6.5-.6.9v.4"/>',
     speaker: '<path d="M2.6 6.1h2.3l3.1-2.7v9.2L4.9 9.9H2.6z" fill="currentColor" fill-opacity=".18"/><path d="M10.4 5.7a3.2 3.2 0 0 1 0 4.6M12.3 3.9a5.8 5.8 0 0 1 0 8.2"/>',
     speakerOff: '<path d="M2.6 6.1h2.3l3.1-2.7v9.2L4.9 9.9H2.6z" fill="currentColor" fill-opacity=".18"/><path d="m10.4 6.3 3.4 3.4m0-3.4-3.4 3.4"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
@@ -2384,6 +2434,153 @@
   window.addEventListener('blur', closeHistory);
   addEventListener('resize', placeHistory);
 
+  // ---------- Rechtsklick auf Webseiten (Rust: page_menu.rs) ----------
+  // WebView2 nennt seine Einträge; Glass zeigt sie in eigenen Worten, ergänzt Tabs & Suche und lässt Edge-Eigenes weg.
+  // Der gewählte Eintrag läuft wieder in WebView2 – Kopieren, Speichern unter, Untersuchen …
+  const ctxMenu = $('ctx-menu');
+  let ctx = null, ctxSel = -1;
+  const MENU = {
+    back: 'Zurück', forward: 'Vorwärts', reload: 'Neu laden', saveAs: 'Seite speichern unter …', print: 'Drucken …',
+    undo: 'Rückgängig', redo: 'Wiederholen', cut: 'Ausschneiden', copy: 'Kopieren', paste: 'Einfügen',
+    pasteAndMatchStyle: 'Als reinen Text einfügen', selectAll: 'Alles auswählen', emoji: 'Emoji',
+    copyLinkLocation: 'Link kopieren', saveLinkAs: 'Link speichern unter …',
+    copyImage: 'Bild kopieren', copyImageLocation: 'Bildadresse kopieren', saveImageAs: 'Bild speichern unter …',
+    saveMediaAs: 'Speichern unter …', copyVideoFrame: 'Videobild kopieren', loop: 'Endlos wiederholen',
+    showAllControls: 'Steuerelemente anzeigen', pictureInPicture: 'Bild im Bild', inspectElement: 'Untersuchen',
+    // ersetzt durch eigene Einträge oder Teil von Edge, nicht von Glass
+    openLinkInNewWindow: null, openLinkInNewTab: null, webCapture: null, share: null, readAloud: null, translate: null,
+    createQrCode: null, addToCollections: null, visualSearch: null, copyLinkToHighlight: null, openLinkInProfile: null,
+  };
+  function showContextMenu(m) {
+    ctx = m;
+    const groups = [];
+    let group = [];
+    const flush = () => { if (group.length) groups.push(group); group = []; };
+    const custom = (label, run) => group.push({ label, run, enabled: true });
+    const tab = (value, extra = {}) => () => send('open_tab', { value, private: m.private, background: !m.private, ...extra });
+    if (m.link) {
+      custom('Link in neuem Tab öffnen', tab(m.link));
+      if (!m.private) custom('Link in privatem Tab öffnen', tab(m.link, { private: true, background: false }));
+      flush();
+    }
+    if (m.kind === 'image' && /^https?:/.test(m.source)) { custom('Bild in neuem Tab öffnen', tab(m.source)); flush(); }
+    const q = m.selection.trim().replace(/\s+/g, ' ');
+    if (q && !m.editable) {
+      custom(`Mit Google suchen: „${q.length > 30 ? `${q.slice(0, 29)}…` : q}“`,
+        tab(`https://www.google.com/search?q=${encodeURIComponent(q)}`, { background: false }));
+      flush();
+    }
+    const add = (items) => {
+      for (const it of items) {
+        if (it.kind === 'separator') { flush(); continue; }
+        if (it.kind === 'submenu') { flush(); add(it.children); flush(); continue; }
+        const mapped = MENU[it.name];
+        if (mapped === null) continue;
+        const label = mapped || it.label.replace(/&(.)/g, '$1');
+        if (!label) continue;
+        group.push({ label, shortcut: it.shortcut, enabled: it.enabled, checked: ['check', 'radio'].includes(it.kind) && it.checked, command: it.id });
+      }
+    };
+    add(m.items);
+    flush();
+    const nodes = [];
+    groups.forEach((g, i) => {
+      if (i) nodes.push(Object.assign(document.createElement('div'), { className: 'cm-sep' }));
+      for (const entry of g) {
+        const b = document.createElement('button');
+        b.className = `cm-item${entry.checked ? ' checked' : ''}`;
+        b.disabled = !entry.enabled;
+        b.innerHTML = '<span></span><span class="cm-key"></span>';
+        b.firstChild.textContent = entry.label;
+        b.lastChild.textContent = entry.shortcut || '';
+        b.addEventListener('click', () => runContextEntry(entry));
+        b.addEventListener('pointermove', () => markContext([...ctxMenu.querySelectorAll('.cm-item')].indexOf(b)));
+        b._entry = entry;
+        nodes.push(b);
+      }
+    });
+    if (!nodes.length) { send('menu_pick', { id: m.menu, value: -1 }); ctx = null; return; }
+    ctxMenu.replaceChildren(...nodes);
+    ctxMenu.classList.add('open');
+    ctxSel = -1;
+    // An der Mausposition, aber ganz im Fenster; unten zu wenig Platz → nach oben aufklappen
+    const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+    const x = Math.max(4, Math.min(m.x, innerWidth - w - 4));
+    const y = m.y + h + 4 > innerHeight ? Math.max(4, m.y - h) : m.y;
+    Object.assign(ctxMenu.style, { left: `${x}px`, top: `${y}px` });
+    send('overlay', { key: 'menu', rect: { x, y, w, h, r: 13 } });
+  }
+  function markContext(i) {
+    ctxSel = i;
+    ctxMenu.querySelectorAll('.cm-item').forEach((b, k) => b.classList.toggle('sel', k === i));
+  }
+  function runContextEntry(entry) {
+    if (!ctx || !entry.enabled) return;
+    const menu = ctx.menu;
+    closeContextMenu(false);
+    if (entry.run) { entry.run(); send('menu_pick', { id: menu, value: -1 }); }
+    else send('menu_pick', { id: menu, value: entry.command });
+  }
+  // `answer`: WebView2 Bescheid geben, dass nichts gewählt wurde
+  function closeContextMenu(answer = true) {
+    if (!ctx) return;
+    if (answer) send('menu_pick', { id: ctx.menu, value: -1 });
+    ctx = null;
+    ctxMenu.classList.remove('open');
+    send('overlay', { key: 'menu', rect: null });
+  }
+  window.showContextMenu = (m) => { if (ctx) closeContextMenu(false); showContextMenu(m); };
+  document.addEventListener('pointerdown', (e) => { if (ctx && !ctxMenu.contains(e.target)) closeContextMenu(); }, true);
+  document.addEventListener('contextmenu', (e) => { if (ctxMenu.contains(e.target)) e.preventDefault(); });
+  document.addEventListener('keydown', (e) => {
+    if (!ctx) return;
+    const items = [...ctxMenu.querySelectorAll('.cm-item')];
+    const usable = items.map((b, i) => (b.disabled ? -1 : i)).filter((i) => i >= 0);
+    if (e.key === 'Escape') closeContextMenu();
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const at = usable.indexOf(ctxSel), step = e.key === 'ArrowDown' ? 1 : -1;
+      markContext(usable[(at + step + usable.length) % usable.length] ?? usable[0]);
+    } else if (e.key === 'Enter' && ctxSel >= 0) items[ctxSel]._entry && runContextEntry(items[ctxSel]._entry);
+    else return;
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
+  window.addEventListener('blur', () => closeContextMenu());
+  addEventListener('resize', () => closeContextMenu());
+
+  // ---------- Berechtigungsanfragen (Rust: permissions.rs) ----------
+  const permBox = $('perm');
+  const PERM = {
+    camera: ['camera', 'deine Kamera verwenden'], microphone: ['mic', 'dein Mikrofon verwenden'],
+    geolocation: ['location', 'deinen Standort sehen'], notifications: ['bell', 'dir Mitteilungen senden'],
+    clipboard: ['clipboard', 'die Zwischenablage lesen'], downloads: ['download', 'mehrere Dateien herunterladen'],
+    midi: ['shieldQ', 'MIDI-Geräte steuern'], windows: ['shieldQ', 'Fenster auf deinen Bildschirmen anordnen'],
+    fonts: ['shieldQ', 'deine installierten Schriften sehen'], files: ['shieldQ', 'Dateien auf deinem PC bearbeiten'],
+    sensors: ['shieldQ', 'Bewegungssensoren verwenden'],
+  };
+  let permFor = null;
+  function placePerm() {
+    if (!permFor) return;
+    const pane = (state.panes || []).find((p) => p.id === state.active);
+    if (!pane) return;
+    const x = Math.round(pane.x + (pane.w - permBox.offsetWidth) / 2), y = pane.y + 12;
+    Object.assign(permBox.style, { left: `${x}px`, top: `${y}px` });
+    send('overlay', { key: 'perm', rect: { x, y, w: permBox.offsetWidth, h: permBox.offsetHeight, r: 20 } });
+  }
+  window.showPermission = (info) => {
+    permFor = info;
+    permBox.classList.toggle('open', !!info);
+    if (!info) { send('overlay', { key: 'perm', rect: null }); return; }
+    const [icon, what] = PERM[info.kind] || ['shieldQ', 'eine Berechtigung'];
+    permBox.querySelector('.perm-ic').innerHTML = svg(icon);
+    const text = $('perm-text');
+    text.replaceChildren(Object.assign(document.createElement('b'), { textContent: info.host }), ` möchte ${what}.`);
+    placePerm();
+    showChrome();
+  };
+  $('perm-allow').addEventListener('click', () => permFor && send('permission', { id: permFor.id, value: 'allow' }));
+  $('perm-deny').addEventListener('click', () => permFor && send('permission', { id: permFor.id, value: 'deny' }));
+  addEventListener('resize', placePerm);
+
   // Tastenkürzel, die eine Tafel öffnen (auch aus Webseiten, über Rust)
   window.uiAction = (what) => {
     if (what === 'find') openFind();
@@ -2987,6 +3184,7 @@
     recordSearches();
     renderTabs();
     renderPanes(slideFrom);
+    placePerm();
     // Anderer Tab oder andere Seite: Die Suche gehört zur alten
     if (findBar.classList.contains('open')) { if (findKey() !== findFor) closeFind(); else placeFind(); }
     if (slideFrom) window.clipboardFollow?.(slideFrom, state.panes || []);

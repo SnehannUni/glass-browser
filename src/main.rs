@@ -13,6 +13,8 @@ mod downloads;
 mod session;
 mod history;
 mod sites;
+mod page_menu;
+mod permissions;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -122,6 +124,10 @@ enum UserEvent {
     Zoom(u32, f64),
     /// Ton: spielt gerade etwas, ist der Tab stumm?
     Audio(u32, bool, bool),
+    /// Rechtsklick in einer Webseite (Beschreibung aus page_menu.rs).
+    ContextMenu(u32, Value),
+    /// Eine Webseite fragt nach einer Berechtigung (Nummer der Anfrage, siehe permissions.rs).
+    Permission(u32),
 }
 
 /// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
@@ -263,6 +269,10 @@ struct Browser {
     sites: sites::Sites,
     /// Tabs, deren Suche schon an Glass meldet (siehe `find`).
     find_hooked: std::collections::HashSet<u32>,
+    /// Offenes Rechtsklick-Menü einer Webseite.
+    menus: page_menu::Shared,
+    /// Wartende Berechtigungsanfragen.
+    permissions: permissions::Shared,
 }
 
 impl Browser {
@@ -667,6 +677,7 @@ impl Browser {
             self.split = None;
         }
         let tab = self.tabs.remove(idx);
+        self.permissions.borrow_mut().drop_tab(tab.id);
         if let Some(entry) = Self::entry_of(&tab) {
             self.closed.push((idx, entry));
             if self.closed.len() > 25 {
@@ -725,6 +736,43 @@ impl Browser {
             let _ = wv.focus();
         }
         self.sync_ui();
+        self.show_permission();
+    }
+
+    /// Älteste wartende Berechtigungsanfrage des aktiven Tabs in der Oberfläche zeigen (oder die Leiste schließen).
+    fn show_permission(&self) {
+        let pending = self.permissions.borrow();
+        let tab = self.tabs.get(self.active).map(|t| t.id).unwrap_or_default();
+        let info = pending.of_tab(tab).first().and_then(|id| pending.get(*id).map(|r| (id, r))).map(|(id, r)| {
+            json!({ "id": id, "host": sites::host(&r.url), "kind": r.kind })
+        });
+        let _ = self.ui.evaluate_script(&format!("window.showPermission?.({})", info.unwrap_or(Value::Null)));
+    }
+
+    /// Antwort auf eine Berechtigungsanfrage; normale Tabs merken sie sich für die Website.
+    fn answer_permission(&mut self, id: u32, allow: bool) {
+        let request = self.permissions.borrow_mut().answer(id, Some(allow));
+        if let Some(r) = request {
+            if self.index_of(r.tab).is_some_and(|i| !self.tabs[i].private) {
+                self.sites.set_permission(&r.url, r.kind, Some(allow));
+            }
+        }
+        self.show_permission();
+    }
+
+    /// Rechtsklick-Menü einer Webseite an die Oberfläche: Stelle in Fensterkoordinaten umrechnen.
+    fn show_context_menu(&mut self, id: u32, mut menu: Value) {
+        let menu_id = menu["menu"].as_u64().unwrap_or_default() as u32;
+        let Some((_, [x, y, ..])) = self.panes().into_iter().find(|(i, _)| self.tabs[*i].id == id) else {
+            page_menu::pick(&self.menus, menu_id, -1);
+            return;
+        };
+        let scale = self.window.scale_factor();
+        menu["x"] = json!(x + menu["x"].as_f64().unwrap_or_default() / scale);
+        menu["y"] = json!(y + menu["y"].as_f64().unwrap_or_default() / scale);
+        menu["private"] = json!(self.index_of(id).is_some_and(|i| self.tabs[i].private));
+        let _ = self.ui.focus();
+        let _ = self.ui.evaluate_script(&format!("window.showContextMenu?.({menu})"));
     }
 
     fn cycle(&mut self, step: isize) {
@@ -756,6 +804,10 @@ impl Browser {
                     let notify: downloads::Notify = Rc::new(move |change| { let _ = proxy.send_event(UserEvent::Download(id, change)); });
                     downloads::watch(&wv.webview(), tab.id, tab.private, &self.downloads, notify);
                     watch_zoom_and_audio(wv, tab.id, &self.proxy);
+                    let proxy = self.proxy.clone();
+                    page_menu::watch(&wv.webview(), &self.menus, move |menu| { let _ = proxy.send_event(UserEvent::ContextMenu(id, menu)); });
+                    let proxy = self.proxy.clone();
+                    permissions::watch(&wv.webview(), id, &self.permissions, move |request| { let _ = proxy.send_event(UserEvent::Permission(request)); });
                     tab.zoom = self.sites.zoom(&url);
                     tab.zoom_host = sites::host(&url);
                     let _ = wv.zoom(tab.zoom);
@@ -970,6 +1022,38 @@ impl Browser {
             }
             "new_tab" => self.new_tab(None, false),
             "reopen_tab" => self.reopen_tab(),
+            // Rechtsklick-Menü: Eintrag gewählt (-1: nur geschlossen); danach bekommt die Seite den Fokus zurück
+            "menu_pick" => {
+                page_menu::pick(&self.menus, id.unwrap_or_default(), msg["value"].as_i64().unwrap_or(-1) as i32);
+                if let Some(wv) = self.tabs.get(self.active).and_then(|t| t.webview.as_ref()) {
+                    let _ = wv.focus();
+                }
+            }
+            // Link oder Bild aus dem Menü: neuer Tab (im Hintergrund lädt er erst beim Anschauen)
+            "open_tab" if value.starts_with("https://") || value.starts_with("http://") => {
+                let private = msg["private"].as_bool().unwrap_or(false);
+                if msg["background"].as_bool().unwrap_or(false) && !private {
+                    let entry = session::Entry { url: value.to_owned(), title: String::new(), favicon: String::new() };
+                    self.insert_lazy(self.active + 1, entry);
+                    self.sync_ui();
+                } else {
+                    self.new_tab(Some(value.to_owned()), private);
+                }
+            }
+            "print" => {
+                use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_16, COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER};
+                use windows::core::Interface;
+                if let Some(wv) = self.tabs.get(self.active).filter(|t| t.shows_page()).and_then(|t| t.webview.as_ref()) {
+                    if let Ok(wv16) = wv.webview().cast::<ICoreWebView2_16>() {
+                        let _ = unsafe { wv16.ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER) };
+                    }
+                }
+            }
+            "permission" => {
+                if let Some(request) = id {
+                    self.answer_permission(request, value == "allow");
+                }
+            }
             "find_start" => self.find("start", value),
             "find_next" => self.find("next", ""),
             "find_prev" => self.find("prev", ""),
@@ -1248,6 +1332,17 @@ impl Browser {
                 }
             }
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
+            UserEvent::ContextMenu(id, menu) => self.show_context_menu(id, menu),
+            UserEvent::Permission(request) => {
+                let found = self.permissions.borrow().get(request).map(|r| (r.tab, r.url.clone(), r.kind));
+                let Some((tab, url, kind)) = found else { return true };
+                let private = self.index_of(tab).is_some_and(|i| self.tabs[i].private);
+                // Schon entschieden? Private Tabs übernehmen nur Sperren, keine Freigaben
+                match self.sites.permission(&url, kind) {
+                    Some(allow) if !private || !allow => { self.permissions.borrow_mut().answer(request, Some(allow)); }
+                    _ => self.show_permission(),
+                }
+            }
             UserEvent::Found(id, active, count) => {
                 if self.tabs.get(self.active).is_some_and(|t| t.id == id) {
                     let _ = self.ui.evaluate_script(&format!("window.setFound?.({active}, {count})"));
@@ -1348,6 +1443,11 @@ impl Browser {
                 }
                 if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
                 if loading && self.clip.as_ref().is_some_and(|s| s.tab == id) { self.clip_end(true); }
+                // Neue Seite: Anfragen der alten gelten nicht mehr
+                if loading && !self.permissions.borrow().of_tab(id).is_empty() {
+                    self.permissions.borrow_mut().drop_tab(id);
+                    self.show_permission();
+                }
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     // Andere Website: deren gemerkten Zoom übernehmen
                     if loading && !url.is_empty() && sites::host(&url) != tab.zoom_host {
@@ -1916,6 +2016,7 @@ fn main() -> wry::Result<()> {
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         clips: clipboard::History::default(), clip: None, drawings, downloads, parked: Vec::new(),
         session, closed: Vec::new(), history, sites, find_hooked: Default::default(),
+        menus: Default::default(), permissions: Default::default(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();

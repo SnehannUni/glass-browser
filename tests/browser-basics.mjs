@@ -16,7 +16,7 @@ const server = createServer((req, res) => {
   if (path === '/favicon.ico') { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
   if (path === '/alpha') res.end(page('Alpha Seite', '<p>Glasfenster und Glastür</p><p>noch ein Glas</p><p>kein Treffer hier</p>'));
-  else if (path === '/beta') res.end(page('Beta Seite', '<p>beta</p>'));
+  else if (path === '/beta') res.end(page('Beta Seite', '<p>beta</p><p><a id="link" href="/delta">Delta-Link</a></p>'));
   else res.end(page(`Seite ${path}`));
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -67,6 +67,11 @@ async function connect(target) {
     assert.ok(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
+  evaluate.rightClick = async selector => {
+    const { x, y } = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) await call('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 });
+  };
+  evaluate.gesture = async expression => (await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true })).result.value;
   evaluate.key = async (key, code, modifiers = 2) => {
     for (const type of ['rawKeyDown', 'keyUp']) await call('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0) });
   };
@@ -136,6 +141,46 @@ try {
   await beta.key('1', 'Digit1');
   await waitFor(() => ui(uiState(`state.active === state.tabs[0].id`)), 'ctrl+1');
 
+  // 5. Rechtsklick auf einen Link: Glas-Menü mit eigenen und WebView2-Einträgen
+  await ui(send('tab_2'));
+  await waitFor(() => ui(uiState(`state.active === state.tabs[1].id`)), 'back on beta');
+  await beta.rightClick('#link');
+  await waitFor(() => ui(`document.getElementById('ctx-menu').classList.contains('open')`), 'context menu open');
+  const labels = await ui(`[...document.querySelectorAll('#ctx-menu .cm-item')].map(b => b.firstChild.textContent)`);
+  console.log('menu', labels.join(' | '));
+  assert.ok(labels.includes('Link in neuem Tab öffnen') && labels.includes('Link kopieren'), 'link entries');
+  assert.ok(!labels.some(l => /fenster|window/i.test(l)), 'no new-window entry');
+  await ui(`[...document.querySelectorAll('#ctx-menu .cm-item')].find(b => b.textContent.startsWith('Link in neuem Tab')).click()`);
+  await waitFor(() => ui(uiState(`state.tabs.length === 3 && state.tabs[2].url.endsWith('/delta') && state.active === state.tabs[1].id`)), 'link opened in background tab');
+  await ui(send('close_tab', { id: await ui(uiState('state.tabs[2].id')) }));
+  await waitFor(() => ui(uiState(`state.tabs.length === 2`)), 'background tab closed');
+  // Esc schließt ohne Auswahl, die Seite bleibt bedienbar
+  await beta.rightClick('#link');
+  await waitFor(() => ui(`document.getElementById('ctx-menu').classList.contains('open')`), 'menu again');
+  await ui(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+  await waitFor(() => ui(`!document.getElementById('ctx-menu').classList.contains('open')`), 'menu closed');
+
+  // 6. Berechtigungen: Glas-Leiste statt WebView2-Dialog, Antwort je Website gemerkt
+  const asked = beta.gesture(`Notification.requestPermission()`);
+  await waitFor(() => ui(`document.getElementById('perm').classList.contains('open')`), 'permission prompt');
+  assert.match(await ui(`document.getElementById('perm-text').textContent`), /127\.0\.0\.1 möchte dir Mitteilungen senden/);
+  await ui(`document.getElementById('perm-allow').click()`);
+  assert.equal(await asked, 'granted');
+  await waitFor(() => ui(`!document.getElementById('perm').classList.contains('open')`), 'prompt closed');
+  const denied = beta.gesture(`new Promise(r => navigator.geolocation.getCurrentPosition(() => r('ok'), (e) => r('error ' + e.code)))`);
+  await waitFor(() => ui(`document.getElementById('perm-text').textContent.includes('Standort')`), 'geolocation prompt');
+  await ui(`document.getElementById('perm-deny').click()`);
+  assert.equal(await denied, 'error 1', 'geolocation denied');
+  const sites = JSON.parse(await readFile(resolve(profile, 'GlassBrowser/sites.json'), 'utf8'));
+  assert.deepEqual(sites.permissions[origin], { notifications: true, geolocation: false });
+  // Nach dem Neuladen fragt dieselbe Website nicht noch einmal
+  await beta(`location.reload()`);
+  await delay(800);
+  const again = await attach(u => u === `${origin}/beta`, 'beta after reload');
+  await waitFor(() => again(`document.readyState === 'complete'`), 'reloaded');
+  assert.equal(await again.gesture(`new Promise(r => navigator.geolocation.getCurrentPosition(() => r('ok'), (e) => r('error ' + e.code)))`), 'error 1');
+  assert.equal(await ui(`document.getElementById('perm').classList.contains('open')`), false, 'no second prompt');
+
   // 4. Neustart: beide Tabs sind wieder da, der aktive lädt, der andere erst beim Anschauen
   const session = JSON.parse(await readFile(resolve(profile, 'GlassBrowser/session.json'), 'utf8'));
   assert.equal(session.tabs.length, 2);
@@ -145,11 +190,13 @@ try {
   await waitFor(() => ui(`typeof window.render === 'function'`), 'UI ready after restart');
   await ui(`(() => { const r = window.render; window.render = (s) => { window.__s = s; r(s); }; window.__state = () => window.__s; })()`);
   await ui(send('ready'));
-  await waitFor(() => ui(uiState(`state.tabs.length === 2 && state.tabs[0].page && state.tabs[0].title === 'Alpha Seite'`)), 'session restored');
-  assert.equal(await ui(uiState(`state.tabs[1].page`)), false, 'background tab not loaded yet');
-  assert.equal((await targets()).some(t => t.url === `${origin}/beta`), false, 'no webview for lazy tab');
-  await ui(send('next_tab'));
-  await waitFor(() => ui(uiState(`state.tabs[1].page && state.tabs[1].title === 'Beta Seite'`)), 'lazy tab loads on activation');
+  // Aktiv war zuletzt Beta: die lädt sofort, Alpha erst beim Anschauen
+  await waitFor(() => ui(uiState(`state.tabs.length === 2 && state.active === state.tabs[1].id && state.tabs[1].page && state.tabs[1].title === 'Beta Seite'`)), 'session restored');
+  assert.equal(await ui(uiState(`state.tabs[0].page`)), false, 'background tab not loaded yet');
+  assert.equal(await ui(uiState(`state.tabs[0].title`)), 'Alpha Seite', 'title kept');
+  assert.equal((await targets()).some(t => t.url === `${origin}/alpha`), false, 'no webview for lazy tab');
+  await ui(send('prev_tab'));
+  await waitFor(() => ui(uiState(`state.tabs[0].page && state.tabs[0].title === 'Alpha Seite'`)), 'lazy tab loads on activation');
   console.log('browser basics test passed');
 } finally {
   clearTimeout(watchdog);
