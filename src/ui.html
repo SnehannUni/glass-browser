@@ -479,6 +479,80 @@
   }
   #favs.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
 
+  /* ---------- Downloads ---------- */
+  /* Rechts oben, ohne Knopf-Glas: nur das Symbol, so groß wie die Knöpfe daneben. Es erscheint erst mit dem ersten
+     Download dieser Sitzung. Solange etwas lädt, füllt sich der Ring um den Pfeil. */
+  .dl { width: var(--toolbar-control-height); height: var(--toolbar-control-height); border-radius: 50%; display: grid; place-items: center;
+        color: var(--label-2); transition: color .18s var(--ease), background-color .18s var(--ease); animation: pop-in .5s var(--spring); }
+  .dl:is(:hover, .vh), .dl.open { color: var(--label); }
+  .dl:focus-visible { outline: 2px solid var(--label); outline-offset: -2px; }
+  .dl svg { width: 22px; height: 22px; stroke-width: 1.4; overflow: visible; }
+  .dl .dl-ring { stroke: var(--blue); stroke-width: 1.6; opacity: 0; transform: rotate(-90deg); transform-origin: 8px 8px;
+                 transition: stroke-dasharray .25s linear, opacity .3s var(--ease); }
+  .dl.busy .dl-ring { opacity: 1; }
+  .dl.busy .dl-track { stroke-opacity: .28; }
+  /* Größe unbekannt: ein Bogen kreist */
+  .dl.unknown .dl-ring { stroke-dasharray: 22 78 !important; animation: dl-spin 1s linear infinite; }
+  @keyframes dl-spin { to { transform: rotate(270deg); } }
+  /* Neuer Download: der Pfeil fällt kurz hinein; fertig: das ganze Symbol federt */
+  .dl.drop .dl-arrow { animation: dl-drop .6s var(--spring); }
+  @keyframes dl-drop { from { transform: translateY(-5px); opacity: 0; } }
+  .dl.land svg { animation: dl-land .55s var(--spring); }
+  @keyframes dl-land { 35% { transform: scale(1.2); } }
+  /* Dichtes dunkles Glas wie das Update-Fenster: Hinter der Liste liegt eine Webseite, die das Glas nicht sieht */
+  #downloads {
+    position: fixed; z-index: 20; display: none; width: 330px; max-height: 60vh; overflow-y: auto; scrollbar-width: none;
+    padding: 8px; border-radius: 18px;
+    background: linear-gradient(180deg, rgba(44, 46, 56, .92), rgba(28, 30, 38, .94));
+    backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 50px -12px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+  #downloads.open { display: block; animation: drop-in .4s var(--spring); transform-origin: top right; }
+  #downloads.up { transform-origin: bottom left; }
+  .dl-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 8px 8px 10px; }
+  .dl-head > span { font-size: 13px; font-weight: 600; color: var(--label); }
+  .dl-clear { font-size: 12px; color: var(--label-3); transition: color .15s; }
+  .dl-clear:is(:hover, .vh) { color: var(--label); }
+  .dl-empty { padding: 6px 10px 12px; color: var(--label-3); }
+  .dlr { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 7px 8px 7px 8px; border-radius: 11px;
+         transition: background-color .15s; }
+  .dlr.done:is(:hover, .vh) { background: rgba(255, 255, 255, .07); }
+  /* Dateityp als kleines Kärtchen mit Endung, dezent eingefärbt nach Art */
+  .dl-file {
+    --tint: 255, 255, 255;
+    width: 30px; height: 36px; flex: none; border-radius: 6px; display: grid; place-items: end center; padding-bottom: 6px;
+    font-size: 8px; font-weight: 700; letter-spacing: .04em; color: rgba(var(--tint), .95); text-shadow: none;
+    background: linear-gradient(180deg, rgba(var(--tint), .16), rgba(var(--tint), .07));
+    box-shadow: inset 0 0 0 1px rgba(var(--tint), .22);
+  }
+  .dl-file svg { width: 14px; height: 14px; align-self: center; }
+  .dl-file.doc { --tint: 140, 185, 255; }
+  .dl-file.pdf { --tint: 255, 130, 120; }
+  .dl-file.zip { --tint: 255, 210, 110; }
+  .dl-file.img { --tint: 120, 225, 160; }
+  .dl-file.media { --tint: 205, 160, 255; }
+  .dl-file.app { --tint: 150, 215, 255; }
+  .dl-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .dl-name, .dl-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-name { color: var(--label); }
+  .dl-meta { font-size: 11.5px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .dlr.failed .dl-meta { color: #ff8a80; }
+  .dlr.missing :is(.dl-name, .dl-file) { opacity: .5; }
+  .dl-bar { height: 3px; margin-top: 2px; border-radius: 2px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+  .dl-bar > i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--blue); transition: width .25s linear; }
+  .dl-bar.unknown > i { width: 30% !important; animation: sweep-bar 1.2s ease-in-out infinite; }
+  @keyframes sweep-bar { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  /* Knöpfe einer fertigen Zeile erst beim Drüberfahren; Abbrechen und Fortsetzen stehen immer da */
+  .dl-act, .dlr .rm {
+    width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--label-2);
+    opacity: 0; transition: opacity .15s, background-color .15s, color .15s;
+  }
+  .dl-act svg { width: 14px; height: 14px; }
+  .dlr .rm svg { width: 10px; height: 10px; }
+  .dlr:is(:hover, .vh) :is(.dl-act, .rm), .dlr:is(.progress, .failed) .dl-act { opacity: 1; }
+  .dlr .rm { margin-left: -8px; }
+  :is(.dl-act, .dlr .rm):is(:hover, .vh) { background: rgba(255, 255, 255, .12); color: var(--label); opacity: 1; }
+
   /* ---------- Update-Modal ---------- */
   #update {
     position: fixed; z-index: 30; left: 50%; top: 50%; width: 360px; margin: -110px 0 0 -180px;
@@ -732,6 +806,7 @@
       <button class="glass tab-new" id="btn-new" title="Neuer Tab (Strg+T)" data-lens><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
     </nav>
     <div class="side right">
+    <button class="dl" id="btn-downloads" title="Downloads" aria-haspopup="dialog" hidden><svg viewBox="0 0 16 16"><circle class="dl-track" cx="8" cy="8" r="6.6"/><circle class="dl-ring" cx="8" cy="8" r="6.6" pathLength="100" stroke-dasharray="0 100"/><path class="dl-arrow" d="M8 4.6v6M5.6 8.3 8 10.7l2.4-2.4"/></svg></button>
     <div class="glass capsule tools" id="page-tools" data-lens data-button-group hidden>
       <button class="key" id="btn-draw"></button>
     </div>
@@ -764,6 +839,7 @@
   <div id="suggest" class="glass"></div>
   <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
+  <div id="downloads" class="glass" role="dialog" aria-label="Downloads"></div>
 
   <!-- Update-Modal: erscheint, wenn auf GitHub eine neuere Version liegt (siehe update.rs) -->
   <div id="scrim"></div>
@@ -811,6 +887,7 @@
     check: '<path d="m3.5 8.5 3 3 6-7"/>',
     pen: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z"/><path d="m10 4 2.3 2.3"/>',
     penOn: '<path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.8 12.8l-3.1.8.8-3.1z" fill="currentColor" fill-opacity=".25"/><path d="m10 4 2.3 2.3"/>',
+    doc: '<path d="M4.6 2h4.6L12 4.8v8.7c0 .3-.2.5-.5.5h-6.9a.5.5 0 0 1-.5-.5v-11c0-.3.2-.5.5-.5z"/><path d="M9.2 2v2.8H12"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
   };
   const svg = (name, cls = '') => `<svg class="${cls}" viewBox="0 0 16 16">${ICON[name]}</svg>`;
@@ -988,7 +1065,7 @@
   // ---------- Schriftfarbe je nach Hintergrund ----------
   // Glass zeichnet das Wallpaper selbst hinter das Glas – also lässt sich messen, wie hell es unter jeder
   // Glasfläche ist. Wäre dunkle Schrift dort besser lesbar als helle, bekommt die Fläche .ink-dark.
-  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#private-note'];
+  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#downloads', '#private-note'];
   const probe = document.createElement('canvas');
   probe.width = 24; probe.height = 8;
   const probeCtx = probe.getContext('2d', { willReadFrequently: true });
@@ -1970,7 +2047,7 @@
   function openFavorites() {
     clearTimeout(favTimer);
     if (favPanel.classList.contains('open')) return;
-    closeSuggest();
+    closeSuggest(); closeDownloads();
     favPanel.classList.add('open');
     favBtn.classList.add('open');
     renderFavorites();
@@ -1984,6 +2061,171 @@
     else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
   }
   const closeFavoritesSoon = () => { clearTimeout(favTimer); favTimer = setTimeout(closeFavorites, 250); };
+
+  // ---------- Downloads (Rust: downloads.rs) ----------
+  // Das Symbol rechts oben erscheint erst mit dem ersten Download dieser Sitzung; ein Klick zeigt die letzten Downloads.
+  // Die Oberfläche kennt nur Nummern – Dateipfade bleiben in Rust.
+  const dlBtn = $('btn-downloads'), dlPanel = $('downloads'), dlRing = dlBtn.querySelector('.dl-ring');
+  let downloads = [];
+  const dlRows = new Map(), dlRate = new Map(); // Nummer → Zeile bzw. { t, bytes, rate } für die Restzeit
+  const decimal = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
+  function fmtSize(b) {
+    if (b < 1024) return `${b} Byte`;
+    let v = b / 1024, i = 0;
+    while (v >= 1024 && i < 3) { v /= 1024; i++; }
+    return `${v < 10 ? decimal.format(v) : Math.round(v)} ${['KB', 'MB', 'GB', 'TB'][i]}`;
+  }
+  // Tempo über die letzten Meldungen geglättet, sonst springt die Restzeit
+  function sampleRate(d) {
+    const now = performance.now(), s = dlRate.get(d.id);
+    if (!s) { dlRate.set(d.id, { t: now, bytes: d.received, rate: 0 }); return; }
+    const dt = (now - s.t) / 1000;
+    if (dt < .5) return;
+    const r = Math.max(0, (d.received - s.bytes) / dt);
+    s.rate = s.rate ? s.rate * .7 + r * .3 : r;
+    s.t = now; s.bytes = d.received;
+  }
+  function remaining(d) {
+    const rate = dlRate.get(d.id)?.rate;
+    if (!d.total || !rate) return '';
+    const sec = Math.max(1, Math.round((d.total - d.received) / rate));
+    return sec < 60 ? `noch ${sec} s` : sec < 3600 ? `noch ${Math.round(sec / 60)} min` : `noch ${decimal.format(sec / 3600)} h`;
+  }
+  const DL_KINDS = {
+    pdf: ['PDF'], zip: ['ZIP', 'RAR', '7Z', 'TAR', 'GZ', 'XZ'], img: ['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'HEIC', 'BMP', 'ICO'],
+    media: ['MP3', 'MP4', 'WAV', 'FLAC', 'M4A', 'MOV', 'MKV', 'WEBM', 'AVI', 'OGG'], app: ['EXE', 'MSI', 'MSIX', 'APPX', 'BAT', 'CMD'],
+  };
+  const dlKind = (ext) => Object.keys(DL_KINDS).find((k) => DL_KINDS[k].includes(ext)) || 'doc';
+  function dlMeta(d) {
+    const host = hostOf(d.url);
+    if (d.state === 'progress') {
+      const amount = d.total ? `${fmtSize(d.received)} von ${fmtSize(d.total)}` : fmtSize(d.received);
+      return [amount, remaining(d)].filter(Boolean).join(' · ');
+    }
+    if (d.state === 'failed') return 'Fehlgeschlagen';
+    if (d.state === 'missing') return 'Gelöscht oder verschoben';
+    return [d.total ? fmtSize(d.total) : '', host].filter(Boolean).join(' · ');
+  }
+  // Zeilen bleiben bestehen und werden nur aktualisiert: neu gebaut, liefe ein Klick auf „Abbrechen“ während
+  // des Fortschritts ins Leere
+  function buildRow(el, d) {
+    el.className = `dlr ${d.state}`;
+    el.dataset.state = `${d.state}:${d.resumable}`;
+    const ext = (d.name.match(/\.([a-z0-9]{1,4})$/i)?.[1] || '').toUpperCase();
+    el.innerHTML = `<span class="dl-file ${dlKind(ext)}"></span><span class="dl-text"><span class="dl-name"></span><span class="dl-meta"></span>${
+      d.state === 'progress' ? '<span class="dl-bar"><i></i></span>' : ''}</span>`;
+    const file = el.querySelector('.dl-file');
+    if (ext) file.textContent = ext; else file.innerHTML = svg('doc');
+    el.querySelector('.dl-name').textContent = d.name;
+    el.title = d.state === 'done' ? `${d.name} öffnen` : d.name;
+    const button = (cls, icon, title, cmd) => {
+      const b = document.createElement('button');
+      b.className = cls; b.title = title; b.innerHTML = svg(icon);
+      b.addEventListener('click', (e) => { e.stopPropagation(); send(cmd, { id: d.id }); });
+      el.append(b);
+    };
+    if (d.state === 'progress') button('dl-act', 'close', 'Abbrechen', 'download_cancel');
+    if (d.state === 'done') button('dl-act', 'search', 'Im Ordner anzeigen', 'download_show');
+    if (d.state === 'failed' && d.resumable) button('dl-act', 'reload', 'Fortsetzen', 'download_resume');
+    if (d.state !== 'progress') button('rm', 'close', 'Aus der Liste entfernen', 'download_remove');
+  }
+  function renderDownloads() {
+    if (!dlPanel.classList.contains('open')) return;
+    const head = dlPanel.querySelector('.dl-head') || Object.assign(document.createElement('div'), {
+      className: 'dl-head', innerHTML: '<span>Downloads</span><button class="dl-clear" title="Fertige Downloads aus der Liste nehmen">Liste leeren</button>',
+    });
+    head.querySelector('.dl-clear').hidden = !downloads.some((d) => d.state !== 'progress');
+    const ids = new Set(downloads.map((d) => d.id));
+    for (const [id, el] of dlRows) if (!ids.has(id)) { el.remove(); dlRows.delete(id); }
+    const rows = downloads.map((d) => {
+      let el = dlRows.get(d.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.addEventListener('click', () => {
+          if (!el.classList.contains('done')) return;
+          send('download_open', { id: d.id });
+          closeDownloads();
+        });
+        dlRows.set(d.id, el);
+      }
+      if (el.dataset.state !== `${d.state}:${d.resumable}`) buildRow(el, d);
+      el.querySelector('.dl-meta').textContent = dlMeta(d);
+      const bar = el.querySelector('.dl-bar');
+      if (bar) {
+        bar.classList.toggle('unknown', !d.total);
+        bar.firstChild.style.width = d.total ? `${Math.min(100, (100 * d.received) / d.total)}%` : '';
+      }
+      return el;
+    });
+    let empty = dlPanel.querySelector('.dl-empty');
+    if (!rows.length) empty ||= Object.assign(document.createElement('div'), { className: 'dl-empty', textContent: 'Keine Downloads' });
+    else empty = null;
+    const want = [head, ...rows, ...(empty ? [empty] : [])];
+    // Nur umhängen, wenn sich die Reihenfolge geändert hat
+    if (want.length !== dlPanel.children.length || want.some((el, i) => dlPanel.children[i] !== el)) dlPanel.replaceChildren(...want);
+    placeDownloads();
+  }
+  function placeDownloads() {
+    if (!dlPanel.classList.contains('open')) return;
+    const r = layoutRect(dlBtn);
+    // Leiste links: das Symbol sitzt unten – die Liste klappt nach oben auf
+    const up = sideLeft();
+    dlPanel.classList.toggle('up', up);
+    Object.assign(dlPanel.style, up
+      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - dlPanel.offsetHeight)}px` }
+      : { left: `${Math.max(8, Math.min(innerWidth - dlPanel.offsetWidth - 8, r.left + r.width / 2 + 24 - dlPanel.offsetWidth))}px`, top: `${r.bottom + 6}px` });
+    send('overlay', { key: 'downloads', rect: { x: parseFloat(dlPanel.style.left), y: parseFloat(dlPanel.style.top),
+                                               w: dlPanel.offsetWidth, h: dlPanel.offsetHeight, r: 18 } });
+    scheduleInk();
+  }
+  function openDownloads() {
+    if (dlPanel.classList.contains('open')) return;
+    closeSuggest(); closeFavorites(); closeToolbarMenu();
+    dlPanel.classList.add('open');
+    dlBtn.classList.add('open');
+    dlBtn.setAttribute('aria-expanded', 'true');
+    renderDownloads();
+  }
+  function closeDownloads() {
+    if (!dlPanel.classList.contains('open')) return;
+    dlPanel.classList.remove('open');
+    dlBtn.classList.remove('open');
+    dlBtn.setAttribute('aria-expanded', 'false');
+    send('overlay', { key: 'downloads', rect: null });
+  }
+  dlBtn.addEventListener('click', () => (dlPanel.classList.contains('open') ? closeDownloads() : openDownloads()));
+  dlPanel.addEventListener('click', (e) => { if (e.target.closest('.dl-clear')) send('download_clear'); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!dlPanel.contains(e.target) && !dlBtn.contains(e.target)) closeDownloads();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && dlPanel.classList.contains('open')) { e.preventDefault(); closeDownloads(); dlBtn.focus({ preventScroll: true }); }
+  });
+  // Klick in eine Webseite oder in ein anderes Programm (z. B. die gerade geöffnete Datei)
+  window.addEventListener('blur', closeDownloads);
+  addEventListener('resize', placeDownloads);
+  const replay = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
+  window.setDownloads = ({ visible, items }, started) => {
+    const before = new Map(downloads.map((d) => [d.id, d.state]));
+    downloads = items;
+    for (const id of dlRate.keys()) if (!items.some((d) => d.id === id && d.state === 'progress')) dlRate.delete(id);
+    items.forEach((d) => { if (d.state === 'progress') sampleRate(d); });
+    dlBtn.hidden = !visible;
+    // Ring: Anteil aller laufenden Downloads zusammen; kennt einer seine Größe nicht, kreist ein Bogen
+    const busy = items.filter((d) => d.state === 'progress');
+    const total = busy.reduce((s, d) => s + d.total, 0), got = busy.reduce((s, d) => s + d.received, 0);
+    const unknown = busy.some((d) => !d.total);
+    dlBtn.classList.toggle('busy', busy.length > 0);
+    dlBtn.classList.toggle('unknown', unknown);
+    dlRing.style.strokeDasharray = `${busy.length && !unknown ? Math.min(100, (100 * got) / total) : 0} 100`;
+    dlBtn.title = busy.length ? `Downloads – ${busy.length === 1 ? '1 läuft' : `${busy.length} laufen`}` : 'Downloads';
+    if (started) {
+      replay(dlBtn, 'drop');
+      showChrome(); // die Leiste kommt kurz zurück, damit man das Symbol sieht
+    } else if (items.some((d) => d.state === 'done' && before.get(d.id) === 'progress')) replay(dlBtn, 'land');
+    renderDownloads();
+  };
+  dlBtn.addEventListener('animationend', (e) => { if (/^dl-(drop|land)$/.test(e.animationName)) dlBtn.classList.remove('drop', 'land'); });
 
   // ---------- Update-Modal (Rust meldet ein neueres Release von GitHub) ----------
   const upBox = $('update'), upInstall = $('up-install');
@@ -2309,7 +2551,7 @@
   }
   // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
   const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
-    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
     || $('clipboard-history') // Zwischenablage-Liste: Ihr Glas zeigt ein Bild der Seite, die Seite darf nicht gleiten || document.body.matches('.modal, .wheel-open');
   // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
   let flyoutTimer = 0, flyoutPointer = null;
@@ -2356,7 +2598,7 @@
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || activeTab()?.drawing // beim Zeichnen bleibt der Stift zum Beenden sichtbar
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
-    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
     || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
     hidden = hidden && !chromeKept();
@@ -2387,7 +2629,7 @@
   input.addEventListener('blur', showChrome);
 
   // ---------- Zustand aus Rust ----------
-  window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
+  window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); closeDownloads(); };
   window.render = (next) => {
     const switched = next.active !== state.active;
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
