@@ -2091,8 +2091,13 @@
         backgroundImage: `url("${shot.images.get(p.id).src}")` });
       return part;
     }));
-    if (covered) { coverPage(covered, covered === suggestBox ? suggestMost() : 0); updateInk(); }
-    else if (suggestPending) placeSuggest(); // die Liste hat auf das Bild gewartet
+    if (covered) { coverPage(covered, covered === suggestBox ? suggestMost() : 0); updateInk(); return; }
+    // Eine Liste hat auf das Bild gewartet: erst aufrollen, wenn es gezeichnet ist (ein Bild später) – sonst öffnete
+    // sich das Loch schon, bevor Chromium es zeigt
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (favWait) showFavorites();
+      else if (suggestPending) placeSuggest();
+    }));
   };
   // Bild nicht mehr nötig – erst etwas später entfernen: Schließt sich gerade ein Loch, läge es bis dahin noch darin
   function dropShot() {
@@ -2234,19 +2239,30 @@
       : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
     coverPage(favPanel);
-    scheduleInk();
+    updateInk(); // gleich im selben Bild, wie bei den Vorschlägen
   }
+  // Über einer Webseite rollt die Liste erst mit deren Bild auf (wie die Vorschläge) – sonst schiene kurz das
+  // Wallpaper durch. Das Bild kommt meist nach wenigen Hundertstelsekunden; gewartet wird höchstens SHOT_WAIT.
+  let favWait = 0;
   function openFavorites() {
     clearTimeout(favTimer);
-    if (favPanel.classList.contains('open')) return;
+    if (favPanel.classList.contains('open') || favWait) return;
     closeSuggest();
     if (!editing()) requestPageShot(); // (beim Suchen gibt es schon eins)
+    if (shot && !shotReady()) { favWait = setTimeout(showFavorites, SHOT_WAIT); return; }
+    showFavorites();
+  }
+  function showFavorites() {
+    clearTimeout(favWait);
+    favWait = 0;
+    if (favPanel.classList.contains('open')) return;
     favPanel.classList.add('open');
     favBtn.classList.add('open');
     renderFavorites();
   }
   function closeFavorites() {
     clearTimeout(favTimer);
+    if (favWait) { clearTimeout(favWait); favWait = 0; if (!editing()) dropShot(); }
     if (!favPanel.classList.contains('open')) return;
     favPanel.classList.remove('open');
     favBtn.classList.remove('open');
@@ -2255,7 +2271,11 @@
     if (upBox.classList.contains('open')) reportUpdateOverlay();
     else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
   }
-  const closeFavoritesSoon = () => { clearTimeout(favTimer); favTimer = setTimeout(closeFavorites, 250); };
+  const closeFavoritesSoon = () => {
+    if (favWait) { closeFavorites(); return; } // noch gar nicht offen: nicht mehr aufrollen
+    clearTimeout(favTimer);
+    favTimer = setTimeout(closeFavorites, 250);
+  };
 
   // ---------- Mail: alle Postfächer in einer Ansicht (Rust: mail.rs, Seiten: mail-content.js) ----------
   // Der Knopf oben rechts führt zur Mail-Ansicht (einem eigenen Tab). Links steht die gemeinsame Liste, rechts
@@ -2503,7 +2523,7 @@
     chain.forEach((n) => n.classList.add('vh'));
     vhover = chain;
     if (chain.includes(favBtn) || chain.includes(favPanel)) openFavorites();
-    else if (favPanel.classList.contains('open') && !favBtn.matches(':hover') && !favPanel.matches(':hover')) closeFavoritesSoon();
+    else if ((favPanel.classList.contains('open') || favWait) && !favBtn.matches(':hover') && !favPanel.matches(':hover')) closeFavoritesSoon();
   };
 
   // Wechsel Startbildschirm ↔ Seite: Das Adressfeld wechselt zwischen Mitte und Leiste und blendet dort ein.
