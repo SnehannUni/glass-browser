@@ -242,3 +242,185 @@ body.dark .pdfViewer .page, body.dark .thumb .sheet { background: #1a1a1a; }
   #print-pages { display: block; }
   #print-pages img { display: block; width: 100%; break-after: page; }
 }
+
+/* ======================================================================================================
+   Bearbeiten (editor.mjs) und Seiten organisieren (organize.mjs)
+   ====================================================================================================== */
+
+/* ---------- Werkzeugleiste rechts, senkrecht ---------- */
+#tools {
+  position: fixed; right: var(--gap); top: 50%; z-index: 10; border-radius: 20px;
+  translate: 0 -50%; animation: pop-in .55s var(--spring) .16s both;
+}
+.capsule.vertical { flex-direction: column; height: auto; width: 40px; padding: 5px 0; border-radius: 20px; gap: 2px; }
+.capsule.vertical .key { width: 30px; height: 30px; min-width: 0; border-radius: 15px; }
+.capsule.vertical::before { border-radius: 15px; }
+.capsule.vertical hr { width: 18px; height: 1px; margin: 4px auto; border: 0; background: var(--label-3); opacity: .5; }
+
+/* Einstellungen des Werkzeugs: links neben der Leiste */
+#tool-options {
+  position: fixed; right: calc(var(--gap) + 50px); top: 50%; z-index: 10; width: 228px; border-radius: 18px;
+  translate: 0 -50%; animation: drop-in .4s var(--spring) both;
+}
+#tool-options > .glass { border-radius: 18px; padding: 14px 14px 16px; }
+#tool-options section { display: flex; flex-direction: column; gap: 12px; }
+#tool-options h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.hint { margin: -4px 0 0; color: var(--label-3); font-size: 12px; line-height: 1.35; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25), 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform .3s var(--spring), box-shadow .2s;
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch.on { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25), 0 0 0 2px var(--blue); }
+.slider { display: flex; flex-direction: column; gap: 6px; color: var(--label-2); font-size: 12px; }
+.slider output { color: var(--label-3); font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--blue); }
+.wide {
+  display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; border-radius: 16px;
+  background: var(--control-hover); color: var(--label); transition: background-color .15s var(--ease);
+}
+.wide:hover { background: var(--control-pressed); }
+#saved-signatures { display: flex; flex-direction: column; gap: 8px; }
+.saved { position: relative; }
+.saved .use {
+  display: block; width: 100%; height: 56px; padding: 6px 14px; border-radius: 12px; background: rgba(255, 255, 255, .92);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .35); transition: transform .3s var(--spring);
+}
+.saved .use:hover { transform: scale(1.02); }
+.saved .use svg { width: 100%; height: 100%; filter: none; stroke: none; }
+.saved .use path.stroke { fill: none; stroke: #101830; stroke-linecap: round; stroke-linejoin: round; }
+.saved .use path.fill { fill: #101830; }
+.saved .remove {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  color: rgba(0, 0, 0, .55); text-shadow: none; opacity: 0; transition: opacity .15s, background-color .15s;
+}
+.saved .remove svg { width: 12px; height: 12px; filter: none; }
+.saved:hover .remove, .saved .remove:focus-visible { opacity: 1; }
+.saved .remove:hover { background: rgba(0, 0, 0, .1); color: #000; }
+
+/* Ungespeicherte Änderungen: Punkt am Speichern-Knopf */
+#download.dirty::after {
+  content: ''; position: absolute; top: 2px; right: 4px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--blue); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .25);
+}
+
+/* Werkzeuge von PDF.js im Glas-Stil: blaue Auswahl, kleine Leiste am Editor als dunkles Glas */
+:root {
+  --outline-color: var(--blue);
+  --resizer-bg-color: var(--blue);
+  --outline-around-color: rgba(255, 255, 255, .9);
+  --hover-outline-color: rgba(10, 132, 255, .55);
+}
+#viewer .editToolbar {
+  --editor-toolbar-bg-color: rgba(28, 29, 34, .78);
+  --editor-toolbar-fg-color: rgba(255, 255, 255, .95);
+  --editor-toolbar-hover-bg-color: rgba(255, 255, 255, .14);
+  --editor-toolbar-border-color: transparent;
+  --editor-toolbar-shadow: 0 6px 18px -4px rgba(0, 0, 0, .45), inset 0 0 0 .5px rgba(255, 255, 255, .18);
+  --editor-toolbar-height: 30px;
+  border-radius: 15px; backdrop-filter: blur(14px) saturate(1.6); text-shadow: none;
+}
+.glass-edit-signature { width: 28px; height: 26px; display: grid; place-items: center; border-radius: 13px; color: var(--editor-toolbar-fg-color); }
+.glass-edit-signature:hover { background: var(--editor-toolbar-hover-bg-color); }
+.glass-edit-signature svg { width: 14px; height: 14px; filter: none; }
+.annotationEditorLayer { text-shadow: none; }
+
+/* ---------- Seiten organisieren ---------- */
+#organize { position: fixed; inset: 0; z-index: 8; animation: fade-in .25s var(--ease) both; }
+@keyframes fade-in { from { opacity: 0; } }
+body.organizing :is(#dock, #tools, #tool-options, #find) { visibility: hidden; }
+/* Das Dokument nur durchsichtig, nicht unsichtbar: PDF.js liest Textfelder beim Speichern über innerText,
+   und das ist bei visibility: hidden leer – das Textfeld ginge verloren */
+body.organizing #container { opacity: 0; pointer-events: none; }
+body.organizing #sidebar { transform: translateX(calc(-100% - 2 * var(--gap))); opacity: 0; pointer-events: none; }
+#org-grid {
+  position: absolute; inset: 0; overflow: auto; outline: none;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 28px 12px; align-items: end; justify-items: center;
+  padding: 28px 28px 96px; align-content: start;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .3) transparent;
+}
+.tile { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; outline: none; }
+.tile .sheet {
+  background: #fff; border-radius: 3px; overflow: hidden;
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .2), 0 10px 24px -8px rgba(0, 0, 0, .6);
+  transition: box-shadow .2s var(--ease), transform .35s var(--spring), opacity .2s;
+}
+.tile canvas { display: block; width: 100%; height: 100%; }
+.tile:hover .sheet { transform: translateY(-3px); }
+.tile.selected { color: var(--label); font-weight: 600; }
+.tile.selected .sheet { box-shadow: 0 0 0 3px var(--blue), 0 12px 28px -8px rgba(0, 0, 0, .65); }
+.tile.dragging .sheet { opacity: .35; transform: scale(.94); }
+.tile > span { padding: 1px 8px; border-radius: 9px; }
+.tile.selected > span { background: var(--blue); color: #fff; text-shadow: none; }
+body.dark .tile canvas { filter: invert(.9) hue-rotate(180deg); }
+.drop-marker {
+  position: absolute; left: -1.5px; top: 0; width: 3px; border-radius: 2px; pointer-events: none;
+  background: var(--blue); box-shadow: 0 0 12px rgba(10, 132, 255, .8);
+}
+#organize .bar { position: fixed; left: 50%; bottom: 14px; translate: -50% 0; animation: pop-in .5s var(--spring) both; }
+#organize .bar .count { padding: 0 12px 0 10px; color: var(--label-2); white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 128px; }
+.key.text { padding: 0 12px; font-weight: 600; color: var(--blue); }
+#organize.busy #org-grid { opacity: .55; pointer-events: none; transition: opacity .2s .15s; }
+#organize.busy { cursor: progress; }
+
+/* ---------- Dialog: neue Unterschrift ---------- */
+.dialog {
+  position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px;
+  background: rgba(0, 0, 0, .32); animation: fade-in .2s var(--ease) both;
+}
+.dialog > .glass {
+  width: min(500px, 100%); border-radius: 24px; padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 14px;
+  background: rgba(36, 37, 43, .62); backdrop-filter: blur(28px) saturate(1.7) brightness(.85); outline: none;
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .2), 0 24px 60px -12px rgba(0, 0, 0, .6);
+  animation: pop-in .45s var(--spring) both;
+}
+.dialog h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.dialog .segmented { margin: 0; }
+.sign-pad { position: relative; }
+.paper {
+  display: block; width: 100%; height: 170px; border-radius: 14px; background: #fff; color: #101830;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, .18); text-shadow: none;
+}
+#sign-draw { cursor: crosshair; touch-action: none; filter: none; }
+#sign-draw path { fill: none; stroke: #101830; stroke-linecap: round; stroke-linejoin: round; }
+.sign-pad .placeholder {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  color: rgba(16, 24, 48, .38); text-shadow: none; font-size: 14px;
+}
+.sign-pad[data-tab=draw]:not(.empty) .placeholder { display: none; }
+/* Linie, auf der man unterschreibt */
+.sign-pad[data-tab=draw]::after {
+  content: ''; position: absolute; left: 28px; right: 28px; bottom: 42px; height: 1px; background: rgba(16, 24, 48, .18); pointer-events: none;
+}
+.sign-pad .clear { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 14px; display: grid; place-items: center; color: rgba(16, 24, 48, .55); text-shadow: none; }
+.sign-pad .clear svg { filter: none; }
+.sign-pad .clear:hover { background: rgba(16, 24, 48, .08); color: #101830; }
+#sign-type { padding: 0 24px; font-size: 38px; text-align: center; color: #101830; }
+#sign-type::placeholder { color: rgba(16, 24, 48, .3); font-size: 30px; }
+.drop { display: grid; place-items: center; cursor: pointer; }
+.drop .placeholder { position: static; display: block; }
+.drop.filled .placeholder { display: none; }
+.drop.over { box-shadow: inset 0 0 0 2px var(--blue); }
+.drop img { max-width: calc(100% - 32px); max-height: 140px; object-fit: contain; }
+.dialog .field { display: flex; flex-direction: column; gap: 6px; color: var(--label-2); font-size: 12px; }
+.dialog .field input { height: 32px; padding: 0 12px; border-radius: 10px; background: rgba(255, 255, 255, .1); font-size: 13px; color: var(--label); }
+.dialog .field input:focus { background: rgba(255, 255, 255, .16); }
+.dialog .check { display: flex; align-items: center; gap: 8px; color: var(--label-2); }
+.dialog .check input { accent-color: var(--blue); margin: 0; }
+.dialog .check:has(input:disabled) { opacity: .5; }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.dialog .actions button { height: 32px; padding: 0 18px; border-radius: 16px; background: rgba(255, 255, 255, .14); transition: background-color .15s, opacity .15s; }
+.dialog .actions button:hover { background: rgba(255, 255, 255, .22); }
+.dialog .actions .primary { background: var(--blue); color: #fff; text-shadow: none; }
+.dialog .actions .primary:hover { background: #2a94ff; }
+.dialog .actions button:disabled { opacity: .45; }
+
+/* ---------- Kurze Rückmeldung ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 62px; z-index: 20; translate: -50% 0; padding: 8px 16px; border-radius: 16px;
+  white-space: nowrap; transition: opacity .3s var(--ease), translate .3s var(--ease); animation: pop-in .4s var(--spring) both;
+  --glass-fill-top: .14; --glass-fill-bottom: .1; backdrop-filter: blur(18px) saturate(1.6) brightness(.7);
+}
+#toast.out { opacity: 0; translate: -50% 6px; }
