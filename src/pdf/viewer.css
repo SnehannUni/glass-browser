@@ -638,3 +638,19 @@ body.text-editing.over-image #viewer .page { cursor: move; }
 #compress-level button { height: auto; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 5px 4px; }
 #compress-level .size { font-size: 11px; color: var(--label-3); font-variant-numeric: tabular-nums; min-height: 1.2em; }
 #compress-level button.on .size { color: var(--label-2); }
+
+/* ---------- Leiste von Glass gleitet ein oder aus ----------
+   Glass verschiebt die Seite dabei in voller Größe; was unten (bzw. rechts) übersteht, schneidet das Fenster ab
+   (main.rs `slide_chrome`). Was am unteren oder rechten Rand klebt, rückt in jedem Bild um genau dieses Stück mit –
+   so steht es auf dem Bildschirm still. viewer.mjs `__glassSlide` setzt --clip-bottom/--clip-right nur an diesen
+   Elementen (am Wurzelelement müsste Chromium in jedem Bild das ganze Dokument neu berechnen), und verschoben wird
+   nur mit translate und clip-path – ohne Layout, das erledigt die Grafikkarte. */
+:root { --clip-right: 0px; --clip-bottom: 0px; }
+#dock { translate: calc(var(--clip-right) / -2) calc(-1 * var(--clip-bottom)); }
+#tools, #tool-options { translate: calc(-1 * var(--clip-right)) calc(-50% - var(--clip-bottom) / 2); }
+#status { translate: calc(-50% - var(--clip-right) / 2) calc(-50% - var(--clip-bottom) * .42); }
+#toast { translate: calc(-50% - var(--clip-right) / 2) calc(-1 * var(--clip-bottom)); }
+#toast.out { translate: calc(-50% - var(--clip-right) / 2) calc(6px - var(--clip-bottom)); }
+#organize .bar { translate: calc(-50% - var(--clip-right) / 2) calc(-1 * var(--clip-bottom)); }
+/* Die Seitenleiste reicht oben und unten bis an den Rand: unten abschneiden statt sie in jedem Bild neu zu bemessen */
+#sidebar { clip-path: inset(0 0 var(--clip-bottom) 0 round 18px); }

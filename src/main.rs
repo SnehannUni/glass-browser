@@ -305,6 +305,7 @@ impl Browser {
         unsafe { windows_sys::Win32::Graphics::Dwm::DwmFlush() };
         if start.elapsed().as_secs_f64() >= self.chrome_slide_duration() {
             self.chrome_slide = None;
+            self.slide_pdf_viewers(None);
             self.layout();
             return;
         }
@@ -318,7 +319,46 @@ impl Browser {
                 let _ = wv.set_bounds(to_rect(self.mail_pane(self.content_area())));
             }
         }
-        self.sync_pdf_walls();
+        // Der PDF-Viewer rechnet seine Lage in dieser Zeit selbst mit (`slide_pdf_viewers`) – eine Nachricht pro Bild
+        // käme ein Bild zu spät und ließe das Wallpaper in seinen Kapseln zittern
+    }
+
+    /// Beim Gleiten behält jede Seite ihre volle Größe, das Fenster schneidet unten bzw. rechts ab (`content_area`).
+    /// Der PDF-Viewer hält seine Leisten am Rand und sein Wallpaper trotzdem still: Er bekommt Beginn (Uhrzeit),
+    /// Dauer, Lage vorher/nachher und wie viel abgeschnitten ist, und rechnet in jedem Bild mit derselben Kurve
+    /// (`chrome_ease`) selbst aus, wo die Seite gerade steht (viewer.mjs `__glassSlide`). `None`: fertig.
+    fn slide_pdf_viewers(&self, slide: Option<([f64; 2], [f64; 2])>) {
+        let scale = self.window.scale_factor();
+        let size = self.window.inner_size().to_logical::<f64>(scale);
+        let pos = self.window.inner_position().unwrap_or_default().to_logical::<f64>(scale);
+        let full = |[x, y]: [f64; 2]| -> Area { [x, y, size.width - 2.0 * MARGIN, size.height - 2.0 * MARGIN] };
+        let clip = |[x, y, w, h]: Area| [(x + w - (size.width - MARGIN)).max(0.0), (y + h - (size.height - MARGIN)).max(0.0)];
+        let ms = self.chrome_slide_duration() * 1000.0;
+        // Beginn als Uhrzeit (ms seit 1970) – der Viewer vergleicht mit performance.timeOrigin + Bildzeit
+        let elapsed = self.chrome_slide.map(|(start, ..)| start.elapsed()).unwrap_or_default();
+        let start = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().saturating_sub(elapsed);
+        let start = start.as_secs_f64() * 1000.0;
+        let panes = |at: [f64; 2]| self.panes_in(full(at));
+        let messages: Vec<(usize, String)> = match slide {
+            Some((from, to)) => panes(from)
+                .into_iter()
+                .zip(panes(to))
+                .map(|((i, a), (_, b))| {
+                    let msg = json!({
+                        "from": clip(a), "to": clip(b), "ms": ms, "start": start,
+                        "wallFrom": [pos.x + a[0], pos.y + a[1]], "wallTo": [pos.x + b[0], pos.y + b[1]],
+                    });
+                    (i, msg.to_string())
+                })
+                .collect(),
+            None => self.panes().into_iter().map(|(i, _)| (i, "null".to_owned())).collect(),
+        };
+        for (i, msg) in messages {
+            let tab = &self.tabs[i];
+            if let Some(wv) = tab.webview.as_ref().filter(|_| tab.pdf_viewer) {
+                let _ = wv.evaluate_script(&format!("window.__glassSlide?.({msg})"));
+            }
+        }
     }
 
     /// Der PDF-Viewer legt das Wallpaper wie die Oberfläche deckungsgleich hinter sein Glas – dazu braucht er
@@ -1018,6 +1058,7 @@ impl Browser {
                     self.chrome_hidden = hidden;
                     let [tx, ty, ..] = self.resting_area();
                     self.chrome_slide = Some((std::time::Instant::now(), [x, y], [tx, ty]));
+                    self.slide_pdf_viewers(Some(([x, y], [tx, ty])));
                     self.layout();
                     self.sync_ui();
                 }

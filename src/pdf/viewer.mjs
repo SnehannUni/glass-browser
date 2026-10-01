@@ -100,6 +100,63 @@ function placeWall() {
   placeWells();
 }
 window.__glassWall = (g) => { geo = g; bakeWall(); placeWall(); scheduleInk(); };
+
+// ---------- Leiste von Glass gleitet ein oder aus (main.rs `slide_pdf_viewers`) ----------
+// Glass verschiebt die Seite dabei in voller Größe, das Fenster schneidet unten/rechts ab. Damit die Leisten am Rand
+// und das Wallpaper in den Kapseln stillstehen, rechnet der Viewer in jedem Bild selbst aus, wo die Seite gerade
+// steht: gleiche Uhr (Beginn als Uhrzeit), gleiche Kurve wie `chrome_ease` – Nachrichten pro Bild kämen zu spät.
+const slideEase = (t) => {
+  const [x1, y1, x2, y2] = [0.4, 0, 0.2, 1];
+  const bezier = (a, b, s) => 3 * a * s * (1 - s) ** 2 + 3 * b * s * s * (1 - s) + s ** 3;
+  let s = t;
+  for (let i = 0; i < 8; i++) {
+    const dx = 3 * x1 * (1 - s) ** 2 + 6 * (x2 - x1) * s * (1 - s) + 3 * (1 - x2) * s * s;
+    if (Math.abs(dx) < 1e-6) break;
+    s = Math.min(1, Math.max(0, s - (bezier(x1, x2, s) - t) / dx));
+  }
+  return bezier(y1, y2, s);
+};
+let slide = null;
+// Nur an den Elementen, die mitrücken (viewer.css) – am Wurzelelement würde jedes Bild das ganze Dokument neu berechnen
+const SLIDING = ['dock', 'sidebar', 'tools', 'tool-options', 'toast', 'status'];
+const setClip = ([right, bottom]) => {
+  for (const el of [...SLIDING.map((id) => $(id)), document.querySelector('#organize .bar')]) {
+    el?.style.setProperty('--clip-right', `${right}px`);
+    el?.style.setProperty('--clip-bottom', `${bottom}px`);
+  }
+};
+const lerp = (a, b, e) => a.map((v, i) => v + (b[i] - v) * e);
+function slideFrame(time) {
+  if (!slide) return;
+  const e = slideEase(Math.min(1, Math.max(0, (performance.timeOrigin + time - slide.start) / slide.ms)));
+  setClip(lerp(slide.from, slide.to, e));
+  // Nur das Wallpaper verschieben: Die Kapseln stehen auf dem Bildschirm still, ihr Ausschnitt bleibt derselbe
+  if (geo) {
+    [geo.x, geo.y] = lerp(slide.wallFrom, slide.wallTo, e);
+    wall.style.transform = `translate3d(${geo.mx - geo.x}px, ${geo.my - geo.y}px, 0)`;
+  }
+  slide.frame = requestAnimationFrame(slideFrame);
+}
+window.__glassSlide = (next) => {
+  if (slide) cancelAnimationFrame(slide.frame);
+  if (next) {
+    slide = next;
+    slideFrame(performance.now());
+    return;
+  }
+  // Fertig: am Ziel stehen bleiben, bis die Seite ihre neue Größe hat – erst dann fällt der Ausgleich weg
+  const last = slide;
+  slide = null;
+  if (!last) { setClip([0, 0]); return; }
+  setClip(last.to);
+  if (geo) { [geo.x, geo.y] = last.wallTo; placeWall(); }
+  if (!last.to.some(Boolean)) return;
+  const height = innerHeight, width = innerWidth;
+  const done = () => { removeEventListener('resize', check); clearTimeout(timer); if (!slide) { setClip([0, 0]); placeWells(); } };
+  const check = () => { if (innerHeight !== height || innerWidth !== width) done(); };
+  addEventListener('resize', check);
+  const timer = setTimeout(done, 400);
+};
 const askWall = () => window.ipc?.postMessage(JSON.stringify({ pdf: 'wall' }));
 askWall();
 // Aus dem Zurück-Cache wiederhergestellt: main.rs hat den Tab inzwischen vergessen
