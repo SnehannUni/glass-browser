@@ -13,7 +13,7 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
 - **Tabs** – ziehen zum Sortieren, geteilte Ansicht (zwei Seiten nebeneinander), Favoriten
 - **Private Tabs** (Strg+Umschalt+N) – InPrivate-Profil nur im Arbeitsspeicher, strenger Tracking-Schutz
 - **Werbeblocker** – Brave-Filter-Engine mit EasyList, EasyPrivacy, EasyList Germany und uBlock-Listen;
-  blendet Werbeflächen aus, entfernt YouTube-Werbung und lässt sich pro Website abschalten
+  blendet Werbeflächen aus und lässt sich pro Website abschalten
 - **Mail an einem Ort** – Briefumschlag rechts oben auf dem Startbildschirm: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten
   Mails aller Postfächer zusammen, rechts das echte Postfach mit der gewählten Mail (siehe unten)
 
@@ -34,7 +34,7 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 |---|---|
 | `src/main.rs` | Fenster, Tabs, WebView2-Steuerung, Anfragefilter |
 | `src/ui.html` | Oberfläche (Glas, Tabs, Adressfeld, Vorschläge, Favoriten) |
-| `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden, YouTube |
+| `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
 | `src/mail.rs`, `src/mail-content.js` | Mail-Ansicht: Postfächer im Hintergrund, Ungelesene und neueste Mails aus den Web-Postfächern |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |

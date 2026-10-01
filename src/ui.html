@@ -9,6 +9,7 @@
     --chrome-w: 240px; /* Breite der Leiste links, kommt als chromeWidth aus main.rs */
     --chrome-w-full: 240px; /* ausgeklappt (main.rs: SIDEBAR_WIDTH) – auch über der Seite, wenn eingeklappt */
     --margin: 4px;    /* = MARGIN in main.rs */
+    --side-top: 28px; /* Leiste links: hier beginnen die Seiten, darüber der Streifen mit den Fensterknöpfen (= SIDE_TOP in main.rs) */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
     --label: rgba(255, 255, 255, .97);
     --label-2: rgba(255, 255, 255, .82);
@@ -139,10 +140,11 @@
   }
   .key:disabled { color: var(--label-3); background: none; transform: none; }
 
-  #toolbar-menu { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
-  #toolbar-menu[hidden] { display: none; }
-  #toolbar-menu .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-  #toolbar-menu .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
+  /* Kontextmenüs: Leiste (Rechtsklick auf freie Fläche) und Postfach in der Mail-Ansicht */
+  :is(#toolbar-menu, #mail-menu) { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
+  :is(#toolbar-menu, #mail-menu)[hidden] { display: none; }
+  :is(#toolbar-menu, #mail-menu) .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  :is(#toolbar-menu, #mail-menu) .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
   #toolbar-menu .item .check { width: 16px; visibility: hidden; }
   #toolbar-menu .item[aria-checked="true"] .check { visibility: visible; }
   /* ---------- Toolbar ---------- */
@@ -273,7 +275,7 @@
   /* Startbildschirm: Aus dem Logo klappt ein Kreis aus Anbietern nach rechts auf, jeder in seiner eigenen
      Glaskugel. Der gewählte sitzt links an der Stelle des Knopfs; wählt man einen anderen, dreht er sich dorthin. */
   #wheel {
-    --slot: 46px; --orbit: 78px; --rot: 0deg; /* --orbit = WHEEL_ORBIT im Skript */
+    --slot: 46px; --orbit: 78px; /* --orbit = WHEEL_ORBIT im Skript */
     position: fixed; z-index: 11; width: calc(2 * var(--orbit) + var(--slot) + 10px); aspect-ratio: 1;
     display: none; pointer-events: none;
   }
@@ -281,25 +283,51 @@
   body.wheel-open #btn-engine { opacity: 0; }
   /* Knopf und oberster Kreis blenden weich ineinander über (siehe openWheel/closeWheel) */
   body.start #btn-engine { transition: transform .45s var(--spring), background-color .2s, opacity .18s; }
-  #wheel .spin { position: absolute; inset: 0; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
+  #wheel .spin { position: absolute; inset: 0; isolation: isolate; } /* Stapel der Kreise unter der Reihe */
   @property --off { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
   @property --travel-scale { syntax: "<number>"; inherits: false; initial-value: 1; }
   @property --arrival-scale { syntax: "<number>"; inherits: true; initial-value: 1; }
   #wheel .slot {
     position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
     border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
-    /* auf die Umlaufbahn setzen (Platz 0 links, --off = Aus-/Eindrehen), dann zurückdrehen: die Logos bleiben aufrecht */
-    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot))) scale(calc(var(--arrival-scale) * var(--travel-scale)));
+    /* auf die Umlaufbahn setzen (--a: Winkel ab links im Uhrzeigersinn, --off = Aus-/Eindrehen), dann zurückdrehen:
+       die Logos bleiben aufrecht. Beim Drehen ändert turnWheel --a, die transition bewegt den Kreis auf der Bahn. */
+    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off))) scale(calc(var(--arrival-scale) * var(--travel-scale)));
     transition: transform .7s var(--spring), background-color .2s;
     /* ohne Schlagschatten: gestapelt würden sich die Schatten aufaddieren */
     box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 -10px 18px -12px rgba(255, 255, 255, .16);
   }
   /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
   #wheel .slot.on { background-color: rgba(255, 255, 255, .22); }
-  #wheel.instant :is(.spin, .slot) { transition: none; }
+  #wheel.instant .slot { transition: none; }
   #wheel .slot img { scale: calc(1 / var(--arrival-scale)); width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
   #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .14); }
   #wheel .slot:active img { transform: scale(1.15); }
+  #wheel.editing .slot.target { background-color: rgba(255, 255, 255, .22); }
+  #wheel.editing .slot.on { background-color: transparent; }
+  /* Bearbeiten (Rechtsklick): Vom Kreis oben links reihen sich die übrigen Anbieter schräg nach außen auf (Lage: pickAt im Skript);
+     getauscht wird dieser Kreis (.target) */
+  #wheel .picks { position: absolute; inset: 0; z-index: 1; }
+  #wheel .pick {
+    position: absolute; translate: -50% -50%; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 -10px 18px -12px rgba(255, 255, 255, .16);
+    /* einer nach dem anderen aufgehen, von innen nach außen – per clip-path, nicht opacity (siehe drop-in) */
+    animation: pick-in .28s var(--ease) calc(var(--i) * 45ms) backwards;
+  }
+  @keyframes pick-in { from { clip-path: circle(0); } to { clip-path: circle(50%); } }
+  #wheel .pick img { width: 18px; height: 18px; border-radius: 4px; }
+  #wheel .pick:is(:hover, .vh) { background-color: rgba(255, 255, 255, .14); }
+  /* Gebogene Pfeile beiderseits des Kreises oben links: kleine Viertelkreise (turnArrow im Skript), ohne Glas.
+     Das svg deckt das ganze Rad ab, anklickbar ist nur ein breiter unsichtbarer Strich entlang des Bogens. */
+  #wheel .turn {
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%; overflow: visible; pointer-events: none;
+    color: var(--label-2); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+    animation: turn-in .3s var(--ease) backwards; transition: color .2s, opacity .2s;
+  }
+  #wheel.turning .turn { opacity: .2; }
+  #wheel .turn .hit { stroke: transparent; stroke-width: 20; pointer-events: stroke; }
+  #wheel .turn:hover { color: var(--label); }
+  @keyframes turn-in { from { opacity: 0; } } /* ohne backdrop-filter: opacity ist hier unbedenklich */
   /* Werbeblocker: Schild + Anzahl blockierter Anfragen; ausgeschaltet durchgestrichen und blass */
   .shield { height: 24px; min-width: 28px; padding: 0 7px; display: flex; gap: 4px; color: var(--label-2); font-size: 11px;
             font-variant-numeric: tabular-nums; }
@@ -398,14 +426,11 @@
   }
   /* Die Seite, zu der Adresszeile & Co. gerade gehören */
   body.split .pane.focus { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .5), 0 12px 40px rgba(0, 0, 0, .45); }
+  /* Beim Ziehen der Trennlinie keine Rahmen (sie liefen den Seiten hinterher), danach blenden sie wieder ein */
+  body.split-dragging #panes .pane { box-shadow: none; transition: none; }
   /* Die Lücke zwischen den Seiten ist selbst der Griff (ohne sichtbaren Balken) */
   #divider { position: fixed; z-index: 5; display: none; cursor: col-resize; }
   body.split #divider { display: block; }
-  .resize-preview { position: fixed; z-index: 4; overflow: hidden; border-radius: var(--pane-radius); background: #26303e; pointer-events: none; }
-  .resize-preview > .snapshot { position: absolute; inset: -45px; background-position: center; background-size: cover; filter: blur(30px) brightness(.55); }
-  .resize-preview > .identity { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; color: white; text-align: center; }
-  .resize-preview .identity img, .resize-preview .identity svg { width: 40px; height: 40px; flex: none; }
-  .resize-preview .identity span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 600; }
   #dropzone { position: fixed; z-index: 15; display: none; border-radius: var(--pane-radius); pointer-events: none; }
   #dropzone.show { display: block; animation: pop-in .35s var(--spring); }
   .tab.dragging {
@@ -462,8 +487,10 @@
   }
   /* Vorschläge und Favoriten heben sich deutlich ab – über einer Webseite fällt der Schatten auf deren Bild
      (#page-shot, SHADOW_ROOM im Skript deckt ihn ab) */
-  :is(#suggest, #favs) {
+  :is(#suggest, #favs, #dls) {
     box-shadow: inset 0 -10px 18px -14px rgba(255, 255, 255, .08), 0 14px 36px -10px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .22);
+    /* Schriftfarbe hier neu setzen: geerbt käme sie fertig (weiß) vom body, .ink-dark griffe dann nicht */
+    color: var(--label);
   }
   /* Bild der Webseite unter Glas, das über ihr liegt (pageShot): unter allem außer dem Wallpaper, die echte Seite
      liegt ohnehin darüber – sichtbar ist es nur in deren Aussparungen */
@@ -491,18 +518,50 @@
   /* Knopf ganz rechts oben */
   .fav-btn { margin-left: -4px; } /* rückt etwas an den Nachbarn (Mail) heran */
   .fav-btn.open { background-image: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .1)); }
-  /* Ausklappende Liste der Favoriten */
-  #favs {
+  /* Ausklappende Listen der Favoriten und Downloads */
+  :is(#favs, #dls) {
     position: fixed; z-index: 20; display: none; width: 320px; max-height: 60vh; overflow-y: auto;
     padding: 6px; border-radius: 18px; backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
-  #favs.open { display: block; animation: drop-in .35s var(--ease); }
+  :is(#favs, #dls).open { display: block; animation: drop-in .35s var(--ease); }
   /* Leiste links: Die Liste klappt vom Knopf unten nach oben auf – also auch von unten aufrollen */
-  #favs.open.up { animation-name: drop-up; }
+  :is(#favs, #dls).open.up { animation-name: drop-up; }
   @keyframes drop-up {
     from { clip-path: inset(100% -40px -40px -40px); }
     to { clip-path: inset(-40px); }
   }
+
+  /* ---------- Downloads (downloads.rs): Knopf rechts oben, ab dem ersten Download der Sitzung ---------- */
+  .dl-btn { position: relative; margin-left: -4px; }
+  .dl-btn[hidden] { display: none; }
+  .dl-btn.open { background-image: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .1)); }
+  .dl-btn.pop .dl-ic { animation: dl-pop .6s var(--spring); }
+  @keyframes dl-pop { 35% { transform: translateY(3px) scale(1.2); } }
+  /* Fortschritt aller laufenden Downloads als Ring um den Knopf; ohne bekannte Größe kreist ein Bogen */
+  .dl-btn .dl-ring { position: absolute; inset: 2px; width: auto; height: auto; rotate: -90deg; pointer-events: none; opacity: 0; transition: opacity .2s; }
+  .dl-btn.busy .dl-ring { opacity: 1; }
+  .dl-ring circle { fill: none; stroke: #0a84ff; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 100; transition: stroke-dashoffset .3s; }
+  .dl-btn.vague .dl-ring { animation: dl-spin 1s linear infinite; }
+  @keyframes dl-spin { to { rotate: 270deg; } }
+  .dl-head { display: flex; align-items: center; justify-content: space-between; padding-right: 6px; }
+  .dl-clear { font-size: 11px; font-weight: 500; color: var(--label-2); padding: 2px 6px; border-radius: 6px; }
+  .dl-clear:is(:hover, .vh) { color: var(--label); background: rgba(255, 255, 255, .1); }
+  .dl { position: relative; height: 48px; }
+  .dl .fv-ic { width: 22px; height: 22px; }
+  .dl .fv-ic svg { width: 18px; height: 18px; }
+  .dl-sub { font-size: 11px; color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl.failed .dl-sub { color: #ff6961; }
+  .dl.missing .fv-title { color: var(--label-3); text-decoration: line-through; }
+  /* Fortschrittsbalken unter dem Namen, solange es lädt */
+  .dl-bar { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .14); overflow: hidden; }
+  .dl-bar > i { display: block; height: 100%; background: #0a84ff; border-radius: inherit; transition: width .3s; }
+  .dl-bar.vague > i { width: 30% !important; animation: dl-slide 1.1s ease-in-out infinite; }
+  @keyframes dl-slide { from { translate: -100%; } to { translate: 340%; } }
+  /* Knöpfe rechts in der Zeile: beim Laden immer, sonst beim Drüberfahren */
+  .dl .rm { opacity: .75; }
+  .dl:not(.progress) .rm { opacity: 0; }
+  .dl:is(:hover, .vh) .rm { opacity: .75; }
+  .dl .rm svg { width: 12px; height: 12px; stroke-width: 1.75; }
 
   /* ---------- Mail (mail.rs): Knopf ganz rechts oben, führt zur Mail-Ansicht ---------- */
   .mail-btn { position: relative; margin-left: -4px; }
@@ -568,8 +627,6 @@
   .ml-box:is(:hover, .vh) { background: rgba(255, 255, 255, .15); color: var(--label); }
   .ml-box.off { background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
   .ml-box .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-  .ml-box .rm { position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; background: rgba(60, 62, 72, .95); }
-  .ml-box:is(:hover, .vh) .rm { opacity: .85; }
   .ml-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--label-2); }
   .ml-ic img { width: 16px; height: 16px; border-radius: 4px; }
   .ml-ic svg { width: 14px; height: 14px; }
@@ -706,18 +763,23 @@
   body.side-left .side { align-self: stretch; }
   /* Raster statt Umbruch: Beim Aufklappen über der Seite ist die Leiste kurz schmal – umgebrochen rutschte
      Vor/Zurück in eine eigene Zeile und das Suchfeld sprang nach unten und wieder hoch */
-  body.side-left .side.left { display: grid; grid-template-columns: auto 1fr; align-items: center; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
-  /* Vor/Zurück links oben, in einer Zeile mit den Fensterknöpfen rechts (layoutSide holt sie hierher) */
+  body.side-left .side.left { display: grid; grid-template-columns: auto 1fr auto; align-items: center; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
+  /* Vor/Zurück links oben (die Fensterknöpfe stehen im Streifen über den Seiten, #sidestrip) */
   body.side-left .nav { grid-column: 1; }
-  body.side-left .winctl { grid-column: 2; justify-self: end; margin: 0 4px 0 0; }
+  /* „+“ rechts neben dem Suchfeld (placeNewTab holt es hierher); beim kombinierten Paar neben dessen oberer Zeile */
+  body.side-left .side.left > .tab-new { grid-column: 3; align-self: start; margin: 0 0 0 6px; }
   /* Startbildschirm: Platz freihalten, sonst rutscht der Tab darunter beim Wechsel zu einer Seite */
   body.side-left.start:not(.home-back) .nav { display: flex; visibility: hidden; }
-  body.side-left .center { grid-column: 1 / -1; width: auto; height: var(--toolbar-control-height); }
+  body.side-left .center { grid-column: 1 / 3; width: auto; height: var(--toolbar-control-height); }
   /* Das Feld fährt nicht aus – es hat die ganze Breite der Leiste schon */
   body.side-left .address, body.side-left .address.editing { width: 100%; }
   body.side-left:not(.start) .address { top: 0; }
-  body.side-left .center.docked { height: calc(2 * var(--toolbar-control-height) + 4px); }
-  body.side-left .center.docked .address:not(.editing) { width: 100%; padding-right: 5px; }
+  /* Partner einer geteilten Ansicht: Das Feld wird um eine Zeile höher, er liegt unten in derselben Kapsel (wie oben
+     rechts daneben) – oben der aktive Tab mit seinen Knöpfen, unten hinter einer feinen Linie der Partner */
+  body.side-left .center.docked { height: calc(2 * var(--toolbar-control-height)); }
+  body.side-left .center.docked .address:not(.editing) {
+    width: 100%; height: calc(2 * var(--toolbar-control-height)); padding-right: 5px; padding-bottom: var(--toolbar-control-height);
+  }
   /* Eingeklappt (.side-collapsed: Seiten ab 56px) zeigt die Leiste nur die Logos der Tabs (.side-slim); der aktive
      steht mit Linse in der Liste. Maus drauf oder Strg+L: Sie klappt über der Seite voll auf (.side-flyout) –
      die Seite bleibt, wo sie ist; Rust spart die Fläche aus ihr aus (overlay „sidebar“). */
@@ -727,7 +789,7 @@
   body.side-collapsed #toolbar { z-index: 8; }
   body.side-collapsed #toolbar { transition: transform var(--chrome-slide), width .26s var(--ease); }
   body.side-slim #toolbar { padding: 8px 6px; gap: 0; }
-  body.side-slim :is(.winctl, .nav, .side.right, #tabbar > .tab-new) { display: none; }
+  body.side-slim :is(.nav, .side.right, .side.left > .tab-new) { display: none; }
   /* Das Suchfeld bleibt im Dokument: Auf dem Startbildschirm steht es ohnehin fest in der Mitte, auf einer Seite
      klappt Strg+L die Leiste vorher auf (setFlyout) */
   body.side-slim .side.left { min-height: 0; }
@@ -742,7 +804,7 @@
      nichts gestaucht am Rand der Seite abgeschnitten wird. Zuklappen: Der Rest verschwindet sofort (.side-slim). */
   body.side-flyout :is(.side.left, .side.right) { min-width: calc(var(--chrome-w-full) - 2 * var(--margin) - 16px); }
   /* (Startbildschirm: Das Suchfeld steht fest in der Mitte und bleibt, nur der Tab oben blendet mit ein) */
-  body.side-flyout :is(.winctl, .nav, .side.right, #tabbar > .tab-new, #tabs .tab .title),
+  body.side-flyout :is(.nav, .side.right, .side.left > .tab-new, #tabs .tab .title),
   body.side-flyout:not(.start) .center, body.side-flyout.start .center > .tab.slotted {
     animation: side-reveal .16s var(--ease) .16s backwards;
   }
@@ -756,11 +818,10 @@
     backdrop-filter: blur(6px) saturate(1.5) brightness(.82);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .12), 0 6px 20px -6px rgba(0, 0, 0, .28), 0 1px 3px rgba(0, 0, 0, .16);
   }
-  /* Partner einer geteilten Ansicht: direkt unter dem Adressfeld */
-  body.side-left .tab.docked { top: calc(var(--toolbar-control-height) + 4px); left: 0; right: 0; width: auto; }
-  body.side-left .tab.docked::before { display: none; }
+  /* Partner einer geteilten Ansicht: untere Zeile der Kapsel, darüber die Trennlinie */
+  body.side-left .tab.docked { top: var(--toolbar-control-height); left: 0; right: 0; width: auto; }
+  body.side-left .tab.docked::before { left: 12px; right: 12px; top: 0; bottom: auto; width: auto; height: 1px; }
   body.side-left .tab.docked .tab-label { padding: 0 10px 0 12px; }
-  body.side-left .tab.docked { background-image: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .045)); }
   /* Tabs untereinander; reicht der Platz nicht, scrollt die Liste. Scrollen erst dann (placeLens: .scrolls): Als
      Scroll-Container zeichnet Chromium die Glasflächen darin (Linse, „+“) über einem hellen Rechteck in
      Größe der Liste – ihr backdrop-filter sieht dann das Glas der Leiste dahinter nicht mehr. Die Clip-Margin lässt
@@ -778,9 +839,6 @@
   body.side-left .tab:is(:hover, .vh, :focus-within) .fav { opacity: 0; }
   body.side-left .tab .fav { transition: opacity .18s var(--ease); }
   body.side-left .tab-new { margin-left: 3px; }
-  /* „+“ rechts direkt über dem ersten Tab, kleiner als die übrigen Knöpfe */
-  body.side-left #tabbar > .tab-new { order: -1; align-self: flex-end; margin: 0 3px 0 0; width: 24px; height: 24px; }
-  body.side-left #tabbar > .tab-new > svg:not(.glass-rim) { width: 12px; height: 12px; }
   body.side-left #lens { width: 100%; height: var(--toolbar-control-height); }
   body.side-left #lens.squish .glass { animation-name: squish-v; }
   @keyframes squish-v { 30% { transform: scale(.94, 1.12); } }
@@ -791,8 +849,33 @@
   /* Knöpfe ganz unten */
   body.side-left .side.right { margin-top: auto; justify-content: flex-start; flex-wrap: nowrap; }
   body.side-left .fav-btn { margin-left: 0; }
-  #favs.up { transform-origin: bottom left; }
-  body.side-left #stage { top: var(--margin); left: var(--chrome-w); }
+  /* Downloads und Favoriten rechts unten (ohne Downloads-Knopf steht Favoriten allein rechts) */
+  body.side-left .side.right > .dl-btn, body.side-left .side.right > .dl-btn[hidden] + .fav-btn { margin-left: auto; }
+  :is(#favs, #dls).up { transform-origin: bottom right; }
+  body.side-left #stage { top: var(--side-top); left: var(--chrome-w); }
+  /* Leiste links: Oben läuft sie als dünner Streifen über den Seiten bis zum rechten Rand weiter, darin rechts die
+     Fensterknöpfe; er dient wie eine Titelleiste zum Verschieben. Nahtlos, weil beides eine einzige Glasfläche ist:
+     #sidepanel reicht oben bis zum rechten Fensterrand und ist per clip-path zu einem L zugeschnitten (--bar: Breite
+     der Leiste, folgt beim Aufklappen über der Seite mit; die Innenecke ist mit 8 px gerundet, konzentrisch zur Ecke
+     der Seite darunter). #sidestrip trägt nur die Knöpfe. */
+  :root { --strip-h: calc(var(--side-top) - 2 * var(--margin)); }
+  body.side-left #sidepanel {
+    right: auto; width: calc(100vw - 2 * var(--margin)); border-radius: var(--pane-radius);
+    --bar: calc(var(--chrome-w) - 2 * var(--margin));
+    clip-path: polygon(0px calc(0px + 4px), calc(0px + 0.54px) calc(0px + 3.46px), calc(0px + 2px) calc(0px + 2px), calc(0px + 3.46px) calc(0px + 0.54px), calc(0px + 4px) 0px, calc(100% - 4px) 0px, calc(100% - 3.46px) calc(0px + 0.54px), calc(100% - 2px) calc(0px + 2px), calc(100% - 0.54px) calc(0px + 3.46px), 100% calc(0px + 4px), 100% calc(var(--strip-h) - 4px), calc(100% - 0.54px) calc(var(--strip-h) - 3.46px), calc(100% - 2px) calc(var(--strip-h) - 2px), calc(100% - 3.46px) calc(var(--strip-h) - 0.54px), calc(100% - 4px) var(--strip-h), calc(var(--bar) + 8px) var(--strip-h), calc(var(--bar) + 4px) calc(var(--strip-h) + 1.07px), calc(var(--bar) + 1.07px) calc(var(--strip-h) + 4px), var(--bar) calc(var(--strip-h) + 8px), var(--bar) calc(100% - 4px), calc(var(--bar) - 0.54px) calc(100% - 3.46px), calc(var(--bar) - 2px) calc(100% - 2px), calc(var(--bar) - 3.46px) calc(100% - 0.54px), calc(var(--bar) - 4px) 100%, calc(0px + 4px) 100%, calc(0px + 3.46px) calc(100% - 0.54px), calc(0px + 2px) calc(100% - 2px), calc(0px + 0.54px) calc(100% - 3.46px), 0px calc(100% - 4px));
+    transition: clip-path .26s var(--ease);
+  }
+  body.side-flyout #sidepanel { --bar: calc(var(--chrome-w-full) - 2 * var(--margin)); }
+  #sidestrip { display: none; }
+  body.side-left #sidestrip {
+    position: fixed; z-index: 6; top: var(--margin); left: calc(var(--chrome-w) - var(--margin)); right: var(--margin);
+    height: var(--strip-h); display: flex; align-items: center; justify-content: flex-end;
+    transition: transform var(--chrome-slide);
+  }
+  body.side-left.chrome-hidden #sidestrip { transform: translateY(calc(-1 * var(--side-top))); }
+  #sidestrip .win { width: 32px; height: var(--strip-h); border-radius: 0; }
+  #sidestrip .win:last-child { border-radius: 0 var(--pane-radius) var(--pane-radius) 0; }
+  #sidestrip .winctl { gap: 0; margin: 0; }
   /* Startbildschirm: Such-Kapsel und Hinweis stehen in der Mitte der freien Fläche rechts der Leiste */
   body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 332px)); }
 
@@ -808,6 +891,7 @@
   <canvas id="wall"></canvas>
 
   <div id="chrome">
+  <div id="sidestrip" data-drag></div>
   <header id="toolbar" data-drag>
     <div id="sidepanel" class="glass" aria-hidden="true"></div>
     <div class="side left">
@@ -842,6 +926,7 @@
     </div>
     <button class="glass tab-new private-btn" id="btn-private" title="Neuer privater Tab (Strg+Umschalt+N)" data-lens><svg viewBox="0 0 16 16"><path d="M1.6 7.4h12.8M3.2 7.4l1.1-3.9c.1-.4.6-.6 1-.4L8 4l2.7-.9c.4-.2.9 0 1 .4l1.1 3.9"/><circle cx="4.9" cy="11" r="2"/><circle cx="11.1" cy="11" r="2"/><path d="M6.9 11c.7-.5 1.5-.5 2.2 0"/></svg></button>
     <button class="glass tab-new mail-btn" id="btn-mail" title="Mail" data-lens><svg viewBox="0 0 16 16"><rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2"/><path d="m2.8 4.6 5.2 4 5.2-4"/></svg><span class="mail-badge"></span></button>
+    <button class="glass tab-new dl-btn" id="btn-dls" title="Downloads" data-lens hidden><svg class="dl-ic" viewBox="0 0 16 16"><path d="M8 2.4v7.4M4.9 6.9 8 10l3.1-3.1"/><path d="M3.2 13h9.6"/></svg><svg class="dl-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" pathLength="100"/></svg></button>
     <button class="glass tab-new fav-btn" id="btn-favs" title="Favoriten" data-lens><svg viewBox="0 0 16 16"><path d="M4.6 2.6h6.8v10.8L8 11 4.6 13.4z"/></svg></button>
     <!-- Fensterknöpfe wie unter Windows: rechts oben, Schließen ganz außen -->
     <div class="winctl">
@@ -857,6 +942,9 @@
     <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span><span id="toolbar-pin-label">Leiste dauerhaft anzeigen</span></button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
   </div>
+  <div id="mail-menu" role="menu" aria-label="Postfach" hidden>
+    <button id="mail-forget" class="item" type="button" role="menuitem" title="Du bleibst dort angemeldet"></button>
+  </div>
   <main id="stage">
   </main>
 
@@ -871,9 +959,9 @@
   <div id="dropzone" class="glass"></div>
 
   <div id="page-shot"></div>
-  <div id="suggest" class="glass"></div>
-  <div id="wheel"><div class="spin"></div></div>
+  <div id="suggest" class="glass"></div>  <div id="wheel"><div class="spin"></div></div>
   <div id="favs" class="glass"></div>
+  <div id="dls" class="glass"></div>
   <!-- Mail-Ansicht (mail.rs): Liste links; rechts liegt das Postfach als eigene WebView darüber -->
   <div id="mailview" class="glass"></div>
   <div id="mail-hint"></div>
@@ -922,6 +1010,9 @@
     shieldOff: '<path d="M8 1.9 13 3.8v3.9c0 3-2.1 5.4-5 6.4-2.9-1-5-3.4-5-6.4V3.8z"/><path d="m2.5 2.5 11 11"/>',
     chev: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
     check: '<path d="m3.5 8.5 3 3 6-7"/>',
+    file: '<path d="M4.2 1.9h5.1l3 3v8.4a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V2.7a.8.8 0 0 1 .8-.8z"/><path d="M9.2 2v3h3"/>',
+    folder: '<path d="M2 4.6c0-.6.4-1 1-1h3l1.4 1.5H13c.6 0 1 .4 1 1v5.8c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1z"/>',
+    retry: '<path d="M2.8 8a5.2 5.2 0 1 0 1.52-3.68"/><path d="M2.8 2.6v3h3"/>',
     mail: '<rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2"/><path d="m2.8 4.6 5.2 4 5.2-4"/>',
     starFill: '<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" fill="currentColor"/>',
   };
@@ -1165,7 +1256,7 @@
   // ---------- Schriftfarbe je nach Hintergrund ----------
   // Glass zeichnet das Wallpaper selbst hinter das Glas – also lässt sich messen, wie hell es unter jeder
   // Glasfläche ist. Wäre dunkle Schrift dort besser lesbar als helle, bekommt die Fläche .ink-dark.
-  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#mailview', '#private-note'];
+  const INK = ['#toolbar', '#address', '#suggest', '#favs', '#dls', '#mailview', '#private-note'];
   const probe = document.createElement('canvas');
   probe.width = 24; probe.height = 8;
   const probeCtx = probe.getContext('2d', { willReadFrequently: true });
@@ -1271,7 +1362,8 @@
   // Leiste links statt oben (Einstellung im Kontextmenü der Leiste)
   const sideLeft = () => document.body.classList.contains('side-left');
   // Liegt der Punkt auf der Leiste (oben bzw. links) statt über der Webseite?
-  const overChrome = (x, y) => (sideLeft() ? x < state.chromeWidth : y < state.chromeHeight);
+  const SIDE_TOP = 28; // = --side-top
+  const overChrome = (x, y) => (sideLeft() ? x < state.chromeWidth || y < SIDE_TOP : y < state.chromeHeight);
 
   function updateDrop(d, e) {
     const under = document.elementsFromPoint(e.clientX, e.clientY).find((n) => !d.el.contains(n));
@@ -1416,13 +1508,12 @@
   }
 
   // Liste leer (der einzige Tab steht im Adressfeld): „+“ rückt direkt rechts neben das Feld,
-  // statt allein in der Mitte zu stehen. Beim Umziehen gleitet es von der alten an die neue Stelle.
+  // statt allein in der Mitte zu stehen – in der Leiste links immer. Beim Umziehen gleitet es von der alten an die neue Stelle.
   function placeNewTab() {
     const btn = $('btn-new');
     // (auch bei einem einzigen kombinierten Paar: beide stehen dann im Feld)
-    // (Leiste links: „+“ bleibt immer über den Tabs – dort steht es ohnehin direkt unter dem Feld)
-    const solo = !sideLeft() && !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
-    const home = solo ? document.querySelector('.side.left') : $('tabbar');
+    const solo = !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
+    const home = sideLeft() || solo ? document.querySelector('.side.left') : $('tabbar');
     if (btn.parentElement === home) return;
     const from = btn.getBoundingClientRect();
     home.append(btn);
@@ -1485,11 +1576,22 @@
     { id: 'google', name: 'Google', origin: 'https://www.google.com', icon: favicon('google.com'), hint: 'Suchbegriff oder Websitename eingeben' },
     { id: 'chatgpt', name: 'ChatGPT', origin: 'https://chatgpt.com', icon: favicon('chatgpt.com'), hint: 'ChatGPT fragen oder Website eingeben' },
     { id: 'claude', name: 'Claude', origin: 'https://claude.ai', icon: favicon('claude.ai'), hint: 'Claude fragen oder Website eingeben' },
-    // Gemini, Kimi und Z.ai nehmen keinen Prompt über die Adresse an – Glass tippt ihn dort ein (prompt.js)
+    // Gemini, Kimi, Z.ai und Grok nehmen keinen Prompt über die Adresse an – Glass tippt ihn dort ein (prompt.js)
     { id: 'gemini', name: 'Gemini', origin: 'https://gemini.google.com', icon: favicon('gemini.google.com'), hint: 'Gemini fragen oder Website eingeben' },
     { id: 'kimi', name: 'Kimi', origin: 'https://www.kimi.ai', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
     { id: 'zai', name: 'Z.ai', origin: 'https://chat.z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
+    { id: 'grok', name: 'Grok', origin: 'https://grok.com', icon: favicon('grok.com'), hint: 'Grok fragen oder Website eingeben' },
+    { id: 'youtube', name: 'YouTube', origin: 'https://www.youtube.com', icon: favicon('youtube.com'), hint: 'Auf YouTube suchen oder Website eingeben' },
+    { id: 'amazon', name: 'Amazon', origin: 'https://www.amazon.de', icon: favicon('amazon.de'), hint: 'Auf Amazon suchen oder Website eingeben' },
   ];
+  // Im Rad stehen Google und fünf weitere; welche, tauscht man per Rechtsklick auf einen Kreis (siehe setWheelEditing)
+  const WHEEL_KEY = 'glass.wheel', WHEEL_DEFAULT = ['chatgpt', 'claude', 'gemini', 'kimi', 'youtube'];
+  const engineById = (id) => ENGINES.find((e) => e.id === id && e !== ENGINES[0]);
+  let wheelIds = WHEEL_DEFAULT;
+  try {
+    const saved = JSON.parse(localStorage.getItem(WHEEL_KEY));
+    if (Array.isArray(saved)) wheelIds = [...new Set([...saved, ...WHEEL_DEFAULT])].filter(engineById).slice(0, WHEEL_DEFAULT.length);
+  } catch { /* Standard */ }
   // Jeder neue Tab beginnt mit Google (siehe window.render) – die Wahl wird deshalb nicht gespeichert
   let engine = ENGINES[0];
   const engineImg = (e) => { const img = new Image(); img.src = e.icon; img.alt = ''; return img; };
@@ -1526,7 +1628,7 @@
     reload.innerHTML = svg(tab?.loading ? 'stop' : 'reload');
     reload.title = tab?.loading ? 'Laden stoppen' : 'Neu laden (F5)';
     reload.style.visibility = tab?.page ? 'visible' : 'hidden';
-    $('btn-back').disabled = !tab?.page;
+    $('btn-back').disabled = !(tab?.page || tab?.mail); // aus der Mail-Ansicht führt Zurück zum Startbildschirm
     $('btn-fwd').disabled = !(tab?.page || tab?.home);
     renderStar();
     renderShield();
@@ -1633,15 +1735,35 @@
   input.addEventListener('blur', () => {
     closeWheel();
     closeSuggest();
-    if (!favPanel.classList.contains('open')) dropShot(); // Seitenbild nur, solange Glas über der Seite liegt
+    if (!favPanel.classList.contains('open') && !dlPanel.classList.contains('open')) dropShot(); // Seitenbild nur, solange Glas über der Seite liegt
     slide(false);
     renderAddress();
   });
+  // Startbildschirm: Tab ohne Fokus im Feld ginge zum nächsten Knopf (der Lupe) – stattdessen ins Feld und wechseln
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || editing() || !document.body.classList.contains('start')) return;
+    if (document.body.classList.contains('modal') || !toolbarMenu.hidden || !$('mail-menu').hidden) return;
+    e.preventDefault();
+    window.focusAddress();
+    switchEngine(e.shiftKey ? 1 : -1);
+  }, true);
   input.addEventListener('keydown', (e) => {
     if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
-    if (e.key === 'Escape' && wheel.classList.contains('open')) closeWheel();
-    else if (e.key === 'Escape') {
+    const wheelOpen = wheel.classList.contains('open') && !wheel.dataset.closing;
+    if (e.key === 'Escape' && wheelOpen && wheelEditing) setWheelEditing(false);
+    else if (e.key === 'Escape' && wheel.classList.contains('open')) closeWheel();
+    else if (e.key.startsWith('Arrow') && wheelOpen) {
+      // Pfeile drehen das offene Rad wie die gebogenen Pfeile darin: rechts/hoch im Uhrzeigersinn, links/runter zurück
+      e.preventDefault();
+      rotateWheel(e.key === 'ArrowRight' || e.key === 'ArrowUp' ? -1 : 1);
+    } else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
+    } else if (e.key === 'Tab' && document.body.classList.contains('start')) {
+      // Startbildschirm: Tab wechselt den Suchanbieter – wie das Mausrad im Uhrzeigersinn ums Rad (ist es offen, dreht es
+      // sich mit), Umschalt+Tab zurück. Die Vorschläge wählt man hier mit den Pfeilen.
+      e.preventDefault();
+      if (wheelOpen) rotateWheel(e.shiftKey ? 1 : -1);
+      else switchEngine(e.shiftKey ? 1 : -1);
     } else if (['ArrowDown', 'ArrowUp', 'Tab'].includes(e.key) && suggestions.length && suggestBox.classList.contains('open')) {
       e.preventDefault();
       moveSuggestion(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
@@ -1651,7 +1773,7 @@
     e.preventDefault();
     const value = input.value.trim();
     if (!value) return;
-    // Prompts an KI-Chats merken (Google-Suchen erkennt recordSearches an der Ergebnis-URL)
+    // Prompts an KI-Chats und YouTube-Suchen merken (Google-Suchen erkennt recordSearches an der Ergebnis-URL)
     const choice = searchEngine();
     if (choice.id !== 'google' && !activeTab()?.private && !looksLikeUrl(value)) remember(choice.id, value);
     send('navigate', { value, engine: choice.id });
@@ -1787,31 +1909,162 @@
 
   // Startbildschirm: Anbieter-Rad. Es klappt nach rechts auf, der gewählte Anbieter sitzt links am Knopf.
   const wheel = $('wheel'), wheelSpin = wheel.querySelector('.spin');
-  const WHEEL_ORBIT = 78, STEP = 360 / ENGINES.length;
-  let wheelRot = 0, wheelTimer = 0;
-  const slots = ENGINES.map((e, i) => {
+  const WHEEL_ORBIT = 78;
+  let wheelTimer = 0;
+  // Die Kreise: je Anbieter im Rad einer (`shown`, gleiche Reihenfolge), der gewählte links am Knopf, die nächsten
+  // im Uhrzeigersinn dahinter
+  const shown = [ENGINES[0], ...wheelIds.map(engineById)];
+  const STEP = 360 / shown.length;
+  const slots = shown.map((_, i) => {
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'glass slot';
-    slot.title = e.name;
-    slot.style.setProperty('--a', `${i * STEP}deg`);
-    slot.append(engineImg(e));
+    slot.angle = i * STEP; // fortlaufend, damit jede Drehung den kurzen Weg in ihre Richtung nimmt
+    slot.style.setProperty('--a', `${slot.angle}deg`);
+    slot.append(engineImg(shown[i]));
+    slot.title = shown[i].name;
     slot.addEventListener('pointerdown', (ev) => {
       ev.preventDefault(); ev.stopPropagation(); // Fokus bleibt im Feld
+      if (ev.button !== 0) return; // Rechtsklick: bearbeiten (contextmenu)
+      const e = shown[i]; // (beim Bearbeiten kann er getauscht worden sein)
       closeWheel(e === engine ? undefined : e); // der neue dreht sich beim Eindrehen über den bisherigen
     });
-    wheelSpin.append(slot);
+    slot.addEventListener('contextmenu', (ev) => { ev.preventDefault(); editSlot(i); });
     return slot;
   });
-  // Auf den gewählten Anbieter drehen – immer im Uhrzeigersinn
-  function turnWheel() {
-    const n = ENGINES.length, sel = ENGINES.indexOf(engine), target = -sel * STEP;
-    wheelRot += (((target - wheelRot) % 360) + 360) % 360;
-    wheel.style.setProperty('--rot', `${wheelRot}deg`);
-    slots.forEach((s, i) => {
-      s.classList.toggle('on', i === sel);
-      s.style.zIndex = n - ((i - sel + n) % n);
+  wheelSpin.append(...slots);
+
+  // Bearbeiten: Vom Kreis oben links (der nach dem gewählten) reihen sich schräg nach außen die Anbieter auf, die nicht im Rad stehen.
+  // Ein Klick tauscht diesen Kreis gegen den Anbieter (der bisherige rückt in die Reihe), die Pfeile neben ihm
+  // drehen einen Nachbarn an seine Stelle. Google lässt sich nicht tauschen.
+  const picks = document.createElement('div');
+  picks.className = 'picks';
+  // Auf der Linie von der Radmitte durch den Platz oben links, außerhalb der Umlaufbahn: So stößt die Reihe an
+  // keinen Kreis des Rads, auch nicht beim Drehen (je 6 px Luft). PICK/PICK_GAP wie .pick im CSS, 46 = --slot.
+  const PICK = 34, PICK_GAP = 5, pickAngle = STEP * Math.PI / 180;
+  const pickAt = (i) => {
+    const r = WHEEL_ORBIT + 46 / 2 + 6 + PICK / 2 + i * (PICK + PICK_GAP);
+    return { left: `calc(50% - ${r * Math.cos(pickAngle)}px)`, top: `calc(50% - ${r * Math.sin(pickAngle)}px)` };
+  };
+  // Gebogene Pfeile beiderseits des Kreises: je ein kleiner Viertelkreis auf Höhe der Lücke zwischen ihm und dem
+  // ersten Anbieter der Reihe, TURN_OFF zur Seite gerückt (gut 15 px neben dem Kreis), nach außen gewölbt. Beim
+  // Drehen streifen die Kreise sie – dann blenden die Pfeile kurz ab (.turning). Sie zeigen, wohin sich das Rad
+  // dreht: `side` 1 im Uhrzeigersinn nach rechts zum nächsten Platz, -1 zurück nach unten.
+  const TURN_R = WHEEL_ORBIT + 46 / 2 + 3, TURN_OFF = 18, TURN_BEND = 10, TURN_HEAD = 3.5; // Abstand zur Radmitte, Winkel, Radius, Spitze
+  function turnArrow(side) {
+    const mid = (STEP + side * TURN_OFF) * Math.PI / 180;
+    const nx = -Math.cos(mid), ny = -Math.sin(mid); // nach außen
+    const tx = side * Math.sin(mid), ty = -side * Math.cos(mid); // Drehrichtung
+    const half = TURN_BEND * Math.SQRT1_2, px = nx * TURN_R, py = ny * TURN_R; // halbe Sehne, Mitte der Sehne
+    const [x1, y1, x2, y2] = [px - tx * half, py - ty * half, px + tx * half, py + ty * half];
+    const cx = px - nx * half, cy = py - ny * half; // Mittelpunkt des Viertelkreises (radeinwärts)
+    // Richtung an der Spitze: senkrecht auf dem Radius des Viertelkreises, in Laufrichtung
+    const ex = (x2 - cx) / TURN_BEND, ey = (y2 - cy) / TURN_BEND, [dx, dy] = side > 0 ? [-ey, ex] : [ey, -ex];
+    const head = [35, -35].map((deg) => {
+      const w = deg * Math.PI / 180, bx = -(dx * Math.cos(w) - dy * Math.sin(w)), by = -(dx * Math.sin(w) + dy * Math.cos(w));
+      return `M${x2 + bx * TURN_HEAD} ${y2 + by * TURN_HEAD}L${x2} ${y2}`;
+    }).join('');
+    const arc = `M${x1} ${y1}A${TURN_BEND} ${TURN_BEND} 0 0 ${side > 0 ? 1 : 0} ${x2} ${y2}`;
+    const box = TURN_R + 20, wrap = document.createElement('div');
+    wrap.innerHTML = `<svg class="turn ${side > 0 ? 'next' : 'prev'}" viewBox="${-box} ${-box} ${2 * box} ${2 * box}" `
+      + `style="width:${2 * box}px;height:${2 * box}px"><title>${side > 0 ? 'Im Uhrzeigersinn drehen' : 'Gegen den Uhrzeigersinn drehen'}</title>`
+      + `<path class="hit" d="${arc}"/><path d="${arc}${head}"/></svg>`;
+    const turn = wrap.firstElementChild;
+    turn.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      rotateWheel(-side);
     });
+    return turn;
+  }
+  wheel.append(picks);
+  let wheelEditing = false, turningTimer = 0;
+  const editTarget = () => shown.indexOf(engine) + 1; // Kreis unter der Spalte
+  function setWheelEditing(on) {
+    if (on === wheelEditing) return;
+    wheelEditing = on;
+    wheel.classList.toggle('editing', on);
+    if (!on) { picks.replaceChildren(); slots.forEach((s) => s.classList.remove('target')); return; }
+    // Läge Google unter der Reihe (der letzte Anbieter ist gewählt): einen Platz zurückdrehen
+    if (editTarget() >= shown.length) { setEngine(shown[shown.length - 2]); turnWheel(-1); } else turnWheel();
+    picks.replaceChildren(...ENGINES.filter((e) => !shown.includes(e)).map((e, i) => {
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'glass pick';
+      pick.style.setProperty('--i', i);
+      Object.assign(pick.style, pickAt(i));
+      pick.engine = e;
+      pick.title = e.name;
+      pick.append(engineImg(e));
+      pick.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); // Fokus bleibt im Feld
+        swapIn(pick);
+      });
+      return pick;
+    }), turnArrow(-1), turnArrow(1));
+  }
+  // Rechtsklick auf einen Kreis: ihn bearbeiten – er dreht sich auf kurzem Weg unter die Reihe. Google lässt sich
+  // nicht tauschen (dann bleibt es beim Kreis dahinter); ein zweiter Rechtsklick auf den bearbeiteten beendet es.
+  function editSlot(i) {
+    if (wheel.dataset.closing) return;
+    if (wheelEditing && i === editTarget()) { setWheelEditing(false); return; }
+    if (i > 0) {
+      const n = shown.length, ahead = (i - 1 - shown.indexOf(engine) + n) % n; // Plätze gegen den Uhrzeigersinn
+      if (ahead) { setEngine(shown[i - 1]); turnWheel(ahead <= n / 2 ? -1 : 1); }
+    }
+    setWheelEditing(true);
+  }
+  function swapIn(pick) {
+    const i = editTarget();
+    if (i < 1 || i >= shown.length) return;
+    const old = shown[i], e = pick.engine;
+    shown[i] = e;
+    wheelIds = shown.slice(1).map((x) => x.id);
+    try { localStorage.setItem(WHEEL_KEY, JSON.stringify(wheelIds)); } catch { /* egal */ }
+    slots[i].title = e.name;
+    slots[i].querySelector('img').replaceWith(engineImg(e));
+    pick.engine = old;
+    pick.title = old.name;
+    pick.replaceChildren(engineImg(old));
+    for (const img of [slots[i].querySelector('img'), pick.querySelector('img')]) {
+      img.animate([{ transform: 'scale(.15)' }, { transform: 'scale(1.18)', offset: .6 }, { transform: 'scale(1)' }],
+        { duration: 280, easing: 'ease-out' });
+    }
+  }
+  // Einen Platz weiterdrehen: -1 im Uhrzeigersinn (von unten rückt der nächste nach), +1 zurück.
+  // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google).
+  // Tab auf dem Startbildschirm (Rad zu): Anbieter wechseln wie beim Drehen des Rads (step wie rotateWheel). Das Logo
+  // im Feld springt kurz, Vorschläge und Verbindung richten sich gleich nach dem neuen Anbieter.
+  function switchEngine(step) {
+    const n = shown.length;
+    setEngine(shown[(((shown.indexOf(engine) + step) % n) + n) % n]);
+    engineBtn.querySelector('img')?.animate([{ transform: 'scale(.4)' }, { transform: 'scale(1.15)', offset: .6 }, { transform: 'scale(1)' }],
+      { duration: 280, easing: 'ease-out' });
+    refreshSuggest(input.value);
+    warmUp(input.value);
+  }
+  function rotateWheel(step) {
+    const list = wheelEditing ? shown.slice(0, -1) : shown, n = list.length;
+    setEngine(list[(((list.indexOf(engine) + step) % n) + n) % n]);
+    turnWheel(step < 0 ? 1 : -1);
+  }
+  // Auf den gewählten Anbieter drehen – im Uhrzeigersinn (`dir` 1) oder dagegen (-1). Jeder Kreis rückt auf seinen Platz.
+  function turnWheel(dir = 1) {
+    const n = slots.length, sel = shown.indexOf(engine);
+    let moved = false;
+    slots.forEach((s, i) => {
+      const j = (i - sel + n) % n;
+      let turn = (((j * STEP - s.angle) % 360) + 360) % 360;
+      if (dir < 0 && turn) turn -= 360;
+      if (turn) { s.angle += turn; s.style.setProperty('--a', `${s.angle}deg`); moved = true; }
+      s.classList.toggle('on', i === sel);
+      s.classList.toggle('target', wheelEditing && i === sel + 1);
+      s.style.zIndex = n - j;
+    });
+    if (moved && wheelEditing) {
+      wheel.classList.add('turning');
+      clearTimeout(turningTimer);
+      turningTimer = setTimeout(() => wheel.classList.remove('turning'), 650);
+    }
   }
   function openWheel() {
     closeSuggest();
@@ -1826,7 +2079,7 @@
     turnWheel();
     requestAnimationFrame(() => requestAnimationFrame(() => wheel.classList.remove('instant')));
     document.body.classList.add('wheel-open');
-    slots[ENGINES.indexOf(engine)].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180 });
+    slots[shown.indexOf(engine)].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180 });
     moveSlots(true);
     if (!maskFrame) maskFrame = requestAnimationFrame(maskSlots);
   }
@@ -1856,7 +2109,7 @@
   // Schließen: jeder Kreis, der links am Knopf ankommt, bleibt dort liegen – unter dem bisherigen Anbieter,
   // nur ein neu gewählter (`pick`) legt sich obendrauf.
   function moveSlots(out, pick = -1) {
-    const n = ENGINES.length, from = ENGINES.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
+    const n = slots.length, from = shown.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
     const tuckedScale = matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : .82;
     return Promise.all(slots.map((s, i) => {
       const j = (i - from + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
@@ -1886,6 +2139,7 @@
     const n = slots.length, j = (to - from + n) % n;
     if (!j || matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
     const progress = (n - j) / (n - 1);
+
     // moveSlots nutzt cubic-bezier(.45, 0, .4, 1): Wegfortschritt in Zeit zurückrechnen.
     let lo = 0, hi = 1;
     for (let i = 0; i < 16; i++) {
@@ -1916,14 +2170,15 @@
   function closeWheel(pick) {
     clearTimeout(wheelTimer);
     if (!wheel.classList.contains('open') || wheel.dataset.closing) return;
+    setWheelEditing(false);
     wheel.dataset.closing = '1';
-    const from = ENGINES.indexOf(engine), to = pick ? ENGINES.indexOf(pick) : -1;
+    const from = shown.indexOf(engine), to = pick ? shown.indexOf(pick) : -1;
     const moving = Promise.all([moveSlots(false, to), to >= 0 ? swapWheelIcon(from, to) : Promise.resolve()]);
     if (pick) setEngine(pick);
     // Knopf erst zeigen, wenn alles eingedreht ist – sonst läge er schon mit dem neuen Logo unter dem Stapel
     moving.then(() => {
       document.body.classList.remove('wheel-open');
-      return slots[ENGINES.indexOf(engine)].animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }).finished;
+      return slots[shown.indexOf(engine)].animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }).finished;
     }).then(() => {
       delete wheel.dataset.closing;
       wheel.classList.remove('open');
@@ -1935,10 +2190,8 @@
   wheel.addEventListener('wheel', (e) => {
     e.preventDefault();
     clearTimeout(wheelTimer);
-    const n = ENGINES.length, i = ENGINES.indexOf(engine);
     if (!e.deltaY || wheel.dataset.closing) return;
-    setEngine(ENGINES[(i - 1 + n) % n]);
-    turnWheel();
+    rotateWheel(-1);
   }, { passive: false });
   wheel.addEventListener('pointerdown', (e) => e.preventDefault()); // Klick auf das Rad: Fokus bleibt im Feld
   // Klick daneben schließt das Rad
@@ -2039,6 +2292,7 @@
   function reportOverlay() {
     if (suggestBox.classList.contains('open')) { coverPage(suggestBox, suggestMost()); return; }
     if (favPanel.classList.contains('open')) { coverPage(favPanel); return; }
+    if (dlPanel.classList.contains('open')) { coverPage(dlPanel); return; }
     uncoverPage();
     if (upBox.classList.contains('open')) { reportUpdateOverlay(); return; } // das Modal bleibt ausgespart
     send('overlay', { rect: null });
@@ -2218,7 +2472,7 @@
     const up = sideLeft();
     favPanel.classList.toggle('up', up);
     Object.assign(favPanel.style, up
-      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
+      ? { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
       : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
     coverPage(favPanel);
@@ -2231,6 +2485,7 @@
     clearTimeout(favTimer);
     if (favPanel.classList.contains('open') || favWait) return;
     closeSuggest();
+    closeDownloads();
     if (!editing()) requestPageShot(); // (beim Suchen gibt es schon eins)
     if (shot && !shotReady()) { favWait = setTimeout(showFavorites, SHOT_WAIT); return; }
     showFavorites();
@@ -2260,6 +2515,159 @@
     favTimer = setTimeout(closeFavorites, 250);
   };
 
+  // ---------- Downloads (Rust: downloads.rs) ----------
+  // Knopf rechts oben – erst ab dem ersten Download dieser Sitzung – mit einer Glas-Liste wie bei den Favoriten:
+  // beim Drüberfahren auf, ein Klick öffnet die Datei. Beginnt ein Download, klappt sie kurz von selbst auf.
+  // Die Oberfläche kennt nur Nummern; Pfade und Dateien bleiben in Rust.
+  const dlBtn = $('btn-dls'), dlPanel = $('dls');
+  let downloads = [], dlTimer = 0, dlWait = 0, dlAuto = false; // dlAuto: von selbst aufgeklappt (neuer Download)
+  const dlCmd = (what, id) => send(`download_${what}`, id == null ? {} : { id });
+  function bytes(n) {
+    if (n < 1024) return `${n} B`;
+    const [v, unit] = n < 1024 ** 2 ? [n / 1024, 'KB'] : n < 1024 ** 3 ? [n / 1024 ** 2, 'MB'] : [n / 1024 ** 3, 'GB'];
+    return `${v.toLocaleString('de-DE', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${unit}`;
+  }
+  // „12,3 von 40 MB“ – die Einheit nur einmal, wenn beide gleich wären
+  function progressText(d) {
+    if (!d.total) return bytes(d.received);
+    const [a, b] = [bytes(d.received), bytes(d.total)];
+    return a.split(' ')[1] === b.split(' ')[1] ? `${a.split(' ')[0]} von ${b}` : `${a} von ${b}`;
+  }
+  function renderDownloadButton() {
+    const running = downloads.filter((d) => d.state === 'progress');
+    const known = running.length && running.every((d) => d.total > 0);
+    const [got, all] = running.reduce(([g, t], d) => [g + d.received, t + d.total], [0, 0]);
+    dlBtn.classList.toggle('busy', running.length > 0);
+    dlBtn.classList.toggle('vague', running.length > 0 && !known);
+    dlBtn.querySelector('circle').style.strokeDashoffset = known ? String(100 - Math.min(100, (got / all) * 100)) : '75';
+    dlBtn.title = running.length ? `Downloads – ${running.length === 1 ? running[0].name : `${running.length} laufen`}` : 'Downloads';
+  }
+  function downloadRow(d) {
+    const row = document.createElement('div');
+    row.className = `fv dl ${d.state}`;
+    row.title = d.url;
+    row.innerHTML = `<span class="fv-ic">${svg('file')}</span><span class="fv-text"><span class="fv-title"></span><span class="dl-sub"></span></span>`;
+    row.querySelector('.fv-title').textContent = d.name;
+    const sub = row.querySelector('.dl-sub');
+    if (d.state === 'progress') {
+      sub.textContent = progressText(d);
+      const bar = document.createElement('span');
+      bar.className = `dl-bar${d.total ? '' : ' vague'}`;
+      bar.innerHTML = '<i></i>';
+      bar.firstChild.style.width = d.total ? `${Math.min(100, (d.received / d.total) * 100)}%` : '';
+      row.querySelector('.fv-text').append(bar);
+    } else if (d.state === 'failed') sub.textContent = d.resumable ? 'Unterbrochen – zum Fortsetzen klicken' : 'Fehlgeschlagen';
+    else if (d.state === 'missing') sub.textContent = 'Datei nicht mehr vorhanden';
+    else sub.textContent = [bytes(d.received || d.total), hostOf(d.url), mailTime(d.time)].filter(Boolean).join(' · ');
+    const action = (icon, title, what) => {
+      const btn = document.createElement('button');
+      btn.className = 'rm';
+      btn.title = title;
+      btn.innerHTML = svg(icon);
+      btn.addEventListener('click', (e) => { e.stopPropagation(); dlCmd(what, d.id); });
+      row.append(btn);
+    };
+    if (d.state === 'done') action('folder', 'Im Ordner zeigen', 'show');
+    if (d.state === 'progress') action('close', 'Abbrechen', 'cancel');
+    else action('close', 'Aus der Liste entfernen', 'remove');
+    row.addEventListener('click', () => {
+      if (d.state === 'done') { dlCmd('open', d.id); closeDownloads(); }
+      else if (d.state === 'failed' && d.resumable) dlCmd('resume', d.id);
+    });
+    return row;
+  }
+  function renderDownloads() {
+    const head = document.createElement('div');
+    head.className = 'fv-head dl-head';
+    head.innerHTML = '<span>Downloads</span>';
+    if (downloads.some((d) => d.state !== 'progress')) {
+      const clear = document.createElement('button');
+      clear.className = 'dl-clear';
+      clear.textContent = 'Liste leeren';
+      clear.addEventListener('click', () => dlCmd('clear'));
+      head.append(clear);
+    }
+    const rows = downloads.map(downloadRow);
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'fv-empty';
+      empty.textContent = 'Noch keine Downloads.';
+      rows.push(empty);
+    }
+    dlPanel.replaceChildren(head, ...rows);
+    placeDownloads();
+  }
+  function placeDownloads() {
+    if (!dlPanel.classList.contains('open')) return;
+    const r = layoutRect(dlBtn);
+    const up = sideLeft(); // Leiste links: der Knopf sitzt unten – die Liste klappt nach oben auf
+    dlPanel.classList.toggle('up', up);
+    Object.assign(dlPanel.style, up
+      ? { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${Math.max(8, r.top - 8 - dlPanel.offsetHeight)}px` }
+      : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
+    coverPage(dlPanel); // über einer Webseite: wie die Favoriten aus deren Region aussparen
+    updateInk();
+  }
+  // Wie die Favoriten: über einer Webseite erst mit deren Bild aufrollen (höchstens SHOT_WAIT warten)
+  function openDownloads() {
+    clearTimeout(dlTimer);
+    if (dlPanel.classList.contains('open') || dlWait || dlBtn.hidden) return;
+    closeSuggest();
+    closeFavorites();
+    if (!editing()) requestPageShot();
+    if (shot && !shotReady()) { dlWait = setTimeout(showDownloads, SHOT_WAIT); return; }
+    showDownloads();
+  }
+  function showDownloads() {
+    clearTimeout(dlWait);
+    dlWait = 0;
+    if (dlPanel.classList.contains('open')) return;
+    dlPanel.classList.add('open');
+    dlBtn.classList.add('open');
+    renderDownloads();
+  }
+  function closeDownloads() {
+    clearTimeout(dlTimer);
+    if (dlWait) { clearTimeout(dlWait); dlWait = 0; if (!editing()) dropShot(); }
+    if (!dlPanel.classList.contains('open')) return;
+    dlPanel.classList.remove('open');
+    dlBtn.classList.remove('open');
+    dlAuto = false;
+    uncoverPage();
+    if (!editing()) dropShot();
+    if (upBox.classList.contains('open')) reportUpdateOverlay();
+    else if (!suggestBox.classList.contains('open')) send('overlay', { rect: null });
+  }
+  const closeDownloadsSoon = (wait = 250) => {
+    if (dlWait) { closeDownloads(); return; }
+    clearTimeout(dlTimer);
+    dlTimer = setTimeout(closeDownloads, wait);
+  };
+  window.setDownloads = ({ visible, items }, started) => {
+    downloads = items;
+    dlBtn.hidden = !visible;
+    renderDownloadButton();
+    renderDownloads(); // auch zugeklappt: beim Aufklappen (und für Tests) stimmt die Liste schon
+    if (!started) return;
+    dlBtn.classList.remove('pop'); void dlBtn.offsetWidth; dlBtn.classList.add('pop');
+    // Neuer Download: kurz aufklappen, damit man sieht, dass er läuft – außer man tippt gerade oder ein Dialog ist offen
+    if (!editing() && !document.body.classList.contains('modal') && !dlPanel.classList.contains('open')) {
+      openDownloads();
+      dlAuto = true;
+      if (!dlBtn.matches(':hover') && !dlPanel.matches(':hover')) closeDownloadsSoon(3500);
+    }
+  };
+  dlBtn.addEventListener('pointerenter', openDownloads);
+  dlBtn.addEventListener('pointerleave', () => closeDownloadsSoon());
+  // Klick: auf bzw. zu – war sie von selbst aufgeklappt, bleibt sie jetzt offen
+  dlBtn.addEventListener('click', () => {
+    if (dlPanel.classList.contains('open') && !dlAuto) { closeDownloads(); return; }
+    dlAuto = false;
+    openDownloads();
+  });
+  dlPanel.addEventListener('pointerenter', () => { clearTimeout(dlTimer); dlAuto = false; });
+  dlPanel.addEventListener('pointerleave', () => closeDownloadsSoon());
+
   // ---------- Mail: alle Postfächer in einer Ansicht (Rust: mail.rs, Seiten: mail-content.js) ----------
   // Der Knopf oben rechts führt zur Mail-Ansicht (einem eigenen Tab). Links steht die gemeinsame Liste, rechts
   // legt Rust das Postfach der gewählten Mail als WebView darüber – die Oberfläche zeichnet nur dessen Rahmen.
@@ -2268,11 +2676,37 @@
   let mailFilter = 'all', mailSelected = null; // „all“, „unread“ oder ein Postfach
   const plural = (n) => (n > 999 ? '999+' : String(n));
   const inMailView = () => !!activeTab()?.mail;
+  // Abzeichen zählen nur, was seit dem letzten Besuch der Mail-Ansicht neu ist – nicht alle Ungelesenen (die stehen
+  // oben in der Mail-Ansicht). Gemerkt wird je Postfach die Zahl beim Verlassen der Ansicht; liest man woanders,
+  // sinkt sie mit, sonst gingen neue Mails darin unter. Ein neu verbundenes Postfach beginnt bei 0.
+  const MAIL_SEEN_KEY = 'glass.mailSeen';
+  let mailSeen = {}, wasInMailView = false;
+  try { mailSeen = JSON.parse(localStorage.getItem(MAIL_SEEN_KEY)) || {}; } catch { /* leer starten */ }
+  function updateMailSeen(all = false) {
+    let changed = false;
+    for (const b of mail.boxes) {
+      const seen = mailSeen[b.key];
+      const next = !b.connected ? undefined : b.unread == null ? seen : all || seen == null ? b.unread : Math.min(seen, b.unread);
+      if (next !== seen) { if (next === undefined) delete mailSeen[b.key]; else mailSeen[b.key] = next; changed = true; }
+    }
+    if (changed) try { localStorage.setItem(MAIL_SEEN_KEY, JSON.stringify(mailSeen)); } catch { /* egal */ }
+  }
+  const freshMail = (b) => (b.connected && b.unread != null ? Math.max(0, b.unread - (mailSeen[b.key] ?? b.unread)) : 0);
+  // Mail-Ansicht verlassen: alles darin gilt als gesehen
+  function mailViewShown(open) {
+    if (wasInMailView && !open) { updateMailSeen(true); renderMailBadge(); }
+    wasInMailView = open;
+  }
+  function renderMailBadge() {
+    const fresh = mail.boxes.reduce((sum, b) => sum + freshMail(b), 0);
+    const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
+    mailBtn.querySelector('.mail-badge').textContent = fresh ? plural(fresh) : '';
+    mailBtn.title = !total ? 'Mail' : `Mail – ${fresh ? `${fresh.toLocaleString('de-DE')} neu, ` : ''}${total.toLocaleString('de-DE')} ungelesen`;
+  }
   window.mailState = (next) => {
     mail = next;
-    const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
-    mailBtn.querySelector('.mail-badge').textContent = total ? plural(total) : '';
-    mailBtn.title = total ? `Mail – ${total.toLocaleString('de-DE')} ungelesen` : 'Mail';
+    updateMailSeen();
+    renderMailBadge();
     if (!mail.boxes.some((b) => b.key === mailFilter)) mailFilter = mailFilter === 'unread' ? 'unread' : 'all';
     if (inMailView()) renderMailView();
   };
@@ -2316,6 +2750,39 @@
     el.addEventListener('click', onClick);
     return el;
   }
+  // Rechtsklick auf ein verbundenes Postfach: Menü mit „… trennen“ (angemeldet bleibt man dort trotzdem)
+  const mailMenu = $('mail-menu'), mailForget = $('mail-forget');
+  let mailMenuKey = null;
+  function openMailMenu(e, b) {
+    e.preventDefault();
+    mailMenuKey = b.key;
+    mailForget.textContent = `${b.name} trennen`;
+    mailMenu.hidden = false;
+    const x = Math.max(4, Math.min(e.clientX, innerWidth - mailMenu.offsetWidth - 4));
+    const y = Math.max(4, Math.min(e.clientY, innerHeight - mailMenu.offsetHeight - 4));
+    Object.assign(mailMenu.style, { left: `${x}px`, top: `${y}px` });
+    // Reicht es über das Postfach rechts, spart Rust es dort aus
+    send('overlay', { key: 'mail-menu', rect: { x, y, w: mailMenu.offsetWidth, h: mailMenu.offsetHeight, r: 12 } });
+    mailForget.focus({ preventScroll: true });
+  }
+  function closeMailMenu() {
+    if (mailMenu.hidden) return;
+    mailMenu.hidden = true;
+    mailMenuKey = null;
+    send('overlay', { key: 'mail-menu', rect: null });
+  }
+  mailForget.addEventListener('click', () => {
+    const key = mailMenuKey;
+    closeMailMenu();
+    if (key) send('mail_forget', { value: key });
+  });
+  document.addEventListener('pointerdown', (e) => { if (!mailMenu.contains(e.target)) closeMailMenu(); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (mailMenu.hidden || !['Escape', 'Tab'].includes(e.key)) return;
+    e.preventDefault(); e.stopImmediatePropagation(); closeMailMenu();
+  }, true);
+  addEventListener('blur', closeMailMenu);
+  addEventListener('resize', closeMailMenu);
   function renderMailView() {
     const view = state.mailView;
     if (!view) return;
@@ -2344,12 +2811,12 @@
         sel: mailFilter === b.key, off: !b.connected, cls: b.signedOut ? 'out' : '',
         title: !b.connected ? `${b.name} verbinden – rechts erscheint die Anmeldung`
           : b.signedOut ? `${b.name}: nicht angemeldet – klicken, um dich rechts anzumelden`
-          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach`,
+          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach (Rechtsklick: trennen)`,
         onClick: () => { mailFilter = b.key; mailSelected = null; send('mail_show', { value: b.key }); renderMailView(); },
       });
       el.prepend(mailIcon(b));
       // Abzeichen oben rechts, wie am Mail-Knopf: Ungelesene, „!“ (abgemeldet) oder „+“ (noch nicht verbunden)
-      const badge = !b.connected ? ['+', 'add'] : b.signedOut ? ['!', 'warn'] : b.unread ? [plural(b.unread), ''] : null;
+      const badge = !b.connected ? ['+', 'add'] : b.signedOut ? ['!', 'warn'] : freshMail(b) ? [plural(freshMail(b)), ''] : null;
       if (badge) {
         const n = document.createElement('span');
         n.className = `badge ${badge[1]}`;
@@ -2362,14 +2829,7 @@
         else n.textContent = badge[0];
         el.append(n);
       }
-      if (b.connected) {
-        const rm = document.createElement('span');
-        rm.className = 'rm';
-        rm.title = `${b.name} trennen (du bleibst dort angemeldet)`;
-        rm.innerHTML = svg('close');
-        rm.addEventListener('click', (e) => { e.stopPropagation(); send('mail_forget', { value: b.key }); });
-        el.append(rm);
-      }
+      if (b.connected) el.addEventListener('contextmenu', (e) => openMailMenu(e, b));
       chips.append(el);
     }
 
@@ -2507,6 +2967,9 @@
     vhover = chain;
     if (chain.includes(favBtn) || chain.includes(favPanel)) openFavorites();
     else if ((favPanel.classList.contains('open') || favWait) && !favBtn.matches(':hover') && !favPanel.matches(':hover')) closeFavoritesSoon();
+    // (von selbst aufgeklappt: schließt nach seiner eigenen Zeit, bis die Maus einmal darüber war)
+    if (chain.includes(dlBtn) || chain.includes(dlPanel)) { dlAuto = false; openDownloads(); }
+    else if ((dlPanel.classList.contains('open') || dlWait) && !dlAuto && !dlBtn.matches(':hover') && !dlPanel.matches(':hover')) closeDownloadsSoon();
   };
 
   // Wechsel Startbildschirm ↔ Seite: Das Adressfeld wechselt zwischen Mitte und Leiste und blendet dort ein.
@@ -2535,6 +2998,7 @@
   // `from`: bisherige Rahmen, wenn die Leiste oben gerade aus- oder einfährt – dann gleiten sie mit der Seite mit
   function renderPanes(from = null) {
     if (resizeDrag) return;
+    document.body.classList.remove('split-dragging'); // nach dem Ziehen: Rahmen gleich an der neuen Stelle
     const panes = (state.panes || []).filter((p) => hasPage(p.id));
     // Mail-Ansicht: Rahmen um das Postfach rechts (dessen WebView gehört keinem Tab)
     const mailPane = state.mailView ? [{ ...state.mailView.pane, id: state.active }] : [];
@@ -2559,33 +3023,11 @@
     $('tools').hidden = !activeSplit(); // die Kapsel enthält nur den Knopf „Teilung aufheben“
   }
 
-  // Trennlinie ziehen → Verhältnis der beiden Seiten
+  // Trennlinie ziehen → Verhältnis der beiden Seiten. Die echten Seiten ziehen live mit (split_drag, höchstens
+  // einmal pro Bild), Rust meldet erst am Ende (split_ratio). Die Rahmen sind solange aus: Die Seiten verschiebt Rust
+  // als eigene Fenster, das ist sofort zu sehen – ein Rahmen dieser Oberfläche liefe ein, zwei Bilder hinterher.
   const divider = $('divider');
-  let resizeDrag = null, resizeToken = 0;
-  window.setResizeSnapshot = async (token, id, source) => {
-    const drag = resizeDrag;
-    if (!drag || drag.token !== token || drag.ending) return;
-    const card = drag.cards.get(id);
-    if (!card) return;
-    if (source.startsWith('data:image/jpeg;base64,')) {
-      const image = new Image(); image.src = source;
-      try {
-        await image.decode();
-        if (resizeDrag !== drag || drag.ending) return;
-        card.firstChild.style.backgroundImage = `url("${source}")`;
-      } catch { /* Plain material remains usable if capture/decoding fails. */ }
-    }
-    drag.pending.delete(id);
-    if (!drag.pending.size) drag.ready();
-  };
-  window.finishResizePreview = (token) => {
-    const drag = resizeDrag;
-    if (!drag || drag.token !== token) return;
-    drag.cleanup();
-    drag.cards.forEach(card => card.remove());
-    resizeDrag = null;
-    renderPanes();
-  };
+  let resizeDrag = null;
   divider.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || resizeDrag || state.panes?.length !== 2) return;
     e.preventDefault();
@@ -2593,54 +3035,31 @@
     const [a, b] = state.panes, x0 = a.x, gap = b.x - a.x - a.w, total = b.x + b.w - a.x;
     divider.setPointerCapture(e.pointerId);
     divider.classList.add('dragging');
-    const drag = resizeDrag = { token: ++resizeToken, cards: new Map(), pending: new Set([a.id,b.id]), ending: false };
-    let frame = 0, ratio = a.w / (total - gap), ready = false;
-    for (const p of [a,b]) {
-      const tab = state.tabs.find(t => t.id === p.id);
-      const card = document.createElement('div'); card.className = 'resize-preview';
-      const background = document.createElement('div'); background.className = 'snapshot';
-      const identity = document.createElement('div'); identity.className = 'identity';
-      identity.innerHTML = svg(tab?.private ? 'private' : 'globe');
-      if (!tab?.private && tab?.favicon?.startsWith('data:image/png;base64,')) {
-        const icon = new Image(); icon.src = tab.favicon; identity.replaceChildren(icon);
-      }
-      const title = document.createElement('span'); title.textContent = tab?.title || parse(tab?.url)?.hostname || 'Webseite';
-      identity.append(title); card.append(background, identity); document.body.append(card); drag.cards.set(p.id, card);
-    }
+    document.body.classList.add('split-dragging');
+    let frame = 0, ratio = a.w / (total - gap);
+    const drag = resizeDrag = {};
     const paint = () => {
       frame = 0;
-      const left = Math.round((total-gap)*ratio);
-      [a,b].forEach((p,i) => Object.assign(drag.cards.get(p.id).style, {
-        left: `${i ? x0+left+gap : x0}px`, top: `${p.y}px`, width: `${i ? total-gap-left : left}px`, height: `${p.h}px`
-      }));
-      divider.style.left = `${x0+left}px`;
+      send('split_drag', { value: ratio });
+      divider.style.left = `${x0 + Math.round((total - gap) * ratio)}px`;
     };
-    drag.ready = () => {
-      if (ready || resizeDrag !== drag || drag.ending) return;
-      ready = true; send('split_resize_ready', {token:drag.token});
-    };
-    const timeout = setTimeout(drag.ready, 800);
-    paint();
-    send('split_resize_start', {token:drag.token});
     const move = (ev) => {
       ratio = Math.max(.2, Math.min(.8, (ev.clientX - x0 - gap / 2) / (total - gap)));
       if (!frame) frame = requestAnimationFrame(paint);
     };
-    drag.cleanup = () => {
-      clearTimeout(timeout); cancelAnimationFrame(frame);
-      divider.classList.remove('dragging');
+    const up = (ev) => {
+      if (resizeDrag !== drag) return;
+      if (ev?.type === 'pointerup') move(ev);
+      cancelAnimationFrame(frame);
+      resizeDrag = null;
+      divider.classList.remove('dragging'); // (die Rahmen kommen mit der neuen Anordnung zurück: renderPanes)
       divider.removeEventListener('pointermove', move);
       divider.removeEventListener('pointerup', up);
       divider.removeEventListener('pointercancel', up);
       divider.removeEventListener('lostpointercapture', up);
       window.removeEventListener('blur', up);
       if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
-    };
-    const up = (ev) => {
-      if (drag.ending) return;
-      if (ev?.type === 'pointerup') move(ev);
-      drag.ending = true; drag.cleanup(); paint();
-      send('split_resize_end', {token:drag.token, value:ratio});
+      send('split_ratio', { value: ratio });
     };
     divider.addEventListener('pointermove', move);
     divider.addEventListener('pointerup', up);
@@ -2728,9 +3147,9 @@
     body.toggle('side-collapsed', collapsed);
     body.toggle('side-slim', slim);
     body.toggle('side-flyout', collapsed && flyout);
-    // Fensterknöpfe rechts oben: oben am Ende der Leiste, links in der ersten Zeile (unten stehen dort die Knöpfe)
+    // Fensterknöpfe rechts oben: am Ende der Leiste oben – bei der Leiste links im Streifen über den Seiten
     const winctl = document.querySelector('.winctl');
-    if (left) document.querySelector('.side.left > .nav').after(winctl);
+    if (left) $('sidestrip').append(winctl);
     else document.querySelector('.side.right').append(winctl);
     renderToolbarPin();
     reportSideOverlay();
@@ -2782,7 +3201,7 @@
   }
   // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
   const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
-    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
     || $('clipboard-history') // Zwischenablage-Liste: Ihr Glas zeigt ein Bild der Seite, die Seite darf nicht gleiten || document.body.matches('.modal, .wheel-open');
   // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
   let flyoutTimer = 0, flyoutPointer = null;
@@ -2828,7 +3247,7 @@
   let chromeHidden = false, pointerAt = null;
   const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
     || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
-    || [suggestBox, favPanel].some((el) => el.classList.contains('open'))
+    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
     || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
   function setChromeHidden(hidden) {
     hidden = hidden && !chromeKept();
@@ -2881,6 +3300,7 @@
     document.body.classList.toggle('home-back', !!activeTab()?.home);
     setStartMode(empty);
     document.body.classList.toggle('mail-view', !!activeTab()?.mail);
+    mailViewShown(!!activeTab()?.mail);
     if (activeTab()?.mail) renderMailView();
     // Vom Startbildschirm in die Mail-Ansicht: Das Suchfeld hatte dort den Fokus und bliebe ausgefahren
     // (Ohne Fokus im Fenster kommt dabei kein blur-Ereignis – also selbst einfahren, sonst bliebe .searching und
@@ -2931,6 +3351,14 @@
     else if (e.altKey && k === 'arrowright') cmd = 'forward';
     else if (k === 'f5') cmd = 'reload';
     if (cmd) { e.preventDefault(); send(cmd); }
+  });
+
+  // Seitentasten der Maus über der Oberfläche (Startbildschirm, Mail-Liste, Leiste): wie Zurück bzw. Vor
+  // (über Webseiten meldet content.js sie)
+  document.addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    send(e.button === 3 ? 'back' : 'forward');
   });
 
   // ---------- Fenster verschieben / Größe ändern ----------

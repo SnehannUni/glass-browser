@@ -111,11 +111,6 @@ pub fn is_allowed(url: &str) -> bool {
     allowed.iter().any(|a| host == *a || host.ends_with(&format!(".{a}")))
 }
 
-/// Alle Seiten mit abgeschaltetem Blocker (für das Skript in den Webseiten).
-pub fn allowed_sites() -> Vec<String> {
-    STATE.get().map(|s| s.allowed.read().unwrap().iter().cloned().collect()).unwrap_or_default()
-}
-
 /// Blocker für die Seite von `url` an- bzw. ausschalten und speichern.
 pub fn toggle(url: &str) {
     let Some(state) = STATE.get() else { return };
