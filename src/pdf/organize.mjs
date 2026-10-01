@@ -9,7 +9,7 @@ export function initOrganize(app) {
   const root = $('organize'), grid = $('org-grid'), count = $('org-count');
   const buttons = {
     left: $('org-rotate-left'), right: $('org-rotate-right'), del: $('org-delete'),
-    extract: $('org-extract'), insert: $('org-insert'), undo: $('org-undo'),
+    extract: $('org-extract'), insert: $('org-insert'), undo: $('org-undo'), redo: $('org-redo'),
   };
   let selected = new Set(), anchor = null, busy = false;
   let observer = null, rendered = new WeakSet(), drawToken = 0;
@@ -74,6 +74,7 @@ export function initOrganize(app) {
     buttons.del.disabled = !n || n >= total || busy;
     buttons.insert.disabled = busy;
     buttons.undo.disabled = !app.canUndoChange || busy;
+    buttons.redo.disabled = !app.canRedoChange || busy;
     app.placeWells();
   }
 
@@ -282,12 +283,13 @@ export function initOrganize(app) {
     }
   }
 
-  async function undoLast() {
-    if (busy || !app.canUndoChange) return;
+  /** Rückgängig (`redo` = false) oder Wiederholen über den gemeinsamen Verlauf des Viewers. */
+  async function travel(redo = false) {
+    if (busy || !(redo ? app.canRedoChange : app.canUndoChange)) return;
     busy = true;
     mark();
     try {
-      if (await app.undoChange()) {
+      if (await (redo ? app.redoChange() : app.undoChange())) {
         selected.clear();
         build();
       }
@@ -296,12 +298,14 @@ export function initOrganize(app) {
       mark();
     }
   }
+  const undoLast = () => travel(false);
 
   buttons.left.onclick = () => rotate(-90);
   buttons.right.onclick = () => rotate(90);
   buttons.del.onclick = remove;
   buttons.extract.onclick = extract;
   buttons.undo.onclick = undoLast;
+  buttons.redo.onclick = () => travel(true);
   const fileInput = $('org-file');
   buttons.insert.onclick = () => { fileInput.value = ''; fileInput.click(); };
   fileInput.addEventListener('change', () => {
@@ -316,9 +320,10 @@ export function initOrganize(app) {
     if (e.target.closest('input')) return;
     const key = e.key.toLowerCase();
     // Behandelte Tasten gehen nicht weiter an den Viewer (Pfeile blättern dort); Strg+S, Strg+P usw. schon
-    const handled = (e.ctrlKey && (key === 'a' || key === 'z')) || ['Delete', 'Backspace', 'Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+    const handled = (e.ctrlKey && (key === 'a' || key === 'z' || key === 'y')) || ['Delete', 'Backspace', 'Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key);
     if (handled) e.stopPropagation();
     if (e.ctrlKey && key === 'a') { e.preventDefault(); selected = new Set(all()); mark(); }
+    else if (e.ctrlKey && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); travel(true); }
     else if (e.ctrlKey && key === 'z') { e.preventDefault(); undoLast(); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); remove(); }
     else if (e.key === 'Escape') { e.preventDefault(); selected.size ? (selected.clear(), mark()) : close(); }

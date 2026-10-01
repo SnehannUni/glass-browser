@@ -78,6 +78,7 @@ export function initNotes(app) {
   }
   function changed(rerender = true, page) {
     app.setDirty(true);
+    app.markEdited();
     dispatchEvent(new Event('glass-edited'));
     if (rerender) refresh(page);
     scheduleList();

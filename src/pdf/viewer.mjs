@@ -556,6 +556,8 @@ async function exportBytes() {
 // ---------- Verlauf der Dokument-Änderungen (Seiten, Wasserzeichen, Schwärzen …) ----------
 const UNDO_STEPS = 12;
 const history = [];
+// Zurückgenommene Fassungen für „Wiederholen“ – eine neue Änderung verwirft sie
+const future = [];
 let changing = false;
 /**
  * Baut ein neues PDF und setzt es ein: `make(bytes, lib)` bekommt die Arbeitsfassung und pdf-lib und liefert die
@@ -572,8 +574,9 @@ async function applyChange(label, make, { toastUndo = true } = {}) {
     await replaceDocument(bytes);
     history.push(before);
     if (history.length > UNDO_STEPS) history.shift();
+    future.length = 0;
     setDirty(true);
-    dispatchEvent(new Event('glass-history'));
+    dispatchEvent(new CustomEvent('glass-history', { detail: 'new' }));
     if (label) toast(label, toastUndo ? { label: 'Rückgängig', run: undoChange } : null);
     return true;
   } catch (err) {
@@ -585,19 +588,39 @@ async function applyChange(label, make, { toastUndo = true } = {}) {
     document.body.classList.remove('busy');
   }
 }
-async function undoChange() {
-  if (changing || !history.length) return false;
+/** Eine Fassung aus `from` einsetzen, die jetzige kommt nach `to` (Rückgängig ↔ Wiederholen). */
+async function travel(from, to, label, again, kind) {
+  if (changing || !from.length) return false;
   changing = true;
+  document.body.classList.add('busy');
   try {
-    await replaceDocument(history.pop());
+    const now = await workingBytes();
+    await replaceDocument(from.pop());
+    to.push(now);
+    if (to.length > UNDO_STEPS) to.shift();
     setDirty(true);
-    dispatchEvent(new Event('glass-history'));
-    toast('Rückgängig gemacht');
+    dispatchEvent(new CustomEvent('glass-history', { detail: kind }));
+    toast(label, again);
     return true;
+  } catch (err) {
+    console.error(err);
+    toast('Das hat nicht geklappt – das PDF ist unverändert.');
+    return false;
   } finally {
     changing = false;
+    document.body.classList.remove('busy');
   }
 }
+const undoChange = () => travel(history, future, 'Rückgängig gemacht', { label: 'Wiederholen', run: () => redoChange() }, 'undo');
+const redoChange = () => {
+  // Inzwischen etwas Neues gemacht (Anmerkung, Notiz …): Wiederholen würde das überschreiben – wie in jedem Editor verfällt es
+  if (edited && future.length) {
+    future.length = 0;
+    dispatchEvent(new CustomEvent('glass-history', { detail: 'new' }));
+    return Promise.resolve(false);
+  }
+  return travel(future, history, 'Wiederholt', { label: 'Rückgängig', run: () => undoChange() }, 'redo');
+};
 
 /** Erweiterungen, die beim Öffnen Bytes übernehmen (Notizen): `async (doc) => strippedBytes | null`. */
 const importHooks = [];
@@ -777,12 +800,15 @@ const app = {
   BASE, API, pdfjsLib, viewer, eventBus, container, name, signatures,
   get doc() { return doc; },
   get edited() { return edited; },
+  /** Eigene Änderungen außerhalb von PDF.js (Notizen) zählen wie Anmerkungen */
+  markEdited() { edited = true; },
   get dirty() { return dirty; },
   get canUndoChange() { return history.length > 0; },
+  get canRedoChange() { return future.length > 0; },
   get protection() { return protection; },
   get fileKey() { return fileKey; },
   placeWells, scheduleInk, toast, setDirty, currentBytes, workingBytes, exportBytes, save, writeFile, download,
-  loadPdfLib, applyChange, undoChange, replaceDocument, glassLayer, pageGeometry, refreshLayers, showSidebarView,
+  loadPdfLib, applyChange, undoChange, redoChange, replaceDocument, glassLayer, pageGeometry, refreshLayers, showSidebarView,
   exportHooks, importHooks, layerRenderers,
   onDocument: (fn) => documentListeners.push(fn),
   /** Bytes kurz als eigenes PDF.js-Dokument öffnen (etwa für extractPages auf der Arbeitsfassung). */
