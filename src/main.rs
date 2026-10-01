@@ -139,6 +139,8 @@ enum UserEvent {
     PdfSaveAs(u32, String),
     /// Strg+O im PDF-Viewer: Datei auswählen und in einem neuen Tab öffnen.
     PdfOpen,
+    /// Der PDF-Viewer hat ein neues PDF gebaut (etwa aus Bildern): in einem neuen Tab zeigen (Adresse aus `pdf::post`).
+    PdfNewTab(String),
 }
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
@@ -1155,6 +1157,7 @@ impl Browser {
                     self.new_tab(Some(pdf::local_url(&path)), false);
                 }
             }
+            UserEvent::PdfNewTab(url) => self.new_tab(Some(url), false),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -1488,6 +1491,10 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
                     Some(pdf::Post::SaveAs(ticket)) => {
                         respond(pdf::Served { status: 202, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
                         let _ = proxy.send_event(UserEvent::PdfSaveAs(id, ticket));
+                    }
+                    Some(pdf::Post::OpenTab(url)) => {
+                        respond(pdf::Served { status: 204, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfNewTab(url));
                     }
                     None => {}
                 }

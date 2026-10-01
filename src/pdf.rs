@@ -7,6 +7,9 @@
 //! PDFs von der Festplatte (`file://`, Kommandozeile, Öffnen-Dialog) zeigt der Viewer unter
 //! `http://glass-pdf.localhost/file/<Schlüssel>/<Name>` – nur so kann er sie auch wieder dorthin speichern.
 //!
+//! Neue PDFs, die der Viewer selbst baut (etwa aus Bildern), öffnet Glass in einem neuen Tab unter
+//! `http://glass-pdf.localhost/new/<Schlüssel>/<Name>` – gespeichert wird dann mit „Speichern unter“.
+//!
 //! Der Viewer holt PDF.js und die Datei von `http://glass-pdf.localhost/`; diese Anfragen beantwortet
 //! `watch_requests` in main.rs mit `serve` bzw. `post`, sie gehen nie ins Netz. Was nur der Viewer eines Tabs darf
 //! (Unterschriften, Speichern, Verschlüsseln), liegt unter einer geheimen Adresse `api/<Geheimnis>/` pro Tab.
@@ -39,6 +42,9 @@ const OWN: &[(&str, &[u8])] = &[
     ("textedit.mjs", include_bytes!("pdf/textedit.mjs")),
     ("fields.mjs", include_bytes!("pdf/fields.mjs")),
     ("design.mjs", include_bytes!("pdf/design.mjs")),
+    ("images.mjs", include_bytes!("pdf/images.mjs")),
+    ("compress.mjs", include_bytes!("pdf/compress.mjs")),
+    ("imageedit.mjs", include_bytes!("pdf/imageedit.mjs")),
     // Deutsche Texte für die Werkzeuge von PDF.js (Englisch bleibt als Rückfall eingebaut)
     ("l10n/locale.json", br#"{"de":"de.ftl"}"#),
     ("l10n/de.ftl", include_bytes!("pdf/de.ftl")),
@@ -65,7 +71,14 @@ thread_local! {
     static LOCAL: RefCell<HashMap<String, PathBuf>> = RefCell::default();
     /// „Speichern unter“: Bytes, die auf den Dialog warten (Tab, Schlüssel → Vorschlag für den Namen, Inhalt).
     static SAVE_AS: RefCell<HashMap<String, (String, Vec<u8>)>> = RefCell::default();
+    /// Neue PDFs aus dem Viewer (Schlüssel, Name, Bytes) – auch Neu laden zeigt sie wieder.
+    static NEW: RefCell<VecDeque<(String, String, Vec<u8>)>> = RefCell::default();
+    /// Installierte Schriften für „Text bearbeiten“ (einmal aus der Registry gelesen).
+    static FONTS: RefCell<Option<Rc<Fonts>>> = RefCell::default();
 }
+
+/// So viele neue PDFs bleiben im Speicher.
+const NEW_KEPT: usize = 6;
 
 /// Was der Viewer eines Tabs von Glass abholt: PDFs (Schlüssel, Bytes; jedes genau einmal) und das Wallpaper.
 #[derive(Clone)]
@@ -144,7 +157,12 @@ pub fn local_url(path: &Path) -> String {
 
 /// Für das Adressfeld: statt der Viewer-Adresse die Datei (`file:///C:/…`).
 pub fn display_url(url: &str) -> Option<String> {
-    let key = url.strip_prefix(HOST)?.strip_prefix("file/")?.split('/').next()?;
+    let rest = url.strip_prefix(HOST)?;
+    // Neues, noch nicht gespeichertes PDF: nur sein Name
+    if let Some(new) = rest.strip_prefix("new/") {
+        return new.split_once('/').map(|(_, name)| percent_decode(name));
+    }
+    let key = rest.strip_prefix("file/")?.split('/').next()?;
     let path = LOCAL.with(|l| l.borrow().get(key).cloned())?;
     Some(file_url(&path))
 }
@@ -277,8 +295,24 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
     if let Some(call) = path.strip_prefix(&format!("api/{}/", docs.0.api)) {
         return Some(match call {
             "signatures" => Served::ok("application/json", Cow::Owned(std::fs::read(signatures_file()).unwrap_or_else(|_| b"[]".to_vec()))),
-            _ => Served::status(404),
+            "fonts" => Served::ok("application/json", Cow::Owned(fonts().list.to_string().into_bytes())),
+            // Nur Dateien aus der Liste der installierten Schriften
+            _ => match call.strip_prefix("font/").and_then(|file| fonts().files.get(&percent_decode(file).to_lowercase()).cloned()) {
+                Some(path) => match std::fs::read(path) {
+                    Ok(bytes) => Served::ok("application/octet-stream", Cow::Owned(bytes)),
+                    Err(_) => Served::status(404),
+                },
+                None => Served::status(404),
+            },
         });
+    }
+    // Ein neues PDF aus dem Viewer
+    if let Some(rest) = path.strip_prefix("new/") {
+        let key = rest.split('/').next().unwrap_or_default();
+        let found = NEW.with(|n| n.borrow().iter().find(|(k, ..)| k == key).map(|(_, name, b)| (name.clone(), b.clone())));
+        let Some((name, bytes)) = found else { return Some(Served::status(404)) };
+        let html = docs.viewer(&name, bytes, None);
+        return Some(Served { status: 200, mime: "text/html; charset=utf-8", body: Cow::Owned(html.into_bytes()), csp: Some(viewer_csp()) });
     }
     // Eine Datei von der Festplatte: die Viewer-Seite dafür
     if let Some(rest) = path.strip_prefix("file/") {
@@ -320,6 +354,8 @@ pub enum Post {
     Reply(Served),
     /// „Speichern unter“: Glass zeigt den Dialog (main.rs) und meldet das Ergebnis mit `window.__glassSaved`.
     SaveAs(String),
+    /// Ein neues PDF in einem neuen Tab zeigen (Adresse).
+    OpenTab(String),
 }
 
 /// POST des Viewers an `api/<Geheimnis>/…` (nur der eigene Tab kennt das Geheimnis).
@@ -349,6 +385,18 @@ pub fn post(docs: &Documents, uri: &str, body: Vec<u8>) -> Option<Post> {
             SAVE_AS.with(|s| s.borrow_mut().insert(ticket.clone(), (param("name"), body)));
             Post::SaveAs(ticket)
         }
+        // Geschütztes PDF entschlüsseln (gleiches Format wie encrypt) – pdf-lib kann verschlüsselte PDFs nicht lesen
+        "decrypt" => match decrypt(&body) {
+            Ok(pdf) => Post::Reply(Served::ok("application/pdf", Cow::Owned(pdf))),
+            Err(_) => reply(false),
+        },
+        // Neues PDF (etwa aus Bildern): in einem neuen Tab öffnen
+        "open-new" => {
+            if !body.starts_with(b"%PDF") {
+                return Some(reply(false));
+            }
+            Post::OpenTab(new_document(&param("name"), body))
+        }
         // Mit Passwort schützen: [Länge des Passworts, 4 Byte LE][Passwort UTF-8][PDF]
         "encrypt" => match encrypt(&body) {
             Ok(pdf) => Post::Reply(Served::ok("application/pdf", Cow::Owned(pdf))),
@@ -374,6 +422,115 @@ pub fn finish_save_as(ticket: &str, choose: impl FnOnce(&str) -> Option<PathBuf>
     }
 }
 
+/// Merkt sich ein neues PDF und gibt die Adresse, unter der ein Tab es zeigt.
+fn new_document(name: &str, bytes: Vec<u8>) -> String {
+    let name: String = name.trim().chars().filter(|c| !matches!(c, '/' | '\\' | '?' | '#')).take(120).collect();
+    let name = if name.is_empty() { "Neues PDF.pdf".to_owned() } else { name };
+    let key = token();
+    NEW.with(|n| {
+        let mut docs = n.borrow_mut();
+        while docs.len() >= NEW_KEPT {
+            docs.pop_front();
+        }
+        docs.push_back((key.clone(), name.clone(), bytes));
+    });
+    format!("{HOST}new/{key}/{}", url_encode(&name))
+}
+
+// ---------- Installierte Schriften ----------
+
+/// Schriften für „Text bearbeiten“: Liste für den Viewer (Familien mit ihren Schnitten) und erlaubte Dateien.
+struct Fonts {
+    list: Value,
+    /// Dateiname (klein) → Pfad – nur diese Dateien gibt `font/<Datei>` heraus.
+    files: HashMap<String, PathBuf>,
+}
+
+fn fonts() -> Rc<Fonts> {
+    FONTS.with(|f| f.borrow_mut().get_or_insert_with(|| Rc::new(read_fonts())).clone())
+}
+
+/// TrueType- und OpenType-Schriften aus der Registry (für alle Benutzer und den eigenen), nach Familien geordnet.
+fn read_fonts() -> Fonts {
+    let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut families: std::collections::BTreeMap<String, [Option<String>; 4]> = Default::default();
+    let mut files = HashMap::new();
+    for (name, file) in font_registry() {
+        let path = PathBuf::from(&file);
+        let path = if path.is_absolute() { path } else { windir.join("Fonts").join(path) };
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        // Sammlungen (.ttc) und Bitmap-Schriften kann pdf-lib nicht einbetten
+        if ext != "ttf" && ext != "otf" {
+            continue;
+        }
+        let Some((family, face)) = font_face(&name) else { continue };
+        let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+        let slot = &mut families.entry(family).or_default()[face];
+        if slot.is_none() {
+            *slot = Some(file_name.clone());
+            files.insert(file_name.to_lowercase(), path);
+        }
+    }
+    let list = families
+        .into_iter()
+        .map(|(family, [regular, bold, italic, bold_italic])| {
+            json!({ "family": family, "regular": regular, "bold": bold, "italic": italic, "boldItalic": bold_italic })
+        })
+        .collect();
+    Fonts { list: Value::Array(list), files }
+}
+
+/// „Arial Bold Italic (TrueType)“ → („Arial“, 3): Familie und Schnitt (0 normal, 1 fett, 2 kursiv, 3 beides).
+fn font_face(name: &str) -> Option<(String, usize)> {
+    let name = name.split(" (").next()?.trim();
+    // Mehrere Schriften in einem Eintrag („Cambria & Cambria Math“) passen zu keinem einzelnen Schnitt
+    if name.is_empty() || name.contains(" & ") {
+        return None;
+    }
+    for (suffix, face) in [(" Bold Italic", 3), (" Bold Oblique", 3), (" Italic", 2), (" Oblique", 2), (" Bold", 1)] {
+        if let Some(family) = name.strip_suffix(suffix) {
+            return Some((family.to_owned(), face));
+        }
+    }
+    Some((name.to_owned(), 0))
+}
+
+/// Alle Einträge unter `…\Windows NT\CurrentVersion\Fonts` (Name, Datei).
+fn font_registry() -> Vec<(String, String)> {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegEnumValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ,
+    };
+    let key: Vec<u16> = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts".encode_utf16().chain([0]).collect();
+    let mut out = Vec::new();
+    for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if unsafe { RegOpenKeyExW(root, key.as_ptr(), 0, KEY_READ, &mut hkey) } != 0 {
+            continue;
+        }
+        for index in 0.. {
+            let mut name = [0u16; 512];
+            let mut name_len = name.len() as u32;
+            let mut data = [0u16; 1024];
+            let mut data_len = std::mem::size_of_val(&data) as u32;
+            let mut kind = 0;
+            let status = unsafe {
+                RegEnumValueW(hkey, index, name.as_mut_ptr(), &mut name_len, std::ptr::null(), &mut kind, data.as_mut_ptr().cast(), &mut data_len)
+            };
+            if status == 259 {
+                break; // ERROR_NO_MORE_ITEMS
+            }
+            if status != 0 || kind != REG_SZ {
+                continue;
+            }
+            let chars = (data_len as usize / 2).min(data.len());
+            let value = String::from_utf16_lossy(&data[..chars]).trim_end_matches('\0').to_owned();
+            out.push((String::from_utf16_lossy(&name[..name_len as usize]), value));
+        }
+        unsafe { RegCloseKey(hkey) };
+    }
+    out
+}
+
 /// Erst daneben schreiben, dann ersetzen – bricht etwas ab, bleibt die alte Datei heil.
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("glass-tmp");
@@ -388,9 +545,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 fn encrypt(body: &[u8]) -> Result<Vec<u8>, String> {
     use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
     use lopdf::{EncryptionState, EncryptionVersion, Object, Permissions};
-    let len = u32::from_le_bytes(body.get(..4).ok_or("kurz")?.try_into().map_err(|_| "kurz")?) as usize;
-    let password = std::str::from_utf8(body.get(4..4 + len).ok_or("kurz")?).map_err(|e| e.to_string())?;
-    let pdf = body.get(4 + len..).ok_or("kurz")?;
+    let (password, pdf) = password_and_pdf(body)?;
     if password.is_empty() {
         return Err("leer".into());
     }
@@ -418,6 +573,28 @@ fn encrypt(body: &[u8]) -> Result<Vec<u8>, String> {
     };
     let state = EncryptionState::try_from(version).map_err(|e| e.to_string())?;
     doc.encrypt(&state).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// `[Länge des Passworts, 4 Byte LE][Passwort UTF-8][PDF]` → Passwort und PDF.
+fn password_and_pdf(body: &[u8]) -> Result<(&str, &[u8]), String> {
+    let len = u32::from_le_bytes(body.get(..4).ok_or("kurz")?.try_into().map_err(|_| "kurz")?) as usize;
+    let password = std::str::from_utf8(body.get(4..4 + len).ok_or("kurz")?).map_err(|e| e.to_string())?;
+    Ok((password, body.get(4 + len..).ok_or("kurz")?))
+}
+
+/// Ein geschütztes PDF ohne Schutz (für die Bearbeitung im Viewer; beim Speichern schützt `encrypt` wieder).
+fn decrypt(body: &[u8]) -> Result<Vec<u8>, String> {
+    let (password, pdf) = password_and_pdf(body)?;
+    let mut doc = lopdf::Document::load_mem_with_options(pdf, lopdf::LoadOptions::with_password(password)).map_err(|e| e.to_string())?;
+    // Die Objekte sind beim Laden schon entschlüsselt – nur der Hinweis auf die Verschlüsselung muss weg
+    if let Ok(id) = doc.trailer.get(b"Encrypt").and_then(lopdf::Object::as_reference) {
+        doc.objects.remove(&id);
+    }
+    doc.trailer.remove(b"Encrypt");
+    doc.encryption_state = None;
     let mut out = Vec::new();
     doc.save_to(&mut out).map_err(|e| e.to_string())?;
     Ok(out)
@@ -558,6 +735,40 @@ mod tests {
     }
 
     #[test]
+    fn new_documents_open_in_a_tab() {
+        let docs = Documents::default();
+        let api = format!("{HOST}api/{}/", docs.0.api);
+        let Some(Post::OpenTab(url)) = post(&docs, &format!("{api}open-new?name=Urlaub%20Fotos.pdf"), b"%PDF-1.7 neu".to_vec()) else { panic!() };
+        assert!(url.starts_with(&format!("{HOST}new/")) && url.ends_with("/Urlaub%20Fotos.pdf"));
+        assert_eq!(display_url(&url).as_deref(), Some("Urlaub Fotos.pdf"));
+        // Neu laden zeigt es wieder
+        for _ in 0..2 {
+            let page = serve(&docs, &url, || None).unwrap();
+            assert!(page.csp.is_some() && String::from_utf8_lossy(&page.body).contains("Urlaub Fotos.pdf"));
+        }
+        assert_eq!(post(&docs, &format!("{api}open-new?name=x.pdf"), b"<html>".to_vec()), Some(Post::Reply(Served::status(400))));
+    }
+
+    #[test]
+    fn installed_fonts() {
+        assert_eq!(font_face("Arial (TrueType)"), Some(("Arial".into(), 0)));
+        assert_eq!(font_face("Arial Bold Italic (TrueType)"), Some(("Arial".into(), 3)));
+        assert_eq!(font_face("Segoe UI Semibold (TrueType)"), Some(("Segoe UI Semibold".into(), 0)));
+        assert_eq!(font_face("Times New Roman Italic (TrueType)"), Some(("Times New Roman".into(), 2)));
+        assert_eq!(font_face("Cambria & Cambria Math (TrueType)"), None);
+        let docs = Documents::default();
+        let api = format!("{HOST}api/{}/", docs.0.api);
+        let list = serve(&docs, &format!("{api}fonts"), || None).unwrap();
+        let list: Value = serde_json::from_slice(&list.body).unwrap();
+        let arial = list.as_array().unwrap().iter().find(|f| f["family"] == "Arial").expect("Arial ist installiert");
+        let file = arial["regular"].as_str().unwrap();
+        assert!(serve(&docs, &format!("{api}font/{file}"), || None).unwrap().body.len() > 10_000);
+        // Nur Schriften aus der Liste
+        assert_eq!(serve(&docs, &format!("{api}font/..%5C..%5Cwin.ini"), || None).unwrap().status, 404);
+        assert_eq!(serve(&docs, &format!("{HOST}api/guess/font/{file}"), || None).unwrap().status, 404);
+    }
+
+    #[test]
     fn encrypts_with_aes256() {
         let pdf = b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj\ntrailer << /Root 1 0 R /Size 4 >>\n%%EOF";
         let mut body = 6u32.to_le_bytes().to_vec();
@@ -565,7 +776,19 @@ mod tests {
         body.extend_from_slice(pdf);
         let out = encrypt(&body).unwrap();
         assert!(String::from_utf8_lossy(&out).contains("/Encrypt"));
-        assert!(lopdf::Document::load_mem_with_password(&out, "geheim").is_ok());
+        assert!(lopdf::Document::load_mem_with_options(&out, lopdf::LoadOptions::with_password("geheim")).is_ok());
+        // Und wieder ohne Schutz – für die Bearbeitung im Viewer
+        let mut body = 6u32.to_le_bytes().to_vec();
+        body.extend_from_slice(b"geheim");
+        body.extend_from_slice(&out);
+        let plain = decrypt(&body).unwrap();
+        assert!(!String::from_utf8_lossy(&plain).contains("/Encrypt"));
+        let doc = lopdf::Document::load_mem(&plain).unwrap();
+        assert!(!doc.is_encrypted() && doc.get_pages().len() == 1);
+        let mut wrong = 6u32.to_le_bytes().to_vec();
+        wrong.extend_from_slice(b"falsch");
+        wrong.extend_from_slice(&out);
+        assert!(decrypt(&wrong).is_err());
     }
 
     #[test]

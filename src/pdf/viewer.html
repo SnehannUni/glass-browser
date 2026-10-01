@@ -58,6 +58,9 @@
   <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2a1.4 1.4 0 0 1 1.4-1.4h2.6l1.6 1.6h5.4a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4Z"/></symbol>
   <symbol id="i-design" viewBox="0 0 16 16"><rect x="3" y="1.8" width="10" height="12.4" rx="1.4"/><path d="M5.2 4.4h5.6M5.2 11.8h5.6M6 9.6l4-3.2"/></symbol>
   <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.6"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+  <symbol id="i-blank" viewBox="0 0 16 16"><path d="M9.4 1.8H4.4A1.4 1.4 0 0 0 3 3.2v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.4Z"/><path d="M9.4 1.8v3.6H13"/><path d="M8 7.6v4.4M5.8 9.8h4.4"/></symbol>
+  <symbol id="i-compress" viewBox="0 0 16 16"><path d="M8 1.6v4.6M5.8 4 8 6.2 10.2 4M8 14.4V9.8M5.8 12 8 9.8l2.2 2.2M2.4 8h11.2"/></symbol>
+  <symbol id="i-images" viewBox="0 0 16 16"><rect x="1.6" y="4.4" width="10.4" height="8.8" rx="1.8"/><path d="M4.4 2.8h8a1.8 1.8 0 0 1 1.8 1.8v6.2"/><circle cx="4.8" cy="7.4" r="1"/><path d="m2 12.2 3.2-3 2.2 2 1.4-1.2 3 2.6"/></symbol>
   <symbol id="i-comments" viewBox="0 0 16 16"><path d="M2.2 3.4a1.2 1.2 0 0 1 1.2-1.2h7a1.2 1.2 0 0 1 1.2 1.2v4.4a1.2 1.2 0 0 1-1.2 1.2H6.4L4 11V9H3.4a1.2 1.2 0 0 1-1.2-1.2Z"/><path d="M13.8 6v4.6a1.2 1.2 0 0 1-1.2 1.2H12v2l-2.4-2H7.4"/></symbol>
 </svg>
 
@@ -92,7 +95,7 @@
 <!-- Werkzeuge rechts am Rand, senkrecht wie in Acrobat (editor.mjs); Gruppen mit Varianten in den Einstellungen -->
 <nav id="tools" class="well" aria-label="Bearbeiten"><div class="glass capsule vertical" data-lens data-button-group>
   <button class="key on" data-tool="none" title="Auswählen (Esc)"><svg><use href="#i-cursor"/></svg></button>
-  <button class="key" data-tool="textedit" title="Text bearbeiten (E)"><svg><use href="#i-edit-text"/></svg></button>
+  <button class="key" data-tool="textedit" title="Text und Bilder bearbeiten (E)"><svg><use href="#i-edit-text"/></svg></button>
   <button class="key" data-tool="markup" title="Markieren: Hervorheben, Unterstreichen, Durchstreichen (H)"><svg><use href="#i-highlight"/></svg></button>
   <button class="key" data-tool="note" title="Notiz (N)"><svg><use href="#i-note"/></svg></button>
   <button class="key" data-tool="freetext" title="Text hinzufügen (T)"><svg><use href="#i-text"/></svg></button>
@@ -111,8 +114,26 @@
 <!-- Einstellungen des gewählten Werkzeugs, links neben der Leiste -->
 <div id="tool-options" class="well panel" hidden><div class="glass">
   <section data-for="textedit">
-    <h3>Text bearbeiten</h3>
-    <p class="hint">Auf eine Textzeile klicken und ändern; Eingabe übernimmt, Esc bricht ab. Der alte Text wird aus dem PDF entfernt, der neue in einer Standardschrift gesetzt.</p>
+    <h3>Text und Bilder bearbeiten</h3>
+    <p class="hint" id="edit-hint">Auf eine Textzeile klicken und ändern; Eingabe übernimmt, Esc bricht ab. Ein Bild anklicken, um es zu verschieben, an einer Ecke die Größe zu ändern, es zu ersetzen oder zu löschen.</p>
+    <!-- Während eine Zeile offen ist (textedit.mjs) -->
+    <div id="text-format" class="format" hidden>
+      <label class="field"><span>Schrift</span><select id="te-font"></select></label>
+      <div class="format-row">
+        <label class="field"><span>Größe (pt)</span><input id="te-size" inputmode="decimal" autocomplete="off"></label>
+        <div class="segmented toggles">
+          <button id="te-bold" title="Fett (Strg B)"><b>F</b></button>
+          <button id="te-italic" title="Kursiv (Strg I)"><i>K</i></button>
+        </div>
+      </div>
+      <div class="swatches" id="te-colors"></div>
+    </div>
+    <!-- Während ein Bild ausgewählt ist (imageedit.mjs) -->
+    <div id="image-actions" class="format" hidden>
+      <p class="hint">Ziehen verschiebt das Bild, die Ecken ändern die Größe. Eine Bilddatei darauf ziehen ersetzt es.</p>
+      <button class="wide" id="image-replace"><svg><use href="#i-image"/></svg>Bild ersetzen …</button>
+      <button class="wide" id="image-delete"><svg><use href="#i-trash"/></svg>Bild löschen</button>
+    </div>
   </section>
   <section data-for="markup">
     <h3>Markieren</h3>
@@ -197,12 +218,13 @@ Nein</textarea></label>
     <button class="key" id="org-rotate-right" title="Nach rechts drehen" disabled><svg><use href="#i-rotate-right"/></svg></button>
     <button class="key" id="org-delete" title="Löschen (Entf)" disabled><svg><use href="#i-trash"/></svg></button>
     <button class="key" id="org-extract" title="Auswahl als neues PDF speichern" disabled><svg><use href="#i-extract"/></svg></button>
-    <button class="key" id="org-insert" title="PDF einfügen (nach der Auswahl, sonst am Ende)"><svg><use href="#i-insert"/></svg></button>
+    <button class="key" id="org-blank" title="Leere Seite einfügen (nach der Auswahl, sonst am Ende)"><svg><use href="#i-blank"/></svg></button>
+    <button class="key" id="org-insert" title="PDF oder Bilder einfügen (nach der Auswahl, sonst am Ende)"><svg><use href="#i-insert"/></svg></button>
     <button class="key" id="org-undo" title="Rückgängig (Strg Z)" disabled><svg><use href="#i-undo"/></svg></button>
     <button class="key" id="org-redo" title="Wiederholen (Strg Y)" disabled><svg><use href="#i-redo"/></svg></button>
     <button class="key text" id="org-done" title="Zurück zum Dokument (Esc)">Fertig</button>
   </div></div>
-  <input type="file" id="org-file" accept="application/pdf,.pdf" multiple hidden>
+  <input type="file" id="org-file" accept="application/pdf,.pdf,image/*" multiple hidden>
 </section>
 
 <!-- Neue Unterschrift: zeichnen, tippen oder als Bild (editor.mjs) -->
@@ -266,9 +288,49 @@ Nein</textarea></label>
   <button data-action="save-as" role="menuitem"><svg><use href="#i-save"/></svg>Speichern unter …<kbd>Strg ⇧ S</kbd></button>
   <button data-action="print" role="menuitem"><svg><use href="#i-print"/></svg>Drucken<kbd>Strg P</kbd></button>
   <hr>
+  <button data-action="images" role="menuitem"><svg><use href="#i-images"/></svg>PDF aus Bildern …</button>
+  <hr>
   <button data-action="design" role="menuitem"><svg><use href="#i-design"/></svg>Wasserzeichen, Kopf- und Fußzeile …</button>
+  <button data-action="compress" role="menuitem"><svg><use href="#i-compress"/></svg>Dateigröße verringern …</button>
   <button data-action="protect" role="menuitem"><svg><use href="#i-lock"/></svg>Mit Passwort schützen …</button>
 </div></div>
+
+<!-- PDF aus Bildern (images.mjs) -->
+<div id="images-dialog" class="dialog" hidden><form class="glass" id="images-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="images-title">
+  <h2 id="images-title">PDF aus Bildern</h2>
+  <div id="images-list" aria-label="Bilder in Seitenreihenfolge"></div>
+  <p class="hint">Jedes Bild wird eine Seite. Ziehen ändert die Reihenfolge, weitere Bilder lassen sich hierher ziehen.</p>
+  <div class="row">
+    <label class="field"><span>Seitengröße</span><select id="images-size">
+      <option value="a4" selected>A4</option><option value="letter">US Letter</option><option value="fit">Wie das Bild</option>
+    </select></label>
+    <label class="field"><span>Rand</span><select id="images-margin">
+      <option value="0" selected>Kein Rand</option><option value="20">Schmal</option><option value="48">Breit</option>
+    </select></label>
+  </div>
+  <div class="actions">
+    <button type="button" id="images-append" class="left">An dieses PDF anhängen</button>
+    <button type="button" id="images-cancel">Abbrechen</button>
+    <button type="submit" class="primary" id="images-create">Neues PDF erstellen</button>
+  </div>
+  <input type="file" id="images-file" accept="image/*" multiple hidden>
+</form></div>
+
+<!-- Dateigröße verringern (compress.mjs) -->
+<div id="compress-dialog" class="dialog" hidden><form class="glass" id="compress-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="compress-title">
+  <h2 id="compress-title">Dateigröße verringern</h2>
+  <p class="hint" id="compress-size"></p>
+  <div class="segmented" id="compress-level">
+    <button type="button" data-level="high"><span>Hohe Qualität</span><span class="size"></span></button>
+    <button type="button" data-level="medium" class="on"><span>Ausgewogen</span><span class="size"></span></button>
+    <button type="button" data-level="low"><span>Kleinste Datei</span><span class="size"></span></button>
+  </div>
+  <p class="hint" id="compress-hint"></p>
+  <div class="actions">
+    <button type="button" id="compress-cancel">Abbrechen</button>
+    <button type="submit" class="primary" id="compress-save">Speichern unter …</button>
+  </div>
+</form></div>
 
 <!-- Mit Passwort schützen -->
 <div id="protect-dialog" class="dialog" hidden><form class="glass" id="protect-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="protect-title">

@@ -284,7 +284,7 @@ export function initTools(app) {
   const markupLine = (kind) => ({ mode: T.NONE, custom: () => markLines(kind) });
   const GROUPS = {
     none: { mode: T.NONE },
-    textedit: { mode: T.NONE, custom: () => app.textEdit },
+    textedit: { mode: T.NONE, custom: () => app.contentEdit },
     markup: { subs: { highlight: { mode: T.HIGHLIGHT }, underline: markupLine('underline'), strike: markupLine('strike') } },
     note: { mode: T.NONE, custom: () => app.notes },
     freetext: { mode: T.FREETEXT },
