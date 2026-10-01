@@ -1739,6 +1739,14 @@
     slide(false);
     renderAddress();
   });
+  // Startbildschirm: Tab ohne Fokus im Feld ginge zum nächsten Knopf (der Lupe) – stattdessen ins Feld und wechseln
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || editing() || !document.body.classList.contains('start')) return;
+    if (document.body.classList.contains('modal') || !toolbarMenu.hidden || !$('mail-menu').hidden) return;
+    e.preventDefault();
+    window.focusAddress();
+    switchEngine(e.shiftKey ? 1 : -1);
+  }, true);
   input.addEventListener('keydown', (e) => {
     if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
     const wheelOpen = wheel.classList.contains('open') && !wheel.dataset.closing;
@@ -1750,6 +1758,12 @@
       rotateWheel(e.key === 'ArrowRight' || e.key === 'ArrowUp' ? -1 : 1);
     } else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
+    } else if (e.key === 'Tab' && document.body.classList.contains('start')) {
+      // Startbildschirm: Tab wechselt den Suchanbieter – wie das Mausrad im Uhrzeigersinn ums Rad (ist es offen, dreht es
+      // sich mit), Umschalt+Tab zurück. Die Vorschläge wählt man hier mit den Pfeilen.
+      e.preventDefault();
+      if (wheelOpen) rotateWheel(e.shiftKey ? 1 : -1);
+      else switchEngine(e.shiftKey ? 1 : -1);
     } else if (['ArrowDown', 'ArrowUp', 'Tab'].includes(e.key) && suggestions.length && suggestBox.classList.contains('open')) {
       e.preventDefault();
       moveSuggestion(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
@@ -2018,6 +2032,16 @@
   }
   // Einen Platz weiterdrehen: -1 im Uhrzeigersinn (von unten rückt der nächste nach), +1 zurück.
   // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google).
+  // Tab auf dem Startbildschirm (Rad zu): Anbieter wechseln wie beim Drehen des Rads (step wie rotateWheel). Das Logo
+  // im Feld springt kurz, Vorschläge und Verbindung richten sich gleich nach dem neuen Anbieter.
+  function switchEngine(step) {
+    const n = shown.length;
+    setEngine(shown[(((shown.indexOf(engine) + step) % n) + n) % n]);
+    engineBtn.querySelector('img')?.animate([{ transform: 'scale(.4)' }, { transform: 'scale(1.15)', offset: .6 }, { transform: 'scale(1)' }],
+      { duration: 280, easing: 'ease-out' });
+    refreshSuggest(input.value);
+    warmUp(input.value);
+  }
   function rotateWheel(step) {
     const list = wheelEditing ? shown.slice(0, -1) : shown, n = list.length;
     setEngine(list[(((list.indexOf(engine) + step) % n) + n) % n]);
