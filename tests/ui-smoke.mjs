@@ -257,8 +257,21 @@ try {
   // New-tab search shares the same keyboard controller.
   await evaluate(`testState.tabs.push({id:3,title:'',url:'',page:false});testState.active=3;render(structuredClone(testState));document.getElementById('addr-input').value='alpha';document.getElementById('addr-input').dispatchEvent(new Event('input'))`);
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
-  await key('Tab', 'Tab'); assert.equal(await value(), 'alpha one');
+  await key('ArrowDown', 'ArrowDown'); assert.equal(await value(), 'alpha one');
   await key('Escape', 'Escape'); assert.equal(await value(), 'alpha');
+  // Start screen: Tab switches the search provider like turning the wheel clockwise, Shift+Tab goes back
+  const engineName = `document.getElementById('btn-engine').title`;
+  await key('Tab', 'Tab'); assert.match(await evaluate(engineName), /YouTube/, 'Tab turns to the provider coming up from below');
+  assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'Tab keeps the focus in the field');
+  await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/, 'Shift+Tab switches back');
+  // Without focus in the field, Tab does not go to the search icon: it focuses the field and switches
+  await evaluate(`document.getElementById('addr-input').blur()`);
+  await key('Tab', 'Tab'); assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'first Tab focuses the field');
+  assert.match(await evaluate(engineName), /YouTube/);
+  await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/);
+  await evaluate(`(() => { const i = document.getElementById('addr-input'); i.value = 'alpha'; i.dispatchEvent(new Event('input')); })()`);
+  await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
+  console.log('PASS: Tab on the start screen switches the search provider.');
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');
@@ -382,7 +395,8 @@ try {
   await delay(450);
   await writeFile('target/ui-smoke/start-suggestions.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   await key('Escape','Escape');
-  await key('Tab', 'Tab'); assert.notEqual(await evaluate('document.activeElement.id'), 'addr-input');
+  // (Tab switches the provider here instead of moving focus – leave the field directly)
+  await evaluate(`document.getElementById('addr-input').blur()`); assert.notEqual(await evaluate('document.activeElement.id'), 'addr-input');
   for (const floating of [false, true]) {
     await evaluate(`setGeometry({x:0,y:0,mx:0,my:0,mw:1280,mh:820,floating:${floating}})`);
     assert.equal(await evaluate(`getComputedStyle(document.body,'::after').display`), floating ? 'block' : 'none');
