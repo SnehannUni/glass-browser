@@ -103,7 +103,7 @@ function helpers(page) {
     for (let n = 1; n <= doc.numPages; n++) {
       const p = await doc.getPage(n);
       const text = (await p.getTextContent()).items.map(i => i.str).join(' ');
-      pages.push({ text, annotations: (await p.getAnnotations()).map(a => ({ type: a.annotationType, contents: a.contentsObj?.str || '', lines: a.inkLists?.length || 0, field: a.fieldName || '' })) });
+      pages.push({ text, annotations: (await p.getAnnotations()).map(a => ({ type: a.annotationType, contents: a.contentsObj?.str || '', lines: a.inkLists?.length || 0, field: a.fieldName || '', rect: a.rect })) });
     }
     return { pages };
   })()`);
@@ -203,13 +203,26 @@ try {
   await H.tool('stamp');
   await H.press('#stamps .stamp');
   await waitFor(() => page(`document.querySelectorAll('.stampEditor').length === 1`), 'stamp placed');
+  // Drehen: Griff über dem ausgewählten Stempel um die Mitte ziehen (¼ Umdrehung), keine kleine Leiste von PDF.js
+  await waitFor(() => page(`!!document.querySelector('.stampEditor.selectedEditor > .rotate-handle')`), 'rotate handle');
+  assert.equal(await page(`[...document.querySelectorAll('.editToolbar')].filter(t => t.offsetWidth).length`), 0, 'no PDF.js toolbar');
+  assert.equal(await page(`document.getElementById('delete-selected').hidden`), false, 'delete button in the panel');
+  const stampBox = await H.rect('.stampEditor');
+  const handle = await H.rect('.stampEditor > .rotate-handle');
+  const center = [stampBox.x + stampBox.w / 2, stampBox.y + stampBox.h / 2];
+  const radius = center[1] - (handle.y + handle.h / 2);
+  const arc = [0, 30, 60, 90].map((d) => [center[0] + radius * Math.sin(d * Math.PI / 180), center[1] - radius * Math.cos(d * Math.PI / 180)]);
+  await H.drag([[handle.x + handle.w / 2, handle.y + handle.h / 2], ...arc.slice(1)]);
+  await waitFor(async () => { const b = await H.rect('.stampEditor'); return b.h > b.w; }, 'stamp turned upright');
   await H.tool('none');
   result = await H.inspect();
   const types = result.pages.flatMap(p => p.annotations.map(a => a.type));
   assert.ok(result.pages[0].annotations.some(a => a.type === T.INK && a.lines === 4), `rectangle saved as 4 straight lines: ${JSON.stringify(result.pages[0].annotations)}`);
   assert.ok(result.pages[0].annotations.filter(a => a.type === T.INK).length >= 2, 'underline saved');
-  assert.ok(types.includes(T.STAMP), 'stamp saved');
-  console.log('PASS: rectangles and stamps are real annotations in the saved PDF.');
+  const stamp = result.pages.flatMap(p => p.annotations).find(a => a.type === T.STAMP);
+  assert.ok(stamp, 'stamp saved');
+  assert.ok(stamp.rect[3] - stamp.rect[1] > stamp.rect[2] - stamp.rect[0], `rotated stamp saved upright: ${JSON.stringify(stamp.rect)}`);
+  console.log('PASS: rectangles and stamps are real annotations; a stamp turned with its handle is saved turned.');
 
   // 8: Formularfeld aufziehen
   await H.tool('field', 'text');
