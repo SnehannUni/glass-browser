@@ -36,6 +36,8 @@ const TOOLBAR_HEIGHT: f64 = 42.0;
 const SIDEBAR_WIDTH: f64 = 240.0;
 /// Eingeklappte Leiste links (Rechtsklick → „Leiste einklappen“): nur noch die Logos der Tabs.
 const SIDEBAR_COLLAPSED_WIDTH: f64 = 56.0;
+/// Leiste links: Oben über den Seiten läuft ein dünner Streifen mit den Fensterknöpfen (--side-top in ui.html).
+const SIDE_TOP: f64 = 28.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
 /// Kleinste Fenstergröße: Startbildschirm mit allen Vorschlägen unter dem Suchfeld und dem Anbieter-Rad daneben
@@ -265,7 +267,7 @@ impl Browser {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let (left, top) = match (self.chrome_hidden, self.chrome_left) {
             (true, _) => (MARGIN, MARGIN),
-            (false, true) => (self.sidebar_width(), MARGIN),
+            (false, true) => (self.sidebar_width(), SIDE_TOP),
             (false, false) => (MARGIN, self.chrome_height()),
         };
         [left, top, size.width - left - MARGIN, size.height - top - MARGIN]

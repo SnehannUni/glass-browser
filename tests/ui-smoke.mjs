@@ -320,6 +320,34 @@ try {
     return messages.slice(from).map((m) => m.cmd); })()`);
   assert.deepEqual(sideButtons, ['back', 'forward']);
   console.log('PASS: mouse side buttons send back and forward.');
+  // Sidebar on the left: "+" sits right of the search field, downloads and favorites at the bottom right
+  const sideLayout = `(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(), bar = document.getElementById('toolbar').getBoundingClientRect();
+    const a = document.querySelector('.side.left > .center').getBoundingClientRect(), n = r('btn-new'), f = r('btn-favs'), d = r('btn-dls'), p = r('btn-private'), x = r('win-close');
+    return { left: document.body.classList.contains('side-left'), plusRow: Math.abs((n.top + n.bottom) / 2 - (a.top + a.bottom) / 2), plusRight: n.left - a.right,
+      favRight: bar.right - f.right, dlBeforeFav: d.width ? f.left - d.right : null, privateLeft: p.left - bar.left,
+      closeRight: innerWidth - x.right, closeTop: x.top, inStrip: !!document.getElementById('win-close').closest('#sidestrip') }; })()`;
+  await evaluate(`document.getElementById('toolbar-side').click()`);
+  await delay(400);
+  let side = await evaluate(sideLayout);
+  assert.ok(side.left, 'sidebar on the left');
+  assert.ok(side.plusRow < 1 && side.plusRight >= 0 && side.plusRight < 12, `plus next to the search field: ${JSON.stringify(side)}`);
+  assert.ok(side.favRight < 16 && side.privateLeft < 16, `private bottom left, favorites bottom right: ${JSON.stringify(side)}`);
+  assert.ok(side.inStrip && side.closeRight < 12 && side.closeTop < 12, `close button top right in the strip over the pages: ${JSON.stringify(side)}`);
+  // A split partner sits in the same capsule as the search field, in a second row (as in the tab list)
+  const dock = await evaluate(`(async () => { const s = structuredClone(testState); if (!s.tabs.some((t) => t.id === 2)) return null;
+    document.getElementById('addr-input').blur(); s.split = { left: 1, right: 2 }; s.active = 1; render(s); await new Promise((r) => setTimeout(r, 600));
+    const a = document.getElementById('address').getBoundingClientRect(), d = document.querySelector('.tab.docked')?.getBoundingClientRect();
+    const out = d && { top: d.top - a.top, bottom: a.bottom - d.bottom, left: d.left - a.left, right: a.right - d.right };
+    render(structuredClone(testState)); await new Promise((r) => setTimeout(r, 100));
+    const i = document.getElementById('addr-input'); i.focus(); i.value = 'alpha'; i.dispatchEvent(new Event('input')); return out; })()`);
+  assert.ok(dock && Math.abs(dock.top - 30) < 1.5 && Math.abs(dock.bottom) < 1.5 && Math.abs(dock.left) < 1.5 && Math.abs(dock.right) < 1.5, `split partner joined below the search field: ${JSON.stringify(dock)}`);
+  await evaluate(`window.setDownloads({ visible: true, items: [] }, false)`);
+  side = await evaluate(sideLayout);
+  assert.ok(side.favRight < 16 && side.dlBeforeFav >= 0 && side.dlBeforeFav < 12, `downloads next to favorites at the bottom right: ${JSON.stringify(side)}`);
+  await evaluate(`window.setDownloads({ visible: false, items: [] }, false); document.getElementById('toolbar-side').click()`);
+  await delay(400);
+  assert.equal(await evaluate(`document.body.classList.contains('side-left')`), false);
+  console.log('PASS: left sidebar: plus beside the search field, downloads/favorites bottom right, window buttons top right.');
   // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   await delay(800);

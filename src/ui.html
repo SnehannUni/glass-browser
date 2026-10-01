@@ -9,6 +9,7 @@
     --chrome-w: 240px; /* Breite der Leiste links, kommt als chromeWidth aus main.rs */
     --chrome-w-full: 240px; /* ausgeklappt (main.rs: SIDEBAR_WIDTH) – auch über der Seite, wenn eingeklappt */
     --margin: 4px;    /* = MARGIN in main.rs */
+    --side-top: 28px; /* Leiste links: hier beginnen die Seiten, darüber der Streifen mit den Fensterknöpfen (= SIDE_TOP in main.rs) */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
     --label: rgba(255, 255, 255, .97);
     --label-2: rgba(255, 255, 255, .82);
@@ -762,18 +763,23 @@
   body.side-left .side { align-self: stretch; }
   /* Raster statt Umbruch: Beim Aufklappen über der Seite ist die Leiste kurz schmal – umgebrochen rutschte
      Vor/Zurück in eine eigene Zeile und das Suchfeld sprang nach unten und wieder hoch */
-  body.side-left .side.left { display: grid; grid-template-columns: auto 1fr; align-items: center; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
-  /* Vor/Zurück links oben, in einer Zeile mit den Fensterknöpfen rechts (layoutSide holt sie hierher) */
+  body.side-left .side.left { display: grid; grid-template-columns: auto 1fr auto; align-items: center; row-gap: 8px; min-height: 30px; } /* Vor/Zurück: oben und unten 8px */
+  /* Vor/Zurück links oben (die Fensterknöpfe stehen im Streifen über den Seiten, #sidestrip) */
   body.side-left .nav { grid-column: 1; }
-  body.side-left .winctl { grid-column: 2; justify-self: end; margin: 0 4px 0 0; }
+  /* „+“ rechts neben dem Suchfeld (placeNewTab holt es hierher); beim kombinierten Paar neben dessen oberer Zeile */
+  body.side-left .side.left > .tab-new { grid-column: 3; align-self: start; margin: 0 0 0 6px; }
   /* Startbildschirm: Platz freihalten, sonst rutscht der Tab darunter beim Wechsel zu einer Seite */
   body.side-left.start:not(.home-back) .nav { display: flex; visibility: hidden; }
-  body.side-left .center { grid-column: 1 / -1; width: auto; height: var(--toolbar-control-height); }
+  body.side-left .center { grid-column: 1 / 3; width: auto; height: var(--toolbar-control-height); }
   /* Das Feld fährt nicht aus – es hat die ganze Breite der Leiste schon */
   body.side-left .address, body.side-left .address.editing { width: 100%; }
   body.side-left:not(.start) .address { top: 0; }
-  body.side-left .center.docked { height: calc(2 * var(--toolbar-control-height) + 4px); }
-  body.side-left .center.docked .address:not(.editing) { width: 100%; padding-right: 5px; }
+  /* Partner einer geteilten Ansicht: Das Feld wird um eine Zeile höher, er liegt unten in derselben Kapsel (wie oben
+     rechts daneben) – oben der aktive Tab mit seinen Knöpfen, unten hinter einer feinen Linie der Partner */
+  body.side-left .center.docked { height: calc(2 * var(--toolbar-control-height)); }
+  body.side-left .center.docked .address:not(.editing) {
+    width: 100%; height: calc(2 * var(--toolbar-control-height)); padding-right: 5px; padding-bottom: var(--toolbar-control-height);
+  }
   /* Eingeklappt (.side-collapsed: Seiten ab 56px) zeigt die Leiste nur die Logos der Tabs (.side-slim); der aktive
      steht mit Linse in der Liste. Maus drauf oder Strg+L: Sie klappt über der Seite voll auf (.side-flyout) –
      die Seite bleibt, wo sie ist; Rust spart die Fläche aus ihr aus (overlay „sidebar“). */
@@ -783,7 +789,7 @@
   body.side-collapsed #toolbar { z-index: 8; }
   body.side-collapsed #toolbar { transition: transform var(--chrome-slide), width .26s var(--ease); }
   body.side-slim #toolbar { padding: 8px 6px; gap: 0; }
-  body.side-slim :is(.winctl, .nav, .side.right, #tabbar > .tab-new) { display: none; }
+  body.side-slim :is(.nav, .side.right, .side.left > .tab-new) { display: none; }
   /* Das Suchfeld bleibt im Dokument: Auf dem Startbildschirm steht es ohnehin fest in der Mitte, auf einer Seite
      klappt Strg+L die Leiste vorher auf (setFlyout) */
   body.side-slim .side.left { min-height: 0; }
@@ -798,7 +804,7 @@
      nichts gestaucht am Rand der Seite abgeschnitten wird. Zuklappen: Der Rest verschwindet sofort (.side-slim). */
   body.side-flyout :is(.side.left, .side.right) { min-width: calc(var(--chrome-w-full) - 2 * var(--margin) - 16px); }
   /* (Startbildschirm: Das Suchfeld steht fest in der Mitte und bleibt, nur der Tab oben blendet mit ein) */
-  body.side-flyout :is(.winctl, .nav, .side.right, #tabbar > .tab-new, #tabs .tab .title),
+  body.side-flyout :is(.nav, .side.right, .side.left > .tab-new, #tabs .tab .title),
   body.side-flyout:not(.start) .center, body.side-flyout.start .center > .tab.slotted {
     animation: side-reveal .16s var(--ease) .16s backwards;
   }
@@ -812,11 +818,10 @@
     backdrop-filter: blur(6px) saturate(1.5) brightness(.82);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .12), 0 6px 20px -6px rgba(0, 0, 0, .28), 0 1px 3px rgba(0, 0, 0, .16);
   }
-  /* Partner einer geteilten Ansicht: direkt unter dem Adressfeld */
-  body.side-left .tab.docked { top: calc(var(--toolbar-control-height) + 4px); left: 0; right: 0; width: auto; }
-  body.side-left .tab.docked::before { display: none; }
+  /* Partner einer geteilten Ansicht: untere Zeile der Kapsel, darüber die Trennlinie */
+  body.side-left .tab.docked { top: var(--toolbar-control-height); left: 0; right: 0; width: auto; }
+  body.side-left .tab.docked::before { left: 12px; right: 12px; top: 0; bottom: auto; width: auto; height: 1px; }
   body.side-left .tab.docked .tab-label { padding: 0 10px 0 12px; }
-  body.side-left .tab.docked { background-image: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .045)); }
   /* Tabs untereinander; reicht der Platz nicht, scrollt die Liste. Scrollen erst dann (placeLens: .scrolls): Als
      Scroll-Container zeichnet Chromium die Glasflächen darin (Linse, „+“) über einem hellen Rechteck in
      Größe der Liste – ihr backdrop-filter sieht dann das Glas der Leiste dahinter nicht mehr. Die Clip-Margin lässt
@@ -834,9 +839,6 @@
   body.side-left .tab:is(:hover, .vh, :focus-within) .fav { opacity: 0; }
   body.side-left .tab .fav { transition: opacity .18s var(--ease); }
   body.side-left .tab-new { margin-left: 3px; }
-  /* „+“ rechts direkt über dem ersten Tab, kleiner als die übrigen Knöpfe */
-  body.side-left #tabbar > .tab-new { order: -1; align-self: flex-end; margin: 0 3px 0 0; width: 24px; height: 24px; }
-  body.side-left #tabbar > .tab-new > svg:not(.glass-rim) { width: 12px; height: 12px; }
   body.side-left #lens { width: 100%; height: var(--toolbar-control-height); }
   body.side-left #lens.squish .glass { animation-name: squish-v; }
   @keyframes squish-v { 30% { transform: scale(.94, 1.12); } }
@@ -847,9 +849,33 @@
   /* Knöpfe ganz unten */
   body.side-left .side.right { margin-top: auto; justify-content: flex-start; flex-wrap: nowrap; }
   body.side-left .fav-btn { margin-left: 0; }
-  :is(#favs, #dls).up { transform-origin: bottom left; }
-  body.side-left .dl-btn { margin-left: 0; }
-  body.side-left #stage { top: var(--margin); left: var(--chrome-w); }
+  /* Downloads und Favoriten rechts unten (ohne Downloads-Knopf steht Favoriten allein rechts) */
+  body.side-left .side.right > .dl-btn, body.side-left .side.right > .dl-btn[hidden] + .fav-btn { margin-left: auto; }
+  :is(#favs, #dls).up { transform-origin: bottom right; }
+  body.side-left #stage { top: var(--side-top); left: var(--chrome-w); }
+  /* Leiste links: Oben läuft sie als dünner Streifen über den Seiten bis zum rechten Rand weiter, darin rechts die
+     Fensterknöpfe; er dient wie eine Titelleiste zum Verschieben. Nahtlos, weil beides eine einzige Glasfläche ist:
+     #sidepanel reicht oben bis zum rechten Fensterrand und ist per clip-path zu einem L zugeschnitten (--bar: Breite
+     der Leiste, folgt beim Aufklappen über der Seite mit; die Innenecke ist mit 8 px gerundet, konzentrisch zur Ecke
+     der Seite darunter). #sidestrip trägt nur die Knöpfe. */
+  :root { --strip-h: calc(var(--side-top) - 2 * var(--margin)); }
+  body.side-left #sidepanel {
+    right: auto; width: calc(100vw - 2 * var(--margin)); border-radius: var(--pane-radius);
+    --bar: calc(var(--chrome-w) - 2 * var(--margin));
+    clip-path: polygon(0px calc(0px + 4px), calc(0px + 0.54px) calc(0px + 3.46px), calc(0px + 2px) calc(0px + 2px), calc(0px + 3.46px) calc(0px + 0.54px), calc(0px + 4px) 0px, calc(100% - 4px) 0px, calc(100% - 3.46px) calc(0px + 0.54px), calc(100% - 2px) calc(0px + 2px), calc(100% - 0.54px) calc(0px + 3.46px), 100% calc(0px + 4px), 100% calc(var(--strip-h) - 4px), calc(100% - 0.54px) calc(var(--strip-h) - 3.46px), calc(100% - 2px) calc(var(--strip-h) - 2px), calc(100% - 3.46px) calc(var(--strip-h) - 0.54px), calc(100% - 4px) var(--strip-h), calc(var(--bar) + 8px) var(--strip-h), calc(var(--bar) + 4px) calc(var(--strip-h) + 1.07px), calc(var(--bar) + 1.07px) calc(var(--strip-h) + 4px), var(--bar) calc(var(--strip-h) + 8px), var(--bar) calc(100% - 4px), calc(var(--bar) - 0.54px) calc(100% - 3.46px), calc(var(--bar) - 2px) calc(100% - 2px), calc(var(--bar) - 3.46px) calc(100% - 0.54px), calc(var(--bar) - 4px) 100%, calc(0px + 4px) 100%, calc(0px + 3.46px) calc(100% - 0.54px), calc(0px + 2px) calc(100% - 2px), calc(0px + 0.54px) calc(100% - 3.46px), 0px calc(100% - 4px));
+    transition: clip-path .26s var(--ease);
+  }
+  body.side-flyout #sidepanel { --bar: calc(var(--chrome-w-full) - 2 * var(--margin)); }
+  #sidestrip { display: none; }
+  body.side-left #sidestrip {
+    position: fixed; z-index: 6; top: var(--margin); left: calc(var(--chrome-w) - var(--margin)); right: var(--margin);
+    height: var(--strip-h); display: flex; align-items: center; justify-content: flex-end;
+    transition: transform var(--chrome-slide);
+  }
+  body.side-left.chrome-hidden #sidestrip { transform: translateY(calc(-1 * var(--side-top))); }
+  #sidestrip .win { width: 32px; height: var(--strip-h); border-radius: 0; }
+  #sidestrip .win:last-child { border-radius: 0 var(--pane-radius) var(--pane-radius) 0; }
+  #sidestrip .winctl { gap: 0; margin: 0; }
   /* Startbildschirm: Such-Kapsel und Hinweis stehen in der Mitte der freien Fläche rechts der Leiste */
   body.side-left.start .address, body.side-left #private-note { left: var(--chrome-w); width: min(760px, calc(100vw - var(--chrome-w) - 332px)); }
 
@@ -865,6 +891,7 @@
   <canvas id="wall"></canvas>
 
   <div id="chrome">
+  <div id="sidestrip" data-drag></div>
   <header id="toolbar" data-drag>
     <div id="sidepanel" class="glass" aria-hidden="true"></div>
     <div class="side left">
@@ -1335,7 +1362,8 @@
   // Leiste links statt oben (Einstellung im Kontextmenü der Leiste)
   const sideLeft = () => document.body.classList.contains('side-left');
   // Liegt der Punkt auf der Leiste (oben bzw. links) statt über der Webseite?
-  const overChrome = (x, y) => (sideLeft() ? x < state.chromeWidth : y < state.chromeHeight);
+  const SIDE_TOP = 28; // = --side-top
+  const overChrome = (x, y) => (sideLeft() ? x < state.chromeWidth || y < SIDE_TOP : y < state.chromeHeight);
 
   function updateDrop(d, e) {
     const under = document.elementsFromPoint(e.clientX, e.clientY).find((n) => !d.el.contains(n));
@@ -1480,13 +1508,12 @@
   }
 
   // Liste leer (der einzige Tab steht im Adressfeld): „+“ rückt direkt rechts neben das Feld,
-  // statt allein in der Mitte zu stehen. Beim Umziehen gleitet es von der alten an die neue Stelle.
+  // statt allein in der Mitte zu stehen – in der Leiste links immer. Beim Umziehen gleitet es von der alten an die neue Stelle.
   function placeNewTab() {
     const btn = $('btn-new');
     // (auch bei einem einzigen kombinierten Paar: beide stehen dann im Feld)
-    // (Leiste links: „+“ bleibt immer über den Tabs – dort steht es ohnehin direkt unter dem Feld)
-    const solo = !sideLeft() && !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
-    const home = solo ? document.querySelector('.side.left') : $('tabbar');
+    const solo = !document.body.classList.contains('start') && !$('tabs').querySelector('.tab:not(.in-slot)');
+    const home = sideLeft() || solo ? document.querySelector('.side.left') : $('tabbar');
     if (btn.parentElement === home) return;
     const from = btn.getBoundingClientRect();
     home.append(btn);
@@ -2421,7 +2448,7 @@
     const up = sideLeft();
     favPanel.classList.toggle('up', up);
     Object.assign(favPanel.style, up
-      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
+      ? { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${Math.max(8, r.top - 8 - favPanel.offsetHeight)}px` }
       : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     // Über einer Webseite: wie bei den Vorschlägen aus deren Region aussparen
     coverPage(favPanel);
@@ -2552,7 +2579,7 @@
     const up = sideLeft(); // Leiste links: der Knopf sitzt unten – die Liste klappt nach oben auf
     dlPanel.classList.toggle('up', up);
     Object.assign(dlPanel.style, up
-      ? { left: `${r.left}px`, top: `${Math.max(8, r.top - 8 - dlPanel.offsetHeight)}px` }
+      ? { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${Math.max(8, r.top - 8 - dlPanel.offsetHeight)}px` }
       : { left: `${Math.max(8, r.left + r.width - 320)}px`, top: `${r.bottom + 8}px` });
     coverPage(dlPanel); // über einer Webseite: wie die Favoriten aus deren Region aussparen
     updateInk();
@@ -3096,9 +3123,9 @@
     body.toggle('side-collapsed', collapsed);
     body.toggle('side-slim', slim);
     body.toggle('side-flyout', collapsed && flyout);
-    // Fensterknöpfe rechts oben: oben am Ende der Leiste, links in der ersten Zeile (unten stehen dort die Knöpfe)
+    // Fensterknöpfe rechts oben: am Ende der Leiste oben – bei der Leiste links im Streifen über den Seiten
     const winctl = document.querySelector('.winctl');
-    if (left) document.querySelector('.side.left > .nav').after(winctl);
+    if (left) $('sidestrip').append(winctl);
     else document.querySelector('.side.right').append(winctl);
     renderToolbarPin();
     reportSideOverlay();
