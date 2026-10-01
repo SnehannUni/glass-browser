@@ -2430,11 +2430,37 @@
   let mailFilter = 'all', mailSelected = null; // „all“, „unread“ oder ein Postfach
   const plural = (n) => (n > 999 ? '999+' : String(n));
   const inMailView = () => !!activeTab()?.mail;
+  // Abzeichen zählen nur, was seit dem letzten Besuch der Mail-Ansicht neu ist – nicht alle Ungelesenen (die stehen
+  // oben in der Mail-Ansicht). Gemerkt wird je Postfach die Zahl beim Verlassen der Ansicht; liest man woanders,
+  // sinkt sie mit, sonst gingen neue Mails darin unter. Ein neu verbundenes Postfach beginnt bei 0.
+  const MAIL_SEEN_KEY = 'glass.mailSeen';
+  let mailSeen = {}, wasInMailView = false;
+  try { mailSeen = JSON.parse(localStorage.getItem(MAIL_SEEN_KEY)) || {}; } catch { /* leer starten */ }
+  function updateMailSeen(all = false) {
+    let changed = false;
+    for (const b of mail.boxes) {
+      const seen = mailSeen[b.key];
+      const next = !b.connected ? undefined : b.unread == null ? seen : all || seen == null ? b.unread : Math.min(seen, b.unread);
+      if (next !== seen) { if (next === undefined) delete mailSeen[b.key]; else mailSeen[b.key] = next; changed = true; }
+    }
+    if (changed) try { localStorage.setItem(MAIL_SEEN_KEY, JSON.stringify(mailSeen)); } catch { /* egal */ }
+  }
+  const freshMail = (b) => (b.connected && b.unread != null ? Math.max(0, b.unread - (mailSeen[b.key] ?? b.unread)) : 0);
+  // Mail-Ansicht verlassen: alles darin gilt als gesehen
+  function mailViewShown(open) {
+    if (wasInMailView && !open) { updateMailSeen(true); renderMailBadge(); }
+    wasInMailView = open;
+  }
+  function renderMailBadge() {
+    const fresh = mail.boxes.reduce((sum, b) => sum + freshMail(b), 0);
+    const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
+    mailBtn.querySelector('.mail-badge').textContent = fresh ? plural(fresh) : '';
+    mailBtn.title = !total ? 'Mail' : `Mail – ${fresh ? `${fresh.toLocaleString('de-DE')} neu, ` : ''}${total.toLocaleString('de-DE')} ungelesen`;
+  }
   window.mailState = (next) => {
     mail = next;
-    const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
-    mailBtn.querySelector('.mail-badge').textContent = total ? plural(total) : '';
-    mailBtn.title = total ? `Mail – ${total.toLocaleString('de-DE')} ungelesen` : 'Mail';
+    updateMailSeen();
+    renderMailBadge();
     if (!mail.boxes.some((b) => b.key === mailFilter)) mailFilter = mailFilter === 'unread' ? 'unread' : 'all';
     if (inMailView()) renderMailView();
   };
@@ -2544,7 +2570,7 @@
       });
       el.prepend(mailIcon(b));
       // Abzeichen oben rechts, wie am Mail-Knopf: Ungelesene, „!“ (abgemeldet) oder „+“ (noch nicht verbunden)
-      const badge = !b.connected ? ['+', 'add'] : b.signedOut ? ['!', 'warn'] : b.unread ? [plural(b.unread), ''] : null;
+      const badge = !b.connected ? ['+', 'add'] : b.signedOut ? ['!', 'warn'] : freshMail(b) ? [plural(freshMail(b)), ''] : null;
       if (badge) {
         const n = document.createElement('span');
         n.className = `badge ${badge[1]}`;
@@ -3025,6 +3051,7 @@
     document.body.classList.toggle('home-back', !!activeTab()?.home);
     setStartMode(empty);
     document.body.classList.toggle('mail-view', !!activeTab()?.mail);
+    mailViewShown(!!activeTab()?.mail);
     if (activeTab()?.mail) renderMailView();
     // Vom Startbildschirm in die Mail-Ansicht: Das Suchfeld hatte dort den Fokus und bliebe ausgefahren
     // (Ohne Fokus im Fenster kommt dabei kein blur-Ereignis – also selbst einfahren, sonst bliebe .searching und
