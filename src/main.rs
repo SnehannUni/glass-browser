@@ -1787,14 +1787,25 @@ fn style_frame(window: &Window) {
 fn main() -> wry::Result<()> {
     // Nach einem Update zuerst auf die alte Instanz warten – beide dürfen WebView2 nicht gleichzeitig öffnen.
     let args = update::startup(std::env::args().skip(1).collect());
+    // Dateien mit vollem Pfad: Das offene Glass hat ein anderes Arbeitsverzeichnis
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|a| match std::path::absolute(&a) {
+            Ok(path) if path.is_file() => path.display().to_string(),
+            _ => a,
+        })
+        .collect();
     // Läuft Glass schon, öffnet das offene Fenster die Adressen als Tabs.
-    if single_instance::forward(&args) {
+    let listener = single_instance::claim();
+    if listener.is_none() && single_instance::forward(&args) {
         return Ok(());
     }
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let p_open = proxy.clone();
-    single_instance::listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
+    if let Some(listener) = listener {
+        let p_open = proxy.clone();
+        listener.listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
+    }
     // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf).
     if update::current_build().is_some() {
         std::thread::spawn(default_browser::register);

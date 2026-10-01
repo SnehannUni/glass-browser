@@ -951,6 +951,7 @@
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
     <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span><span id="toolbar-pin-label">Leiste dauerhaft anzeigen</span></button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
+    <button id="toolbar-default" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Als Standardbrowser festlegen…</button>
   </div>
   <div id="mail-menu" role="menu" aria-label="Postfach" hidden>
     <button id="mail-forget" class="item" type="button" role="menuitem" title="Du bleibst dort angemeldet"></button>
@@ -3139,6 +3140,8 @@
     showChrome();
     toolbarPin.focus({ preventScroll: true });
   });
+  // Glass bei Windows anmelden und die Einstellungsseite dafür öffnen (wie „Festlegen“ im Hinweis auf dem Startbildschirm)
+  $('toolbar-default').addEventListener('click', () => { closeToolbarMenu(); send('default_browser'); });
   toolbarPin.addEventListener('click', () => {
     try {
       if (sideLeft()) { sideCollapsedPref = !sideCollapsedPref; localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsedPref)); }

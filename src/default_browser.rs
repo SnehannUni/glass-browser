@@ -1,4 +1,5 @@
-//! Glass als Browser bei Windows anmelden, damit es unter „Standard-Apps“ erscheint.
+//! Glass als Browser und PDF-Programm bei Windows anmelden, damit es unter „Standard-Apps“ und bei PDFs unter
+//! „Öffnen mit“ erscheint.
 //! Festlegen muss man es dort selbst – Windows lässt Apps den Standard nicht mehr ändern.
 //! Alles unter HKCU, also ohne Admin-Rechte.
 
@@ -7,6 +8,7 @@ use windows_sys::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_C
 /// Name unter `RegisteredApplications` – so heißt Glass auch in `ms-settings:defaultapps?registeredAppUser=`.
 const APP: &str = "Glass";
 const PROG_ID: &str = "GlassHTML";
+const PDF_PROG_ID: &str = "GlassPDF";
 const CLIENT: &str = r"Software\Clients\StartMenuInternet\Glass";
 
 fn wide(s: &str) -> Vec<u16> {
@@ -43,20 +45,21 @@ pub fn register() {
     let Ok(exe) = std::env::current_exe() else { return };
     let exe = exe.display().to_string();
     let open = format!("\"{exe}\" \"%1\"");
-    if read(&format!(r"Software\Classes\{PROG_ID}\shell\open\command"), "").as_deref() == Some(open.as_str())
-        && read(r"Software\RegisteredApplications", APP).is_some()
-    {
+    let current = |prog: &str| read(&format!(r"Software\Classes\{prog}\shell\open\command"), "").as_deref() == Some(open.as_str());
+    if current(PROG_ID) && current(PDF_PROG_ID) && read(r"Software\RegisteredApplications", APP).is_some() {
         return;
     }
     let icon = format!("{exe},0");
 
-    // Dokumenttyp, auf den Links und HTML-Dateien zeigen
-    let prog = format!(r"Software\Classes\{PROG_ID}");
-    write(&prog, "", "Glass HTML-Dokument");
-    write(&format!(r"{prog}\DefaultIcon"), "", &icon);
-    write(&format!(r"{prog}\Application"), "ApplicationName", APP);
-    write(&format!(r"{prog}\Application"), "ApplicationIcon", &icon);
-    write(&format!(r"{prog}\shell\open\command"), "", &open);
+    // Dokumenttypen: Links und HTML-Dateien bzw. PDFs (öffnen im eigenen PDF-Viewer)
+    for (id, name) in [(PROG_ID, "Glass HTML-Dokument"), (PDF_PROG_ID, "Glass PDF-Dokument")] {
+        let prog = format!(r"Software\Classes\{id}");
+        write(&prog, "", name);
+        write(&format!(r"{prog}\DefaultIcon"), "", &icon);
+        write(&format!(r"{prog}\Application"), "ApplicationName", APP);
+        write(&format!(r"{prog}\Application"), "ApplicationIcon", &icon);
+        write(&format!(r"{prog}\shell\open\command"), "", &open);
+    }
 
     // Browser-Eintrag mit den Fähigkeiten, die Windows in „Standard-Apps“ anbietet
     write(CLIENT, "", APP);
@@ -70,9 +73,9 @@ pub fn register() {
     for scheme in ["http", "https"] {
         write(&format!(r"{caps}\URLAssociations"), scheme, PROG_ID);
     }
-    for ext in [".htm", ".html", ".xhtml"] {
-        write(&format!(r"{caps}\FileAssociations"), ext, PROG_ID);
-        write(&format!(r"Software\Classes\{ext}\OpenWithProgids"), PROG_ID, "");
+    for (ext, id) in [(".htm", PROG_ID), (".html", PROG_ID), (".xhtml", PROG_ID), (".pdf", PDF_PROG_ID)] {
+        write(&format!(r"{caps}\FileAssociations"), ext, id);
+        write(&format!(r"Software\Classes\{ext}\OpenWithProgids"), id, "");
     }
     write(r"Software\RegisteredApplications", APP, &caps);
 
