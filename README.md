@@ -50,7 +50,7 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/mail.rs`, `src/mail-content.js` | Mail-Ansicht: Postfächer im Hintergrund, Ungelesene und neueste Mails aus den Web-Postfächern |
 | `src/pdf.rs`, `src/pdf/` | PDF-Viewer: PDF-Antworten abfangen (DevTools `Fetch`), lokale Dateien, Speichern, Verschlüsseln (lopdf) und Oberfläche; Werkzeuge in `editor.mjs`, Seiten in `organize.mjs`, Notizen in `notes.mjs`, Schwärzen in `redact.mjs`, Text bearbeiten in `textedit.mjs` (beide auf `content.mjs`), Formularfelder in `fields.mjs`, Wasserzeichen usw. in `design.mjs`; PDF.js und pdf-lib liegen in `src/pdf/vendor` |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
-| `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
+| `assets/icon.png` | Logo: schillernde Farbscheibe (mit `RIM = True` in einer Glasschale), vollständig berechnet von `tools/make-icon.py`, das auch `assets/glass.ico` erzeugt (jede Größe einzeln gerendert) |
 | `build.rs` | bettet das Icon, die Programminfos und PDF.js in die Exe ein |
 
 Browserdaten, Filterlisten, die Ausnahmeliste des Werbeblockers und gespeicherte Unterschriften (`signatures.json`) liegen unter `%LOCALAPPDATA%\GlassBrowser`.
