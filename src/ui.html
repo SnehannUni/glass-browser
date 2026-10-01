@@ -424,14 +424,11 @@
   }
   /* Die Seite, zu der Adresszeile & Co. gerade gehören */
   body.split .pane.focus { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .5), 0 12px 40px rgba(0, 0, 0, .45); }
+  /* Beim Ziehen der Trennlinie keine Rahmen (sie liefen den Seiten hinterher), danach blenden sie wieder ein */
+  body.split-dragging #panes .pane { box-shadow: none; transition: none; }
   /* Die Lücke zwischen den Seiten ist selbst der Griff (ohne sichtbaren Balken) */
   #divider { position: fixed; z-index: 5; display: none; cursor: col-resize; }
   body.split #divider { display: block; }
-  .resize-preview { position: fixed; z-index: 4; overflow: hidden; border-radius: var(--pane-radius); background: #26303e; pointer-events: none; }
-  .resize-preview > .snapshot { position: absolute; inset: -45px; background-position: center; background-size: cover; filter: blur(30px) brightness(.55); }
-  .resize-preview > .identity { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; color: white; text-align: center; }
-  .resize-preview .identity img, .resize-preview .identity svg { width: 40px; height: 40px; flex: none; }
-  .resize-preview .identity span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 600; }
   #dropzone { position: fixed; z-index: 15; display: none; border-radius: var(--pane-radius); pointer-events: none; }
   #dropzone.show { display: block; animation: pop-in .35s var(--spring); }
   .tab.dragging {
@@ -2698,6 +2695,7 @@
   // `from`: bisherige Rahmen, wenn die Leiste oben gerade aus- oder einfährt – dann gleiten sie mit der Seite mit
   function renderPanes(from = null) {
     if (resizeDrag) return;
+    document.body.classList.remove('split-dragging'); // nach dem Ziehen: Rahmen gleich an der neuen Stelle
     const panes = (state.panes || []).filter((p) => hasPage(p.id));
     // Mail-Ansicht: Rahmen um das Postfach rechts (dessen WebView gehört keinem Tab)
     const mailPane = state.mailView ? [{ ...state.mailView.pane, id: state.active }] : [];
@@ -2722,33 +2720,11 @@
     $('tools').hidden = !activeSplit(); // die Kapsel enthält nur den Knopf „Teilung aufheben“
   }
 
-  // Trennlinie ziehen → Verhältnis der beiden Seiten
+  // Trennlinie ziehen → Verhältnis der beiden Seiten. Die echten Seiten ziehen live mit (split_drag, höchstens
+  // einmal pro Bild), Rust meldet erst am Ende (split_ratio). Die Rahmen sind solange aus: Die Seiten verschiebt Rust
+  // als eigene Fenster, das ist sofort zu sehen – ein Rahmen dieser Oberfläche liefe ein, zwei Bilder hinterher.
   const divider = $('divider');
-  let resizeDrag = null, resizeToken = 0;
-  window.setResizeSnapshot = async (token, id, source) => {
-    const drag = resizeDrag;
-    if (!drag || drag.token !== token || drag.ending) return;
-    const card = drag.cards.get(id);
-    if (!card) return;
-    if (source.startsWith('data:image/jpeg;base64,')) {
-      const image = new Image(); image.src = source;
-      try {
-        await image.decode();
-        if (resizeDrag !== drag || drag.ending) return;
-        card.firstChild.style.backgroundImage = `url("${source}")`;
-      } catch { /* Plain material remains usable if capture/decoding fails. */ }
-    }
-    drag.pending.delete(id);
-    if (!drag.pending.size) drag.ready();
-  };
-  window.finishResizePreview = (token) => {
-    const drag = resizeDrag;
-    if (!drag || drag.token !== token) return;
-    drag.cleanup();
-    drag.cards.forEach(card => card.remove());
-    resizeDrag = null;
-    renderPanes();
-  };
+  let resizeDrag = null;
   divider.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || resizeDrag || state.panes?.length !== 2) return;
     e.preventDefault();
@@ -2756,54 +2732,31 @@
     const [a, b] = state.panes, x0 = a.x, gap = b.x - a.x - a.w, total = b.x + b.w - a.x;
     divider.setPointerCapture(e.pointerId);
     divider.classList.add('dragging');
-    const drag = resizeDrag = { token: ++resizeToken, cards: new Map(), pending: new Set([a.id,b.id]), ending: false };
-    let frame = 0, ratio = a.w / (total - gap), ready = false;
-    for (const p of [a,b]) {
-      const tab = state.tabs.find(t => t.id === p.id);
-      const card = document.createElement('div'); card.className = 'resize-preview';
-      const background = document.createElement('div'); background.className = 'snapshot';
-      const identity = document.createElement('div'); identity.className = 'identity';
-      identity.innerHTML = svg(tab?.private ? 'private' : 'globe');
-      if (!tab?.private && tab?.favicon?.startsWith('data:image/png;base64,')) {
-        const icon = new Image(); icon.src = tab.favicon; identity.replaceChildren(icon);
-      }
-      const title = document.createElement('span'); title.textContent = tab?.title || parse(tab?.url)?.hostname || 'Webseite';
-      identity.append(title); card.append(background, identity); document.body.append(card); drag.cards.set(p.id, card);
-    }
+    document.body.classList.add('split-dragging');
+    let frame = 0, ratio = a.w / (total - gap);
+    const drag = resizeDrag = {};
     const paint = () => {
       frame = 0;
-      const left = Math.round((total-gap)*ratio);
-      [a,b].forEach((p,i) => Object.assign(drag.cards.get(p.id).style, {
-        left: `${i ? x0+left+gap : x0}px`, top: `${p.y}px`, width: `${i ? total-gap-left : left}px`, height: `${p.h}px`
-      }));
-      divider.style.left = `${x0+left}px`;
+      send('split_drag', { value: ratio });
+      divider.style.left = `${x0 + Math.round((total - gap) * ratio)}px`;
     };
-    drag.ready = () => {
-      if (ready || resizeDrag !== drag || drag.ending) return;
-      ready = true; send('split_resize_ready', {token:drag.token});
-    };
-    const timeout = setTimeout(drag.ready, 800);
-    paint();
-    send('split_resize_start', {token:drag.token});
     const move = (ev) => {
       ratio = Math.max(.2, Math.min(.8, (ev.clientX - x0 - gap / 2) / (total - gap)));
       if (!frame) frame = requestAnimationFrame(paint);
     };
-    drag.cleanup = () => {
-      clearTimeout(timeout); cancelAnimationFrame(frame);
-      divider.classList.remove('dragging');
+    const up = (ev) => {
+      if (resizeDrag !== drag) return;
+      if (ev?.type === 'pointerup') move(ev);
+      cancelAnimationFrame(frame);
+      resizeDrag = null;
+      divider.classList.remove('dragging'); // (die Rahmen kommen mit der neuen Anordnung zurück: renderPanes)
       divider.removeEventListener('pointermove', move);
       divider.removeEventListener('pointerup', up);
       divider.removeEventListener('pointercancel', up);
       divider.removeEventListener('lostpointercapture', up);
       window.removeEventListener('blur', up);
       if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
-    };
-    const up = (ev) => {
-      if (drag.ending) return;
-      if (ev?.type === 'pointerup') move(ev);
-      drag.ending = true; drag.cleanup(); paint();
-      send('split_resize_end', {token:drag.token, value:ratio});
+      send('split_ratio', { value: ratio });
     };
     divider.addEventListener('pointermove', move);
     divider.addEventListener('pointerup', up);

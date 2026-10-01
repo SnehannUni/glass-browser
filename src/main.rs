@@ -87,7 +87,6 @@ enum UserEvent {
     Title(u32, String),
     Favicon(u32, String),
     PageFavicon(u32, String, String),
-    ResizeSnapshot(u64, u32, String),
     Load(u32, bool, String),
     /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
     NewWindow(u32, String),
@@ -209,7 +208,6 @@ struct Browser {
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
-    resize_preview: Option<(u64, bool)>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
     /// Die Oberfläche hat die Leiste ausgeblendet: Webseiten reichen dann bis an den Rand.
@@ -285,9 +283,6 @@ impl Browser {
             self.layout();
             return;
         }
-        if self.resize_preview.is_some() {
-            return;
-        }
         for (i, area) in self.panes() {
             if let Some(wv) = &self.tabs[i].webview {
                 let _ = wv.set_bounds(to_rect(area));
@@ -345,14 +340,6 @@ impl Browser {
     /// Positioniert alle Webseiten: sichtbare an ihren Platz, alle anderen ausgeblendet.
     fn layout(&self) {
         let _ = self.ui.set_bounds(full_bounds(&self.window));
-        if let Some((_, hidden)) = self.resize_preview {
-            if hidden {
-                for tab in &self.tabs {
-                    if let Some(wv) = &tab.webview { let _ = wv.set_visible(false); }
-                }
-            }
-            return; // Keep both website viewports unchanged throughout the drag.
-        }
         let panes = self.panes();
         for (i, tab) in self.tabs.iter().enumerate() {
             let Some(wv) = &tab.webview else { continue };
@@ -758,12 +745,6 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
-        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "page_shot" | "chrome_hidden" | "chrome_side" | "animation_rate") {
-            if let Some((token, _)) = self.resize_preview.take() {
-                self.layout();
-                let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
-            }
-        }
         if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
@@ -870,22 +851,6 @@ impl Browser {
                 self.layout();
                 self.sync_ui();
             }
-            "split_resize_start" => {
-                if self.panes().len() == 2 {
-                    let token = msg["token"].as_u64().unwrap_or_default();
-                    self.resize_preview = Some((token, false));
-                    for (i, _) in self.panes() {
-                        let tab = &self.tabs[i];
-                        let (id, proxy) = (tab.id, self.proxy.clone());
-                        let result = tab.webview.as_ref().map(|wv| resize_preview::capture(&wv.webview(), move |image| {
-                            let _ = proxy.send_event(UserEvent::ResizeSnapshot(token, id, image));
-                        }));
-                        if !matches!(result, Some(Ok(()))) {
-                            let _ = self.proxy.send_event(UserEvent::ResizeSnapshot(token, id, String::new()));
-                        }
-                    }
-                }
-            }
             // Vorschläge oder Favoriten liegen über einer Webseite: Die Oberfläche legt ein Bild der Seiten hinter ihr
             // Glas – durch die Aussparung in der Seite sähe man sonst nur das Wallpaper
             "page_shot" => {
@@ -899,21 +864,12 @@ impl Browser {
                     }
                 }
             }
-            "split_resize_ready" => {
-                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
-                    self.resize_preview = self.resize_preview.map(|(token, _)| (token, true));
+            // Trennlinie wird gezogen: die Seiten live mitziehen – ohne den ganzen Zustand bei jedem Bild an die
+            // Oberfläche zu schicken (die zieht ihre Rahmen selbst nach; split_ratio am Ende gleicht ab)
+            "split_drag" => {
+                if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
+                    split.ratio = r.clamp(0.2, 0.8);
                     self.layout();
-                }
-            }
-            "split_resize_end" => {
-                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
-                    self.resize_preview = None;
-                    if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
-                        split.ratio = r.clamp(0.2, 0.8);
-                    }
-                    self.layout();
-                    let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({})", msg["token"]));
-                    self.sync_ui();
                 }
             }
             "split_ratio" => {
@@ -1042,11 +998,6 @@ impl Browser {
             }
             UserEvent::PageShot(token, id, image) => {
                 let _ = self.ui.evaluate_script(&format!("window.pageShot?.({token},{id},{})", json!(image)));
-            }
-            UserEvent::ResizeSnapshot(token, id, image) => {
-                if self.resize_preview.map(|p| p.0) == Some(token) {
-                    let _ = self.ui.evaluate_script(&format!("window.setResizeSnapshot?.({token},{id},{})", json!(image)));
-                }
             }
             UserEvent::PageFavicon(id, source, icon) => {
                 if let Some(tab) = self.tab_mut(id) {
@@ -1592,7 +1543,7 @@ fn main() -> wry::Result<()> {
     let mut browser = Browser {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
+        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         clips: clipboard::History::default(), clip: None, mail,
     };
