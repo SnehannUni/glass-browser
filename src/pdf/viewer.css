@@ -326,6 +326,9 @@ input[type=range] { width: 100%; accent-color: var(--blue); }
   --editor-toolbar-height: 30px;
   border-radius: 15px; backdrop-filter: blur(14px) saturate(1.6); text-shadow: none;
 }
+/* Kein zweiter Farbwähler am Editor: die Farben in den Einstellungen rechts färben die Auswahl schon um */
+#viewer .editToolbar :is(.colorPicker, .basicColorPicker),
+#viewer .editToolbar :is(.colorPicker, .basicColorPicker) + .divider { display: none; }
 .glass-edit-signature { width: 28px; height: 26px; display: grid; place-items: center; border-radius: 13px; color: var(--editor-toolbar-fg-color); }
 .glass-edit-signature:hover { background: var(--editor-toolbar-hover-bg-color); }
 .glass-edit-signature svg { width: 14px; height: 14px; filter: none; }
