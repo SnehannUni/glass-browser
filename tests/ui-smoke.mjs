@@ -306,6 +306,15 @@ try {
   await evaluate(down('#wheel .slot[title="Google"]'));
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
   console.log(`PASS: right-click swaps wheel providers (picks clear the wheel by ${pickGap.toFixed(1)} px).`);
+  // Mail badge counts only what is new since the last visit, not all unread mails
+  const mailBadge = (unread) => evaluate(`(() => { window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: true, unread: ${unread} }] });
+    return document.querySelector('#btn-mail .mail-badge').textContent; })()`);
+  assert.equal(await mailBadge(1200), '', 'a newly seen mailbox starts at zero');
+  assert.equal(await mailBadge(1203), '3', 'new mails count up');
+  assert.equal(await mailBadge(1100), '', 'reading elsewhere lowers the baseline');
+  assert.equal(await mailBadge(1102), '2', 'and later mails still count');
+  await evaluate(`window.mailState({ boxes: [] })`);
+  console.log('PASS: mail badge shows only new mails since the last visit.');
   // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   await delay(800);
