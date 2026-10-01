@@ -9,6 +9,7 @@ mod favicon;
 mod resize_preview;
 mod clipboard;
 mod mail;
+mod downloads;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -35,6 +36,8 @@ const TOOLBAR_HEIGHT: f64 = 42.0;
 const SIDEBAR_WIDTH: f64 = 240.0;
 /// Eingeklappte Leiste links (Rechtsklick → „Leiste einklappen“): nur noch die Logos der Tabs.
 const SIDEBAR_COLLAPSED_WIDTH: f64 = 56.0;
+/// Leiste links: Oben über den Seiten läuft ein dünner Streifen mit den Fensterknöpfen (--side-top in ui.html).
+const SIDE_TOP: f64 = 28.0;
 /// Rand um den Seiteninhalt; bleibt gleichzeitig Greifzone zum Ändern der Fenstergröße.
 const MARGIN: f64 = 4.0;
 /// Kleinste Fenstergröße: Startbildschirm mit allen Vorschlägen unter dem Suchfeld und dem Anbieter-Rad daneben
@@ -62,7 +65,7 @@ enum Search {
     Typed(&'static str),
 }
 
-/// Suchanbieter im Adressfeld (Kennungen wie in ui.html).
+/// Suchanbieter im Adressfeld (Kennungen wie in ui.html; welche davon im Rad stehen, wählt man dort mit dem Stift).
 const SEARCH_ENGINES: &[(&str, Search)] = &[
     ("google", Search::Query("https://www.google.com/search?q=")),
     ("chatgpt", Search::Query("https://chatgpt.com/?q=")),
@@ -70,6 +73,9 @@ const SEARCH_ENGINES: &[(&str, Search)] = &[
     ("gemini", Search::Typed("https://gemini.google.com/app")),
     ("kimi", Search::Typed("https://www.kimi.ai/")), // internationale Seite (kimi.com ist die chinesische)
     ("zai", Search::Typed("https://chat.z.ai/")),
+    ("grok", Search::Typed("https://grok.com/")), // ?q= füllt nur das Feld, ohne abzuschicken
+    ("youtube", Search::Query("https://www.youtube.com/results?search_query=")),
+    ("amazon", Search::Query("https://www.amazon.de/s?k=")),
 ];
 
 fn search_engine(engine: &str) -> &'static Search {
@@ -80,11 +86,11 @@ enum UserEvent {
     AutofillRequest(u32, String, String),
     AutofillReply(Value),
     Ui(String),
-    Content(String),
+    /// Meldung einer Webseite (Tastenkürzel, Maus-Seitentasten, Scrollrichtung …) – mit der Kennung ihres Tabs.
+    Content(u32, String),
     Title(u32, String),
     Favicon(u32, String),
     PageFavicon(u32, String, String),
-    ResizeSnapshot(u64, u32, String),
     Load(u32, bool, String),
     /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
     NewWindow(u32, String),
@@ -108,6 +114,8 @@ enum UserEvent {
     ClipboardPage(u32, String),
     /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
     ClipboardBackdrop(u64, String),
+    /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
+    Download(u32, downloads::Change),
     /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
     PageShot(u64, u32, String),
     /// Ein Web-Postfach meldet Ungelesene und neueste Mails: Tab, Adresse des Dokuments, JSON aus mail-content.js.
@@ -123,9 +131,6 @@ enum UserEvent {
     /// Beim Beenden: Die Anmeldungen der Postfächer sind gesichert (`mail_before_exit`), Glass darf zu.
     ExitReady,
 }
-
-/// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
-type ScriptSlot = Rc<RefCell<Option<String>>>;
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
 struct Split {
@@ -169,7 +174,6 @@ struct Tab {
     private: bool,
     /// Vom Werbeblocker verhinderte Anfragen seit dem letzten Seitenaufruf.
     blocked: u32,
-    adblock_flag: ScriptSlot,
     /// Wird erst bei der ersten Navigation erzeugt – ein leerer neuer Tab kostet keinen Renderer.
     webview: Option<WebView>,
     /// Ganz an den Anfang zurückgegangen: der Tab zeigt den Startbildschirm, die Seite wartet
@@ -181,6 +185,8 @@ struct Tab {
     hidden_since: Cell<Option<Instant>>,
     /// Der Tab ist die Mail-Ansicht (mail.rs): keine eigene Webseite, links die Liste, rechts ein Postfach.
     mail_view: bool,
+    /// Von einer Webseite geöffnet (Link in neuem Tab): War darin nur ein Download, schließt Glass ihn wieder.
+    popup: bool,
 }
 
 impl Tab {
@@ -210,7 +216,6 @@ struct Browser {
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
     split: Option<Split>,
-    resize_preview: Option<(u64, bool)>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
     /// Die Oberfläche hat die Leiste ausgeblendet: Webseiten reichen dann bis an den Rand.
@@ -228,6 +233,10 @@ struct Browser {
     clips: clipboard::History,
     /// Gerade offene Liste nach Strg+V.
     clip: Option<clipboard::Session>,
+    /// Laufende und letzte Downloads (Knopf rechts oben).
+    downloads: downloads::Shared,
+    /// WebViews geschlossener Tabs, deren Downloads noch laufen – mit der WebView endete sonst auch der Download.
+    parked: Vec<(u32, WebView)>,
     /// Web-Postfächer hinter dem Mail-Knopf.
     mail: mail::Mail,
 }
@@ -258,7 +267,7 @@ impl Browser {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let (left, top) = match (self.chrome_hidden, self.chrome_left) {
             (true, _) => (MARGIN, MARGIN),
-            (false, true) => (self.sidebar_width(), MARGIN),
+            (false, true) => (self.sidebar_width(), SIDE_TOP),
             (false, false) => (MARGIN, self.chrome_height()),
         };
         [left, top, size.width - left - MARGIN, size.height - top - MARGIN]
@@ -284,9 +293,6 @@ impl Browser {
         if start.elapsed().as_secs_f64() >= self.chrome_slide_duration() {
             self.chrome_slide = None;
             self.layout();
-            return;
-        }
-        if self.resize_preview.is_some() {
             return;
         }
         for (i, area) in self.panes() {
@@ -346,14 +352,6 @@ impl Browser {
     /// Positioniert alle Webseiten: sichtbare an ihren Platz, alle anderen ausgeblendet.
     fn layout(&self) {
         let _ = self.ui.set_bounds(full_bounds(&self.window));
-        if let Some((_, hidden)) = self.resize_preview {
-            if hidden {
-                for tab in &self.tabs {
-                    if let Some(wv) = &tab.webview { let _ = wv.set_visible(false); }
-                }
-            }
-            return; // Keep both website viewports unchanged throughout the drag.
-        }
         let panes = self.panes();
         for (i, tab) in self.tabs.iter().enumerate() {
             let Some(wv) = &tab.webview else { continue };
@@ -597,8 +595,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -619,7 +616,8 @@ impl Browser {
         if self.split_of(id).is_some() {
             self.split = None;
         }
-        self.tabs.remove(idx);
+        let tab = self.tabs.remove(idx);
+        self.park(tab.id, tab.webview);
         if idx < self.active || self.active >= self.tabs.len() {
             self.active = self.active.saturating_sub(1);
         }
@@ -695,8 +693,9 @@ impl Browser {
             None => {
                 let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds, true);
                 tab.webview = wv.ok();
-                if let Some(wv) = &tab.webview {
-                    set_adblock_flag(wv, &tab.adblock_flag);
+                let (id, private) = (tab.id, tab.private);
+                if let Some(wv) = &self.tabs[self.active].webview {
+                    self.watch_downloads(wv, id, private);
                 }
                 self.layout();
             }
@@ -706,6 +705,14 @@ impl Browser {
 
     /// Zurück im Verlauf – steht die Seite schon am Anfang, geht es weiter zum Startbildschirm.
     fn go_back(&mut self) {
+        // Mail-Ansicht (ein Tab ohne eigene Webseite): zurück zum Startbildschirm, der Tab ist wieder leer
+        if std::mem::take(&mut self.tabs[self.active].mail_view) {
+            self.tabs[self.active].title.clear();
+            self.layout();
+            self.sync_ui();
+            self.focus_address();
+            return;
+        }
         let tab = &self.tabs[self.active];
         let Some(wv) = tab.webview.as_ref().filter(|_| !tab.home) else { return };
         let mut can = windows::core::BOOL::default();
@@ -742,6 +749,72 @@ impl Browser {
         self.sync_ui();
     }
 
+    /// Downloads dieser WebView übernehmen (Tab oder Postfach): WebView2 zeigt dafür kein eigenes Fenster mehr.
+    fn watch_downloads(&self, webview: &WebView, id: u32, private: bool) {
+        let proxy = self.proxy.clone();
+        let notify: downloads::Notify = Rc::new(move |change| { let _ = proxy.send_event(UserEvent::Download(id, change)); });
+        downloads::watch(&webview.webview(), id, private, &self.downloads, notify);
+    }
+
+    /// Die WebView eines Tabs, der verschwindet: Laufen darin noch Downloads, bleibt sie unsichtbar bestehen, bis sie fertig sind.
+    fn park(&mut self, tab: u32, webview: Option<WebView>) {
+        if let Some(wv) = webview.filter(|_| self.downloads.borrow().busy(tab)) {
+            let _ = wv.set_visible(false);
+            self.parked.push((tab, wv));
+        }
+    }
+
+    /// Stand der Downloads an die Oberfläche (`started`: gerade kam einer dazu).
+    fn sync_downloads(&self, started: bool) {
+        let list = self.downloads.borrow().to_json();
+        let _ = self.ui.evaluate_script(&format!("window.setDownloads?.({list}, {started})"));
+    }
+
+    /// Ein Download begann in einem Tab ohne eigene Seite: Von einer Webseite geöffnet, schließt der Tab wieder;
+    /// sonst (Adresse eingetippt) wird er wieder leer. Die WebView lädt unsichtbar zu Ende (`park`).
+    fn drop_download_tab(&mut self, id: u32) {
+        let Some(i) = self.index_of(id) else { return };
+        if self.tabs[i].popup {
+            self.close_tab(id);
+            return;
+        }
+        let webview = self.tabs[i].webview.take();
+        self.park(id, webview);
+        // Neue Nummer: Späte Meldungen der alten WebView (Titel, Laden fertig) dürfen den leeren Tab nicht füllen
+        let tab = &mut self.tabs[i];
+        tab.id = self.next_id;
+        self.next_id += 1;
+        tab.url.clear();
+        tab.title.clear();
+        tab.favicon.clear();
+        tab.page_favicon.clear();
+        tab.loading = false;
+        tab.home = false;
+        tab.pending_prompt = None;
+        self.layout();
+        self.sync_ui();
+        if i == self.active {
+            self.focus_address();
+        }
+    }
+
+    /// Bedienung der Download-Liste; die Oberfläche nennt nur die Nummer, Pfade kennt allein Rust.
+    fn download_command(&mut self, what: &str, id: Option<u32>) {
+        // Erst die Liste loslassen, dann WebView2 aufrufen: Abbrechen meldet sich sofort über `refresh` zurück
+        let op = id.and_then(|id| self.downloads.borrow().operation(id));
+        let path = id.and_then(|id| self.downloads.borrow().file(id));
+        match what {
+            "cancel" => { let _ = op.map(|o| unsafe { o.Cancel() }); }
+            "resume" => { let _ = op.map(|o| unsafe { o.Resume() }); }
+            "open" => { if let Some(p) = path { downloads::open(&p) } }
+            "show" => { if let Some(p) = path { downloads::reveal(&p) } }
+            "remove" if id.is_some() => self.downloads.borrow_mut().remove(id),
+            "clear" => self.downloads.borrow_mut().remove(None),
+            _ => return,
+        }
+        self.sync_downloads(false);
+    }
+
     /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
     fn show_update(&self) {
         if let Some((build, notes, _)) = &self.update {
@@ -763,16 +836,14 @@ impl Browser {
 
     /// Gibt `false` zurück, wenn das Fenster geschlossen werden soll.
     fn command(&mut self, cmd: &str, msg: &Value) -> bool {
-        if !matches!(cmd, "split_resize_start" | "split_resize_ready" | "split_resize_end" | "overlay" | "page_shot" | "chrome_hidden" | "chrome_side" | "animation_rate") {
-            if let Some((token, _)) = self.resize_preview.take() {
-                self.layout();
-                let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({token})"));
-            }
-        }
         if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
         if cmd == "clip_pick" { self.clip_pick(msg); return true; }
+        if let Some(what) = cmd.strip_prefix("download_") {
+            self.download_command(what, msg["id"].as_u64().map(|v| v as u32));
+            return true;
+        }
         let id = msg["id"].as_u64().map(|v| v as u32);
         let value = msg["value"].as_str().unwrap_or_default();
         match cmd {
@@ -782,6 +853,7 @@ impl Browser {
                 self.sync_geometry();
                 self.show_update();
                 self.sync_mail();
+                self.sync_downloads(false);
             }
             // Mail-Knopf und Mail-Ansicht: Postfach (oder eine Mail darin) rechts zeigen, Postfach trennen
             "mail_view" => self.mail_view(),
@@ -802,11 +874,6 @@ impl Browser {
             "adblock_toggle" => {
                 let url = self.tabs[self.active].url.clone();
                 blocker::toggle(&url);
-                for tab in &self.tabs {
-                    if let Some(wv) = &tab.webview {
-                        set_adblock_flag(wv, &tab.adblock_flag);
-                    }
-                }
                 let tab = &mut self.tabs[self.active];
                 tab.blocked = 0;
                 if let Some(wv) = &tab.webview {
@@ -880,22 +947,6 @@ impl Browser {
                 self.layout();
                 self.sync_ui();
             }
-            "split_resize_start" => {
-                if self.panes().len() == 2 {
-                    let token = msg["token"].as_u64().unwrap_or_default();
-                    self.resize_preview = Some((token, false));
-                    for (i, _) in self.panes() {
-                        let tab = &self.tabs[i];
-                        let (id, proxy) = (tab.id, self.proxy.clone());
-                        let result = tab.webview.as_ref().map(|wv| resize_preview::capture(&wv.webview(), move |image| {
-                            let _ = proxy.send_event(UserEvent::ResizeSnapshot(token, id, image));
-                        }));
-                        if !matches!(result, Some(Ok(()))) {
-                            let _ = self.proxy.send_event(UserEvent::ResizeSnapshot(token, id, String::new()));
-                        }
-                    }
-                }
-            }
             // Vorschläge oder Favoriten liegen über einer Webseite: Die Oberfläche legt ein Bild der Seiten hinter ihr
             // Glas – durch die Aussparung in der Seite sähe man sonst nur das Wallpaper
             "page_shot" => {
@@ -909,21 +960,12 @@ impl Browser {
                     }
                 }
             }
-            "split_resize_ready" => {
-                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
-                    self.resize_preview = self.resize_preview.map(|(token, _)| (token, true));
+            // Trennlinie wird gezogen: die Seiten live mitziehen – ohne den ganzen Zustand bei jedem Bild an die
+            // Oberfläche zu schicken (die zieht ihre Rahmen selbst nach; split_ratio am Ende gleicht ab)
+            "split_drag" => {
+                if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
+                    split.ratio = r.clamp(0.2, 0.8);
                     self.layout();
-                }
-            }
-            "split_resize_end" => {
-                if self.resize_preview.map(|p| p.0) == msg["token"].as_u64() {
-                    self.resize_preview = None;
-                    if let (Some(split), Some(r)) = (self.split.as_mut(), msg["value"].as_f64()) {
-                        split.ratio = r.clamp(0.2, 0.8);
-                    }
-                    self.layout();
-                    let _ = self.ui.evaluate_script(&format!("window.finishResizePreview?.({})", msg["token"]));
-                    self.sync_ui();
                 }
             }
             "split_ratio" => {
@@ -989,8 +1031,8 @@ impl Browser {
                 let cmd = msg["cmd"].as_str().unwrap_or_default().to_owned();
                 return self.command(&cmd, &msg);
             }
-            // Webseiten dürfen nur Tastenkürzel und ihre Scrollrichtung melden, sonst nichts steuern.
-            UserEvent::Content(cmd) => {
+            // Webseiten dürfen nur Tastenkürzel, die Seitentasten der Maus und ihre Scrollrichtung melden, sonst nichts steuern.
+            UserEvent::Content(from, cmd) => {
                 // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
                 // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
                 if (self.chrome_left || self.chrome_hidden) && !self.fullscreen {
@@ -1003,6 +1045,17 @@ impl Browser {
                 // Scrollrichtung der Seite: Die Oberfläche blendet die Leiste oben danach aus bzw. ein
                 if matches!(cmd.as_str(), "scroll_down" | "scroll_up") && !self.chrome_left && !self.fullscreen {
                     let _ = self.ui.evaluate_script(&format!("window.pageScrolled?.({})", cmd == "scroll_down"));
+                }
+                // Seitentasten der Maus gelten der Seite, über der sie gedrückt wurden – in der geteilten Ansicht also
+                // vielleicht der anderen Hälfte. Von gerade nicht sichtbaren Seiten zählen sie nicht.
+                if matches!(cmd.as_str(), "back" | "forward") {
+                    match self.index_of(from) {
+                        Some(i) if i == self.active => {}
+                        Some(i) if self.panes().iter().any(|(p, _)| *p == i) => self.activate(i),
+                        None if self.mail_view_active() && self.mail.owns(from) => {} // Postfach in der Mail-Ansicht
+                        _ => return true,
+                    }
+                    return self.command(&cmd, &Value::Null);
                 }
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
@@ -1026,6 +1079,16 @@ impl Browser {
             }
             UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
+            UserEvent::Download(id, change) => {
+                let started = matches!(change, downloads::Change::Started { .. });
+                if let downloads::Change::Started { fresh: true } = change {
+                    self.drop_download_tab(id);
+                }
+                // Fertig: WebViews geschlossener Tabs gehen jetzt wirklich zu
+                let downloads = self.downloads.clone();
+                self.parked.retain(|(tab, _)| downloads.borrow().busy(*tab));
+                self.sync_downloads(started);
+            }
             UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
             UserEvent::MailTick => self.mail_tick(),
             UserEvent::MailSleep(round) => self.mail_sleep(round),
@@ -1052,11 +1115,6 @@ impl Browser {
             }
             UserEvent::PageShot(token, id, image) => {
                 let _ = self.ui.evaluate_script(&format!("window.pageShot?.({token},{id},{})", json!(image)));
-            }
-            UserEvent::ResizeSnapshot(token, id, image) => {
-                if self.resize_preview.map(|p| p.0) == Some(token) {
-                    let _ = self.ui.evaluate_script(&format!("window.setResizeSnapshot?.({token},{id},{})", json!(image)));
-                }
             }
             UserEvent::PageFavicon(id, source, icon) => {
                 if let Some(tab) = self.tab_mut(id) {
@@ -1122,6 +1180,7 @@ impl Browser {
                 }
                 let private = self.index_of(from).is_some_and(|i| self.tabs[i].private);
                 self.new_tab(Some(url), private);
+                self.tabs[self.active].popup = true;
             }
             UserEvent::Fullscreen(id, on) => self.set_fullscreen(id, on),
             // Geteilte Ansicht: Adresszeile & Co. gehören zu der Seite, in die zuletzt geklickt wurde.
@@ -1220,7 +1279,7 @@ fn build_content_webview(
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
                 } else { UserEvent::Cosmetic(id, body) }
-            } else { UserEvent::Content(body) };
+            } else { UserEvent::Content(id, body) };
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
@@ -1361,28 +1420,6 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
     }));
     let mut token = 0;
     let _ = unsafe { wv.add_WebResourceRequested(&handler, &mut token) };
-}
-
-/// Teilt den Skripten in der Seite mit, wo der Werbeblocker aus ist (`window.__glassAdblockOff`).
-/// Läuft bei jedem neuen Dokument vor den Skripten der Seite; das alte Skript wird dabei ersetzt.
-fn set_adblock_flag(webview: &WebView, slot: &ScriptSlot) {
-    use windows::core::HSTRING;
-    let wv = webview.webview();
-    if let Some(old) = slot.borrow_mut().take() {
-        let _ = unsafe { wv.RemoveScriptToExecuteOnDocumentCreated(&HSTRING::from(old)) };
-    }
-    let js = format!(
-        "Object.defineProperty(window, '__glassAdblockOff', {{ value: Object.freeze({}), configurable: true }});",
-        json!(blocker::allowed_sites())
-    );
-    let slot = slot.clone();
-    let handler = webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(move |result, id| {
-        if result.is_ok() {
-            *slot.borrow_mut() = Some(id);
-        }
-        Ok(())
-    }));
-    let _ = unsafe { wv.AddScriptToExecuteOnDocumentCreated(&HSTRING::from(js), &handler) };
 }
 
 /// Adresse, Hostname oder Suchbegriff → URL.
@@ -1543,6 +1580,7 @@ fn main() -> wry::Result<()> {
         .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"));
     blocker::init(data_dir.clone());
     let mail = mail::Mail::new(&data_dir);
+    let downloads = downloads::Downloads::load(&data_dir);
     let mut web_context = WebContext::new(Some(data_dir));
 
     let p_ui = proxy.clone();
@@ -1624,9 +1662,9 @@ fn main() -> wry::Result<()> {
     let mut browser = Browser {
         icloud, autofill: None, autofill_seq: 0,
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
-        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, resize_preview: None, hover: None, update: None,
+        fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
-        clips: clipboard::History::default(), clip: None, mail,
+        clips: clipboard::History::default(), clip: None, mail, downloads, parked: Vec::new(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();

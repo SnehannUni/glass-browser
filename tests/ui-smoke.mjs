@@ -257,12 +257,110 @@ try {
   // New-tab search shares the same keyboard controller.
   await evaluate(`testState.tabs.push({id:3,title:'',url:'',page:false});testState.active=3;render(structuredClone(testState));document.getElementById('addr-input').value='alpha';document.getElementById('addr-input').dispatchEvent(new Event('input'))`);
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
-  await key('Tab', 'Tab'); assert.equal(await value(), 'alpha one');
+  await key('ArrowDown', 'ArrowDown'); assert.equal(await value(), 'alpha one');
   await key('Escape', 'Escape'); assert.equal(await value(), 'alpha');
+  // Start screen: Tab switches the search provider like turning the wheel clockwise, Shift+Tab goes back
+  const engineName = `document.getElementById('btn-engine').title`;
+  await key('Tab', 'Tab'); assert.match(await evaluate(engineName), /YouTube/, 'Tab turns to the provider coming up from below');
+  assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'Tab keeps the focus in the field');
+  await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/, 'Shift+Tab switches back');
+  // Without focus in the field, Tab does not go to the search icon: it focuses the field and switches
+  await evaluate(`document.getElementById('addr-input').blur()`);
+  await key('Tab', 'Tab'); assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'first Tab focuses the field');
+  assert.match(await evaluate(engineName), /YouTube/);
+  await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/);
+  await evaluate(`(() => { const i = document.getElementById('addr-input'); i.value = 'alpha'; i.dispatchEvent(new Event('input')); })()`);
+  await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
+  console.log('PASS: Tab on the start screen switches the search provider.');
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  // Right-click on a circle edits it: it turns under the column above the upper-left place, where the providers
+  // not in the wheel line up; a click swaps it, the arrows turn the next one there. Google is never swapped.
+  const down = (sel) => `document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`;
+  const rightClick = (title) => `(() => { const s = document.querySelector('#wheel .slot[title="${title}"]');
+    s.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 2 }));
+    s.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })); })()`;
+  const front = `document.querySelector('#wheel .slot.on').title`, target = `document.querySelector('#wheel .slot.target')?.title`;
+  const picksNow = `[...document.querySelectorAll('#wheel .pick')].map(p=>p.title)`;
+  await evaluate(down('#btn-engine'));
+  await delay(800);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('#wheel .slot')].map(s=>s.title)`), ['Google','ChatGPT','Claude','Gemini','Kimi','YouTube']);
+  await evaluate(rightClick('ChatGPT'));
+  assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('editing')`), true, 'right-click starts editing');
+  assert.equal(await evaluate(`document.getElementById('wheel').dataset.closing`), undefined, 'right-click does not pick');
+  assert.equal(await evaluate(front), 'Google', 'editing the next circle keeps the selection');
+  assert.equal(await evaluate(target), 'ChatGPT', 'the right-clicked circle gets swapped');
+  assert.deepEqual(await evaluate(picksNow), ['Z.ai','Grok','Amazon']);
+  await evaluate(down('#wheel .pick[title="Amazon"]'));
+  assert.equal(await evaluate(target), 'Amazon', 'pick replaces the circle');
+  assert.deepEqual(await evaluate(picksNow), ['Z.ai','Grok','ChatGPT']);
+  assert.deepEqual(JSON.parse(await evaluate(`localStorage.getItem('glass.wheel')`)), ['amazon','claude','gemini','kimi','youtube']);
+  assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'editing the wheel keeps the field focused');
+  await key('ArrowRight', 'ArrowRight'); assert.equal(await evaluate(target), 'YouTube', 'right arrow turns clockwise, never Google under the column');
+  await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'Amazon');
+  await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'Claude', 'left arrow turns back');
+  await evaluate(down('#wheel .turn.next')); assert.equal(await evaluate(target), 'Amazon', 'curved arrow on the right turns clockwise');
+  await evaluate(rightClick('Gemini')); assert.equal(await evaluate(target), 'Gemini', 'right-click another circle turns it under the column');
+  await delay(900);
+  const pickGap = await evaluate(`(() => {
+    const c = (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, r: r.width / 2 }; };
+    const slots = [...document.querySelectorAll('#wheel .slot')].map(c), picks = [...document.querySelectorAll('#wheel .pick')].map(c);
+    return Math.min(...picks.flatMap((p) => slots.map((s) => Math.hypot(p.x - s.x, p.y - s.y) - p.r - s.r)));
+  })()`);
+  assert.ok(pickGap > 1, `picks clear the wheel (${pickGap.toFixed(1)} px)`);
+  await evaluate(rightClick('Gemini'));
+  assert.equal(await evaluate(`document.querySelectorAll('#wheel .pick').length`), 0, 'right-click on the edited circle ends editing');
+  await evaluate(rightClick('YouTube')); assert.equal(await evaluate(target), 'YouTube');
+  await key('Escape', 'Escape');
+  assert.equal(await evaluate(`document.querySelectorAll('#wheel .pick').length`), 0, 'Escape ends editing first');
+  assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`), true);
+  await evaluate(down('#wheel .slot[title="Google"]'));
+  await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  console.log(`PASS: right-click swaps wheel providers (picks clear the wheel by ${pickGap.toFixed(1)} px).`);
+  // Mail badge counts only what is new since the last visit, not all unread mails
+  const mailBadge = (unread) => evaluate(`(() => { window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: true, unread: ${unread} }] });
+    return document.querySelector('#btn-mail .mail-badge').textContent; })()`);
+  assert.equal(await mailBadge(1200), '', 'a newly seen mailbox starts at zero');
+  assert.equal(await mailBadge(1203), '3', 'new mails count up');
+  assert.equal(await mailBadge(1100), '', 'reading elsewhere lowers the baseline');
+  assert.equal(await mailBadge(1102), '2', 'and later mails still count');
+  await evaluate(`window.mailState({ boxes: [] })`);
+  console.log('PASS: mail badge shows only new mails since the last visit.');
+  // Mouse side buttons over the interface act like the back and forward buttons
+  const sideButtons = await evaluate(`(() => { const from = messages.length; for (const button of [3, 4]) document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button }));
+    return messages.slice(from).map((m) => m.cmd); })()`);
+  assert.deepEqual(sideButtons, ['back', 'forward']);
+  console.log('PASS: mouse side buttons send back and forward.');
+  // Sidebar on the left: "+" sits right of the search field, downloads and favorites at the bottom right
+  const sideLayout = `(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(), bar = document.getElementById('toolbar').getBoundingClientRect();
+    const a = document.querySelector('.side.left > .center').getBoundingClientRect(), n = r('btn-new'), f = r('btn-favs'), d = r('btn-dls'), p = r('btn-private'), x = r('win-close');
+    return { left: document.body.classList.contains('side-left'), plusRow: Math.abs((n.top + n.bottom) / 2 - (a.top + a.bottom) / 2), plusRight: n.left - a.right,
+      favRight: bar.right - f.right, dlBeforeFav: d.width ? f.left - d.right : null, privateLeft: p.left - bar.left,
+      closeRight: innerWidth - x.right, closeTop: x.top, inStrip: !!document.getElementById('win-close').closest('#sidestrip') }; })()`;
+  await evaluate(`document.getElementById('toolbar-side').click()`);
+  await delay(400);
+  let side = await evaluate(sideLayout);
+  assert.ok(side.left, 'sidebar on the left');
+  assert.ok(side.plusRow < 1 && side.plusRight >= 0 && side.plusRight < 12, `plus next to the search field: ${JSON.stringify(side)}`);
+  assert.ok(side.favRight < 16 && side.privateLeft < 16, `private bottom left, favorites bottom right: ${JSON.stringify(side)}`);
+  assert.ok(side.inStrip && side.closeRight < 12 && side.closeTop < 12, `close button top right in the strip over the pages: ${JSON.stringify(side)}`);
+  // A split partner sits in the same capsule as the search field, in a second row (as in the tab list)
+  const dock = await evaluate(`(async () => { const s = structuredClone(testState); if (!s.tabs.some((t) => t.id === 2)) return null;
+    document.getElementById('addr-input').blur(); s.split = { left: 1, right: 2 }; s.active = 1; render(s); await new Promise((r) => setTimeout(r, 600));
+    const a = document.getElementById('address').getBoundingClientRect(), d = document.querySelector('.tab.docked')?.getBoundingClientRect();
+    const out = d && { top: d.top - a.top, bottom: a.bottom - d.bottom, left: d.left - a.left, right: a.right - d.right };
+    render(structuredClone(testState)); await new Promise((r) => setTimeout(r, 100));
+    const i = document.getElementById('addr-input'); i.focus(); i.value = 'alpha'; i.dispatchEvent(new Event('input')); return out; })()`);
+  assert.ok(dock && Math.abs(dock.top - 30) < 1.5 && Math.abs(dock.bottom) < 1.5 && Math.abs(dock.left) < 1.5 && Math.abs(dock.right) < 1.5, `split partner joined below the search field: ${JSON.stringify(dock)}`);
+  await evaluate(`window.setDownloads({ visible: true, items: [] }, false)`);
+  side = await evaluate(sideLayout);
+  assert.ok(side.favRight < 16 && side.dlBeforeFav >= 0 && side.dlBeforeFav < 12, `downloads next to favorites at the bottom right: ${JSON.stringify(side)}`);
+  await evaluate(`window.setDownloads({ visible: false, items: [] }, false); document.getElementById('toolbar-side').click()`);
+  await delay(400);
+  assert.equal(await evaluate(`document.body.classList.contains('side-left')`), false);
+  console.log('PASS: left sidebar: plus beside the search field, downloads/favorites bottom right, window buttons top right.');
   // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   await delay(800);
@@ -297,7 +395,8 @@ try {
   await delay(450);
   await writeFile('target/ui-smoke/start-suggestions.png', Buffer.from((await call('Page.captureScreenshot')).data, 'base64'));
   await key('Escape','Escape');
-  await key('Tab', 'Tab'); assert.notEqual(await evaluate('document.activeElement.id'), 'addr-input');
+  // (Tab switches the provider here instead of moving focus – leave the field directly)
+  await evaluate(`document.getElementById('addr-input').blur()`); assert.notEqual(await evaluate('document.activeElement.id'), 'addr-input');
   for (const floating of [false, true]) {
     await evaluate(`setGeometry({x:0,y:0,mx:0,my:0,mw:1280,mh:820,floating:${floating}})`);
     assert.equal(await evaluate(`getComputedStyle(document.body,'::after').display`), floating ? 'block' : 'none');

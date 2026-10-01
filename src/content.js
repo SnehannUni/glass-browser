@@ -18,6 +18,14 @@
     e.stopImmediatePropagation();
     window.ipc.postMessage(cmd);
   }, true);
+  // Seitentasten der Maus (WebView2 navigiert damit nicht von selbst): zurück bzw. vor wie die Knöpfe in der Leiste –
+  // am Anfang des Verlaufs also weiter zum Startbildschirm
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    window.ipc.postMessage(e.button === 3 ? 'back' : 'forward');
+  }, true);
 
   // ---------- Fenster am oberen Seitenrand anfassen ----------
   // Steht die Leiste links oder ist sie oben ausgeblendet, fehlt oben die Titelleiste. Leere Stellen im oberen
@@ -80,11 +88,6 @@
   }, { capture: true, passive: true });
 
   // ---------- Werbeblocker ----------
-  // Seiten ohne Werbeblocker setzt Rust per eigenem Skript, das direkt nach diesem läuft – daher erst bei Bedarf lesen.
-  const host = location.hostname.replace(/^www\./, '');
-  const off = () => (window.__glassAdblockOff || []).some((s) => host === s || host.endsWith('.' + s));
-  const youtube = /(^|\.)youtube\.com$/.test(location.hostname);
-
   // Ausblend-Regeln: seitenspezifische sofort, allgemeine passend zu den Klassen und IDs der Seite.
   // Eigenes Stylesheet statt <style>: greift auch bei strenger Content-Security-Policy, und ein ungültiger
   // Selektor wirft nur seine eigene Regel raus (eine Regel pro Zeile).
@@ -115,68 +118,4 @@
     if (pending.length && !timer) timer = setTimeout(flush, 500);
   }).observe(document, { childList: true, subtree: true });
   document.addEventListener('DOMContentLoaded', () => { report(document.documentElement); mount(); });
-
-  if (!youtube) return;
-
-  // ---------- YouTube ----------
-  // 1. Werbung schon aus den Videodaten entfernen, bevor der Player sie sieht (wie uBlock Origin).
-  const AD_KEYS = ['adPlacements', 'adSlots', 'playerAds'];
-  const prune = (o) => {
-    if (o && typeof o === 'object' && !off()) {
-      for (const k of AD_KEYS) if (k in o) delete o[k];
-      if (o.playerResponse) prune(o.playerResponse);
-    }
-    return o;
-  };
-  const parse = JSON.parse;
-  JSON.parse = function (...args) { return prune(parse.apply(this, args)); };
-  const json = Response.prototype.json;
-  Response.prototype.json = function () { return json.call(this).then(prune); };
-  let initial;
-  Object.defineProperty(window, 'ytInitialPlayerResponse', {
-    configurable: true, get: () => initial, set: (v) => { initial = prune(v); },
-  });
-
-  // 2. Rutscht doch eine Werbung durch: stumm vorspulen und „Überspringen“ drücken.
-  // 3. „Werbeblocker sind auf YouTube nicht erlaubt“: YouTube pausiert dabei das Video und legt eine Sperre über die
-  //    Seite. Der Dialog ist ausgeblendet (4.) – so wirkte der Tab eingefroren. Schließen und weiterspielen.
-  let mutedByUs = false, resumeAfterNag = false;
-  setInterval(() => {
-    if (off()) return;
-    const nag = document.querySelector('ytd-enforcement-message-view-model')?.closest('tp-yt-paper-dialog');
-    if (nag?.opened) {
-      // Der Schließen-Knopf hat nur eine Beschriftung für Screenreader, keinen Text
-      const close = [...nag.querySelectorAll('button[aria-label]')].find((b) => !b.innerText.trim());
-      if (close) close.click(); else nag.close?.();
-      resumeAfterNag = true;
-    }
-    const player = document.querySelector('#movie_player, .html5-video-player');
-    const video = player?.querySelector('video');
-    if (!video) return;
-    if (resumeAfterNag && !nag?.opened) {
-      resumeAfterNag = false;
-      if (video.paused) video.play().catch(() => { /* Autoplay verweigert: dann startet es der Nutzer */ });
-    }
-    if (player.classList.contains('ad-showing')) {
-      if (!video.muted) { video.muted = true; mutedByUs = true; }
-      if (Number.isFinite(video.duration)) video.currentTime = video.duration;
-      document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern')?.click();
-    } else if (mutedByUs) {
-      video.muted = false;
-      mutedByUs = false;
-    }
-  }, 250);
-
-  // 4. Werbeflächen auf der Seite und der „Werbeblocker erkannt“-Dialog (den schließt 3.)
-  document.addEventListener('DOMContentLoaded', () => {
-    if (off()) return;
-    window.__glassHide([
-      'ytd-ad-slot-renderer', 'ytd-in-feed-ad-layout-renderer', 'ytd-banner-promo-renderer', 'ytd-statement-banner-renderer',
-      'ytd-promoted-sparkles-web-renderer', 'ytd-promoted-video-renderer', 'ytd-display-ad-renderer', 'ytd-companion-slot-renderer',
-      'ytd-player-legacy-desktop-watch-ads-renderer', 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"]',
-      '#masthead-ad', '#player-ads', '.ytp-ad-overlay-container', '.ytp-featured-product',
-      'ytd-rich-item-renderer:has(ytd-ad-slot-renderer)', 'ytd-rich-section-renderer:has(ytd-statement-banner-renderer)',
-      'tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)', 'ytd-enforcement-message-view-model',
-    ].map((s) => `${s} { display: none !important; }`).join('\n'));
-  });
 })();
