@@ -139,10 +139,11 @@
   }
   .key:disabled { color: var(--label-3); background: none; transform: none; }
 
-  #toolbar-menu { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
-  #toolbar-menu[hidden] { display: none; }
-  #toolbar-menu .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-  #toolbar-menu .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
+  /* Kontextmenüs: Leiste (Rechtsklick auf freie Fläche) und Postfach in der Mail-Ansicht */
+  :is(#toolbar-menu, #mail-menu) { position: fixed; z-index: 100; padding: 5px; border-radius: 12px; background: rgba(35, 35, 40, .96); color: white; }
+  :is(#toolbar-menu, #mail-menu)[hidden] { display: none; }
+  :is(#toolbar-menu, #mail-menu) .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  :is(#toolbar-menu, #mail-menu) .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
   #toolbar-menu .item .check { width: 16px; visibility: hidden; }
   #toolbar-menu .item[aria-checked="true"] .check { visibility: visible; }
   /* ---------- Toolbar ---------- */
@@ -591,8 +592,6 @@
   .ml-box:is(:hover, .vh) { background: rgba(255, 255, 255, .15); color: var(--label); }
   .ml-box.off { background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
   .ml-box .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-  .ml-box .rm { position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; background: rgba(60, 62, 72, .95); }
-  .ml-box:is(:hover, .vh) .rm { opacity: .85; }
   .ml-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--label-2); }
   .ml-ic img { width: 16px; height: 16px; border-radius: 4px; }
   .ml-ic svg { width: 14px; height: 14px; }
@@ -879,6 +878,9 @@
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
     <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span><span id="toolbar-pin-label">Leiste dauerhaft anzeigen</span></button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
+  </div>
+  <div id="mail-menu" role="menu" aria-label="Postfach" hidden>
+    <button id="mail-forget" class="item" type="button" role="menuitem" title="Du bleibst dort angemeldet"></button>
   </div>
   <main id="stage">
   </main>
@@ -2476,6 +2478,39 @@
     el.addEventListener('click', onClick);
     return el;
   }
+  // Rechtsklick auf ein verbundenes Postfach: Menü mit „… trennen“ (angemeldet bleibt man dort trotzdem)
+  const mailMenu = $('mail-menu'), mailForget = $('mail-forget');
+  let mailMenuKey = null;
+  function openMailMenu(e, b) {
+    e.preventDefault();
+    mailMenuKey = b.key;
+    mailForget.textContent = `${b.name} trennen`;
+    mailMenu.hidden = false;
+    const x = Math.max(4, Math.min(e.clientX, innerWidth - mailMenu.offsetWidth - 4));
+    const y = Math.max(4, Math.min(e.clientY, innerHeight - mailMenu.offsetHeight - 4));
+    Object.assign(mailMenu.style, { left: `${x}px`, top: `${y}px` });
+    // Reicht es über das Postfach rechts, spart Rust es dort aus
+    send('overlay', { key: 'mail-menu', rect: { x, y, w: mailMenu.offsetWidth, h: mailMenu.offsetHeight, r: 12 } });
+    mailForget.focus({ preventScroll: true });
+  }
+  function closeMailMenu() {
+    if (mailMenu.hidden) return;
+    mailMenu.hidden = true;
+    mailMenuKey = null;
+    send('overlay', { key: 'mail-menu', rect: null });
+  }
+  mailForget.addEventListener('click', () => {
+    const key = mailMenuKey;
+    closeMailMenu();
+    if (key) send('mail_forget', { value: key });
+  });
+  document.addEventListener('pointerdown', (e) => { if (!mailMenu.contains(e.target)) closeMailMenu(); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (mailMenu.hidden || !['Escape', 'Tab'].includes(e.key)) return;
+    e.preventDefault(); e.stopImmediatePropagation(); closeMailMenu();
+  }, true);
+  addEventListener('blur', closeMailMenu);
+  addEventListener('resize', closeMailMenu);
   function renderMailView() {
     const view = state.mailView;
     if (!view) return;
@@ -2504,7 +2539,7 @@
         sel: mailFilter === b.key, off: !b.connected, cls: b.signedOut ? 'out' : '',
         title: !b.connected ? `${b.name} verbinden – rechts erscheint die Anmeldung`
           : b.signedOut ? `${b.name}: nicht angemeldet – klicken, um dich rechts anzumelden`
-          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach`,
+          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach (Rechtsklick: trennen)`,
         onClick: () => { mailFilter = b.key; mailSelected = null; send('mail_show', { value: b.key }); renderMailView(); },
       });
       el.prepend(mailIcon(b));
@@ -2522,14 +2557,7 @@
         else n.textContent = badge[0];
         el.append(n);
       }
-      if (b.connected) {
-        const rm = document.createElement('span');
-        rm.className = 'rm';
-        rm.title = `${b.name} trennen (du bleibst dort angemeldet)`;
-        rm.innerHTML = svg('close');
-        rm.addEventListener('click', (e) => { e.stopPropagation(); send('mail_forget', { value: b.key }); });
-        el.append(rm);
-      }
+      if (b.connected) el.addEventListener('contextmenu', (e) => openMailMenu(e, b));
       chips.append(el);
     }
 
