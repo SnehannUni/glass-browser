@@ -2,6 +2,7 @@
 // landet beim Speichern im PDF. Run after `cargo build`, using Node 22+ on Windows. No npm dependencies.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -29,6 +30,8 @@ function makePdf(pages, label = 'Seite') {
 await mkdir('target/pdf-smoke', { recursive: true });
 const profile = await mkdtemp(resolve('target/pdf-smoke/editor-'));
 const extra = join(profile, 'Anhang.pdf');
+const saveDir = join(profile, 'gespeichert');
+await mkdir(saveDir);
 await writeFile(extra, makePdf(2, 'Anhang'));
 const pdf = makePdf(3);
 const server = createServer((req, res) => {
@@ -43,7 +46,7 @@ const port = portProbe.address().port;
 await new Promise(r => portProbe.close(r));
 const app = spawn(resolve('target/debug/glass-browser.exe'), [`${origin}/Vertrag.pdf`], {
   windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`, GLASS_TEST_SAVE_DIR: saveDir },
 });
 const sockets = [];
 const watchdog = setTimeout(() => { console.error('FAIL: watchdog'); app.kill(); process.exit(1); }, 120000);
@@ -77,7 +80,7 @@ try {
   await waitFor(async () => {
     target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.url.endsWith('/Vertrag.pdf'));
     return !!target;
-  }, 'browser startup');
+  }, 'browser startup', 400); // WebView2 braucht nach einem vorigen Lauf manchmal länger
   const page = await connect(target);
   await page.call('Log.enable');
   await waitFor(() => page(`document.querySelectorAll('#viewer .page').length === 3 && document.getElementById('status').classList.contains('done')`), 'viewer rendered');
@@ -91,35 +94,38 @@ try {
   };
   const rect = (selector) => page(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
   const pressButton = async (selector) => { const r = await rect(selector); await click(r.x + r.w / 2, r.y + r.h / 2); };
-  /** Speichern auslösen und die Bytes des gespeicherten PDFs abfangen; liefert die Anmerkungen je Seite. */
-  const saved = (button = '#download') => page(`(async () => {
-    let capture; const original = URL.createObjectURL;
-    URL.createObjectURL = function (blob) { if (blob.type === 'application/pdf') capture = blob; return original.call(this, blob); };
-    const click = HTMLAnchorElement.prototype.click; let fileName = '';
-    HTMLAnchorElement.prototype.click = function () { fileName = this.download; };
-    document.querySelector(${JSON.stringify(button)}).click();
-    for (let i = 0; i < 200 && !capture; i++) await new Promise(r => setTimeout(r, 25));
-    URL.createObjectURL = original; HTMLAnchorElement.prototype.click = click;
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await capture.arrayBuffer()) }).promise;
+  /** Ein PDF (Bytes) im Viewer mit PDF.js lesen: Text, Drehung und Anmerkungen je Seite. */
+  const inspect = (bytes) => page(`(async () => {
+    const data = Uint8Array.from(atob(${JSON.stringify(Buffer.from(bytes).toString('base64'))}), (c) => c.charCodeAt(0));
+    const doc = await pdfjsLib.getDocument({ data }).promise;
     const pages = [];
     for (let n = 1; n <= doc.numPages; n++) {
       const p = await doc.getPage(n);
       const text = (await p.getTextContent()).items.map(i => i.str).join(' ');
       pages.push({ text, rotate: p.rotate, annotations: (await p.getAnnotations()).map(a => ({ type: a.annotationType, contents: a.contentsObj?.str || '', subtype: a.subtype })) });
     }
-    return { fileName, pages };
+    return { pages };
   })()`);
+  /** Speichern über den Knopf und die geschriebene Datei lesen. */
+  const saved = async (button = '#download', file = 'Vertrag.pdf') => {
+    const path = join(saveDir, file);
+    const before = existsSync(path) ? statSync(path).mtimeMs : 0;
+    await page(`document.querySelector(${JSON.stringify(button)}).click()`);
+    await waitFor(() => existsSync(path) && statSync(path).mtimeMs !== before, `saved ${file}`);
+    await delay(150);
+    return { fileName: file, ...(await inspect(await readFile(path))) };
+  };
   const pageRect = (n) => rect(`#viewer .page[data-page-number="${n}"]`);
   const T = { FREETEXT: 3, HIGHLIGHT: 9, INK: 15, STAMP: 13 };
 
   // Werkzeugleiste und deutsche Texte
-  assert.equal(await page(`document.querySelectorAll('#tools [data-tool]').length`), 6, 'six tools in the rail');
+  assert.equal(await page(`document.querySelectorAll('#tools [data-tool]').length`), 10, 'ten tools in the rail');
   await waitFor(() => page(`document.querySelector('#tools .glass').style.backdropFilter.startsWith('url(#lens-')`), 'lens on tool rail');
   console.log('PASS: the tool rail is there and uses the glass lens.');
 
   // ---------- Zeichnen ----------
-  await pressButton('#tools [data-tool="ink"]');
-  await waitFor(() => page(`document.body.dataset.tool === 'ink' && !document.getElementById('tool-options').hidden`), 'ink tool with options');
+  await pressButton('#tools [data-tool="draw"]');
+  await waitFor(() => page(`document.body.dataset.tool === 'draw' && !document.getElementById('tool-options').hidden`), 'ink tool with options');
   let r = await pageRect(1);
   await drag([[r.x + 120, r.y + 300], [r.x + 180, r.y + 330], [r.x + 240, r.y + 290], [r.x + 300, r.y + 340]]);
   await drag([[r.x + 120, r.y + 360], [r.x + 300, r.y + 360]]);
@@ -142,8 +148,8 @@ try {
   console.log('PASS: the text tool writes text onto the page.');
 
   // ---------- Hervorheben: Text auf Seite 2 markieren ----------
-  await pressButton('#tools [data-tool="highlight"]');
-  await waitFor(() => page(`document.body.dataset.tool === 'highlight'`), 'highlight tool');
+  await pressButton('#tools [data-tool="markup"]');
+  await waitFor(() => page(`document.body.dataset.tool === 'markup'`), 'highlight tool');
   await page(`document.querySelector('#viewer .page[data-page-number="2"]').scrollIntoView({ block: 'start' })`);
   await waitFor(() => page(`[...document.querySelectorAll('.page[data-page-number="2"] .textLayer span')].some(s => s.textContent.includes('Seite 2'))
     && !!document.querySelector('.page[data-page-number="2"] .annotationEditorLayer.highlightEditing')`), 'text and editor layer page 2');
@@ -245,7 +251,7 @@ try {
   await mouse('mousePressed', t.x + t.w / 2, t.y + t.h / 2, { modifiers: 8 });
   await mouse('mouseReleased', t.x + t.w / 2, t.y + t.h / 2, { modifiers: 8 });
   assert.equal(await page(`document.getElementById('org-count').textContent`), '2 von 5 ausgewählt');
-  const part = await saved('#org-extract');
+  const part = await saved('#org-extract', 'Vertrag (Seiten 4–5).pdf');
   assert.equal(part.fileName, 'Vertrag (Seiten 4–5).pdf');
   assert.deepEqual(part.pages.map(p => p.text.trim()), ['Anhang 1', 'Anhang 2']);
   console.log('PASS: extracting the selection saves those pages as their own PDF.');

@@ -133,6 +133,12 @@ enum UserEvent {
     ExitReady,
     /// Im Tab läuft der PDF-Viewer (pdf.rs) und möchte wissen, wo das Wallpaper hinter ihm liegt.
     PdfViewer(u32),
+    /// Ein PDF von der Festplatte (file://-Adresse, Kommandozeile): im Viewer zeigen, damit Strg+S dorthin speichert.
+    OpenPdfFile(u32, std::path::PathBuf),
+    /// Der PDF-Viewer möchte „Speichern unter“ (Tab, Ticket aus `pdf::post`).
+    PdfSaveAs(u32, String),
+    /// Strg+O im PDF-Viewer: Datei auswählen und in einem neuen Tab öffnen.
+    PdfOpen,
 }
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
@@ -572,7 +578,9 @@ impl Browser {
             .iter()
             // Auf dem Startbildschirm (home) sieht die Oberfläche einen leeren Tab – mit „Vor“ zurück zur Seite
             .map(|t| {
-                let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), t.url.as_str()) };
+                // PDF von der Festplatte: im Adressfeld die Datei, nicht die Adresse des Viewers
+                let local = pdf::display_url(&t.url);
+                let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), local.as_deref().unwrap_or(&t.url)) };
                 json!({
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
@@ -1126,6 +1134,27 @@ impl Browser {
                     self.sync_pdf_walls();
                 }
             }
+            UserEvent::OpenPdfFile(id, path) => {
+                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
+                    let _ = wv.load_url(&pdf::local_url(&path));
+                }
+            }
+            UserEvent::PdfSaveAs(id, ticket) => {
+                let hwnd = self.window.hwnd() as isize;
+                // Tests (tests/pdf-editor.mjs) speichern ohne Dialog in einen festen Ordner
+                let result = pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
+                    Some(dir) => Some(std::path::PathBuf::from(dir).join(name)),
+                    None => file_dialog(hwnd, true, name),
+                });
+                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
+                    let _ = wv.evaluate_script(&format!("window.__glassSaved?.({result})"));
+                }
+            }
+            UserEvent::PdfOpen => {
+                if let Some(path) = file_dialog(self.window.hwnd() as isize, false, "") {
+                    self.new_tab(Some(pdf::local_url(&path)), false);
+                }
+            }
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -1311,6 +1340,8 @@ fn build_content_webview(
                     UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
+                } else if msg["pdf"] == "open" {
+                    UserEvent::PdfOpen
                 } else if msg.get("pdf").is_some() {
                     UserEvent::PdfViewer(id)
                 } else { UserEvent::Cosmetic(id, body) }
@@ -1318,6 +1349,11 @@ fn build_content_webview(
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
+            // PDF von der Festplatte: statt des Edge-Viewers unser Viewer (der auch dorthin speichern kann)
+            if let Some(path) = pdf::pdf_path_from_file_url(&url) {
+                let _ = p_nav.send_event(UserEvent::OpenPdfFile(id, path));
+                return false;
+            }
             // Wry's PageLoadEvent::Started maps to ContentLoading on Windows, after
             // the server responds. NavigationStarting also covers the wait after
             // in-page links, history navigation and reloads.
@@ -1430,25 +1466,35 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
             let mut uri = PWSTR::null();
             args.Request()?.Uri(&mut uri)?;
             let uri = webview2_com::take_pwstr(uri);
-            // Der PDF-Viewer speichert seine Unterschriften (nur über die geheime Adresse des Tabs, siehe pdf.rs)
+            // Der PDF-Viewer und seine Dateien kommen aus der Exe; POST: Unterschriften, Speichern, Verschlüsseln
+            // (nur über die geheime Adresse des Tabs, siehe pdf.rs)
+            let respond = |served: pdf::Served| -> windows::core::Result<()> {
+                let stream = (!served.body.is_empty()).then(|| windows::Win32::UI::Shell::SHCreateMemStream(Some(&served.body))).flatten();
+                let mut headers = format!("Content-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store", served.mime);
+                if let Some(csp) = &served.csp {
+                    headers.push_str(&format!("\r\nContent-Security-Policy: {csp}"));
+                }
+                let reason = if served.status < 300 { windows::core::w!("OK") } else { windows::core::w!("Error") };
+                let response = env.CreateWebResourceResponse(stream.as_ref(), served.status as i32, reason, &windows::core::HSTRING::from(headers))?;
+                args.SetResponse(&response)
+            };
             let mut method = PWSTR::null();
             args.Request()?.Method(&mut method)?;
-            if webview2_com::take_pwstr(method) == "POST" && uri.starts_with("http://glass-pdf.localhost/") {
+            if webview2_com::take_pwstr(method) == "POST" && uri.starts_with(pdf::HOST) {
                 let body = args.Request()?.Content().ok().map(|stream| read_stream(&stream)).unwrap_or_default();
-                let status = if pdf::save_signatures(&docs, &uri, &body) { 204 } else { 403 };
-                let headers = windows::core::w!("Access-Control-Allow-Origin: *\r\nCache-Control: no-store");
-                let response = env.CreateWebResourceResponse(None, status, windows::core::w!(""), headers)?;
-                args.SetResponse(&response)?;
+                match pdf::post(&docs, &uri, body) {
+                    Some(pdf::Post::Reply(served)) => respond(served)?,
+                    // Der Dialog kommt aus der Ereignisschleife, nicht aus diesem Rückruf
+                    Some(pdf::Post::SaveAs(ticket)) => {
+                        respond(pdf::Served { status: 202, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfSaveAs(id, ticket));
+                    }
+                    None => {}
+                }
                 return Ok(());
             }
-            // Der PDF-Viewer und seine Dateien kommen aus der Exe (siehe pdf.rs)
-            if let Some((status, mime, body)) = pdf::serve(&docs, &uri, wallpaper) {
-                let stream = windows::Win32::UI::Shell::SHCreateMemStream(Some(&body));
-                let headers = format!("Content-Type: {mime}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store");
-                let reason = if status == 200 { windows::core::w!("OK") } else { windows::core::w!("Not Found") };
-                let response = env.CreateWebResourceResponse(stream.as_ref(), status as i32, reason, &windows::core::HSTRING::from(headers))?;
-                args.SetResponse(&response)?;
-                return Ok(());
+            if let Some(served) = pdf::serve(&docs, &uri, wallpaper) {
+                return respond(served);
             }
             let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
             args.ResourceContext(&mut context)?;
@@ -1480,6 +1526,40 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
     }));
     let mut token = 0;
     let _ = unsafe { wv.add_WebResourceRequested(&handler, &mut token) };
+}
+
+/// Windows-Dialog „Speichern unter“ (`save`, Vorschlag `name`) oder „Öffnen“ für PDFs; `None` = abgebrochen.
+fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf> {
+    use windows::core::{w, Interface, HSTRING};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::{
+        Common::COMDLG_FILTERSPEC, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
+        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, SIGDN_FILESYSPATH,
+    };
+    unsafe {
+        let dialog: IFileDialog = if save {
+            CoCreateInstance::<_, IFileSaveDialog>(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?.cast().ok()?
+        } else {
+            CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?.cast().ok()?
+        };
+        let filters = [COMDLG_FILTERSPEC { pszName: w!("PDF-Dokument"), pszSpec: w!("*.pdf") }];
+        dialog.SetFileTypes(&filters).ok()?;
+        dialog.SetDefaultExtension(w!("pdf")).ok()?;
+        let mut options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
+        if save {
+            options |= FOS_OVERWRITEPROMPT;
+        }
+        dialog.SetOptions(options).ok()?;
+        if save && !name.is_empty() {
+            dialog.SetFileName(&HSTRING::from(name)).ok()?;
+        }
+        dialog.Show(Some(HWND(hwnd as _))).ok()?;
+        let raw = dialog.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = raw.to_string().ok();
+        CoTaskMemFree(Some(raw.0 as _));
+        path.map(std::path::PathBuf::from)
+    }
 }
 
 /// Inhalt einer Anfrage (POST) ganz auslesen.
@@ -1516,7 +1596,16 @@ fn as_url(input: &str) -> Option<String> {
 }
 
 /// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
+/// Eine vorhandene Datei (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) wird zur file://-Adresse.
 fn resolve_input(input: &str) -> String {
+    let path = std::path::Path::new(input.trim());
+    if path.is_file() {
+        if let Ok(full) = std::fs::canonicalize(path) {
+            // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse
+            let full = full.to_string_lossy().trim_start_matches(r"\\?\").to_owned();
+            return pdf::file_url(std::path::Path::new(&full));
+        }
+    }
     as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())))
 }
 

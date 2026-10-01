@@ -6,6 +6,9 @@ const $ = (id) => document.getElementById(id);
 /** Farben zum Hervorheben: Name=Farbe, wie PDF.js sie erwartet (annotationEditorHighlightColors). */
 export const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F';
 const PEN_COLORS = ['#000000', '#1f5fd6', '#d62f2f', '#1e8a4c', '#ff9f0a', '#ffffff'];
+/** Unterstreichen, Durchstreichen: wie in Acrobat zuerst Grün bzw. Rot */
+const LINE_COLORS = ['#1e8a4c', '#d62f2f', '#1f5fd6', '#000000'];
+export const NOTE_COLORS = ['#ffd60a', '#ff9f0a', '#ff6b6b', '#64d2ff', '#30d158', '#bf5af2'];
 /** So hoch wird eine neue Unterschrift auf der Seite (Anteil der Seitenhöhe wie in PDF.js, hier in PDF-Punkten). */
 const SIGNATURE_HEIGHT = 40;
 /** Rand um Unterschriften in ihrem Kasten (SignatureEditor._INNER_MARGIN in PDF.js). */
@@ -270,14 +273,30 @@ const dialog = (() => {
 
 /**
  * Leiste rechts und Einstellungen. `app` kommt aus viewer.mjs (viewer, eventBus, pdfjsLib …).
- * Gibt `setTool` zurück, damit das Organisieren der Seiten die Werkzeuge abschalten kann.
+ * Werkzeuge sind Gruppen (Markieren, Zeichnen, Formularfeld …) mit Varianten in den Einstellungen. Ein Werkzeug ist
+ * entweder ein Editor von PDF.js (`mode`) oder ein eigenes (`custom`: enter/leave, etwa Notizen oder Schwärzen).
  */
 export function initTools(app) {
   const { viewer, eventBus, pdfjsLib: { AnnotationEditorType: T, AnnotationEditorParamsType: P } } = app;
-  const MODES = { none: T.NONE, highlight: T.HIGHLIGHT, freetext: T.FREETEXT, ink: T.INK, stamp: T.STAMP, signature: T.SIGNATURE };
   const panel = $('tool-options');
   const buttons = [...document.querySelectorAll('#tools [data-tool]')];
-  let tool = 'none';
+  const shape = (kind) => ({ mode: T.INK, custom: () => shapes(kind) });
+  const markupLine = (kind) => ({ mode: T.NONE, custom: () => markLines(kind) });
+  const GROUPS = {
+    none: { mode: T.NONE },
+    textedit: { mode: T.NONE, custom: () => app.textEdit },
+    markup: { subs: { highlight: { mode: T.HIGHLIGHT }, underline: markupLine('underline'), strike: markupLine('strike') } },
+    note: { mode: T.NONE, custom: () => app.notes },
+    freetext: { mode: T.FREETEXT },
+    draw: { subs: { pen: { mode: T.INK }, rect: shape('rect'), ellipse: shape('ellipse'), line: shape('line'), arrow: shape('arrow') } },
+    stamp: { mode: T.NONE },
+    signature: { mode: T.SIGNATURE },
+    field: { subs: { text: { mode: T.NONE, custom: () => app.fields }, checkbox: { mode: T.NONE, custom: () => app.fields }, dropdown: { mode: T.NONE, custom: () => app.fields } } },
+    redact: { mode: T.NONE, custom: () => app.redact },
+  };
+  const sub = Object.fromEntries(Object.entries(GROUPS).filter(([, g]) => g.subs).map(([k, g]) => [k, Object.keys(g.subs)[0]]));
+  let tool = 'none', active = null;
+  const spec = (group = tool) => (GROUPS[group].subs ? GROUPS[group].subs[sub[group]] : GROUPS[group]);
 
   const param = (type, value) => eventBus.dispatch('switchannotationeditorparams', { source: null, type, value });
   const modeChanged = (mode) => new Promise((done) => {
@@ -285,41 +304,274 @@ export function initTools(app) {
     const once = (e) => { if (e.mode === mode) { eventBus.off('annotationeditormodechanged', once); done(); } };
     eventBus.on('annotationeditormodechanged', once);
   });
+  async function setMode(mode) {
+    if (viewer.annotationEditorMode === mode) return;
+    const changed = modeChanged(mode);
+    viewer.annotationEditorMode = { mode };
+    await changed;
+  }
 
-  async function setTool(next) {
-    if (!(next in MODES)) return;
+  async function setTool(next, variant) {
+    if (!(next in GROUPS)) return;
+    if (variant && GROUPS[next].subs?.[variant]) sub[next] = variant;
+    active?.leave?.();
+    active = null;
     tool = next;
     for (const b of buttons) b.classList.toggle('on', b.dataset.tool === next);
-    const mode = MODES[next];
-    if (viewer.annotationEditorMode !== mode) {
-      const changed = modeChanged(mode);
-      viewer.annotationEditorMode = { mode };
-      await changed;
-    }
+    const { mode, custom } = spec();
+    await setMode(mode);
+    if (tool !== next) return; // inzwischen anderes Werkzeug gewählt
     document.body.dataset.tool = next;
+    document.body.dataset.sub = sub[next] || '';
     const section = panel.querySelector(`[data-for="${next}"]`);
     for (const s of panel.querySelectorAll('section')) s.hidden = s !== section;
+    // Varianten: Knopf markieren, nur passende Einstellungen zeigen
+    for (const b of panel.querySelectorAll(`.variants[data-group="${next}"] button`)) b.classList.toggle('on', b.dataset.sub === sub[next]);
+    for (const el of section?.querySelectorAll('[data-sub-only]') || []) el.hidden = !el.dataset.subOnly.split(' ').includes(sub[next]);
     panel.hidden = !section;
+    active = custom?.() || null;
+    active?.enter?.(sub[next]);
     if (section) requestAnimationFrame(app.placeWells);
     if (next === 'signature') app.signatures.loadSignatures();
     app.scheduleInk();
   }
-  for (const b of buttons) {
-    b.onclick = () => {
-      if (b.dataset.tool === 'stamp') return pickImage();
-      setTool(tool === b.dataset.tool && tool !== 'none' ? 'none' : b.dataset.tool);
+  for (const b of buttons) b.onclick = () => setTool(tool === b.dataset.tool && tool !== 'none' ? 'none' : b.dataset.tool);
+  for (const b of panel.querySelectorAll('.variants button')) b.onclick = () => setTool(b.closest('.variants').dataset.group, b.dataset.sub);
+
+  // ---------- Editoren aus Daten (Formen, Linien, Stempel): wie Einfügen in PDF.js, mit Rückgängig ----------
+  async function addEditor(pageNumber, data) {
+    const view = viewer.getPageView(pageNumber - 1);
+    const layer = view?.annotationEditorLayer?.annotationEditorLayer;
+    if (!layer) return null;
+    // Drehung der Seite (/Rotate): PDF.js rechnet die Punkte damit in die Ansicht um
+    const editor = await layer.deserialize({ pageIndex: pageNumber - 1, rotation: view.viewport.rotation, structTreeParentId: null, ...data });
+    if (!editor) return null;
+    editor._uiManager.addCommands({ cmd: () => layer.addOrRebuild(editor), undo: () => editor.remove(), mustExec: true });
+    return editor;
+  }
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  /** Linienzüge (PDF-Punkte, je [x0,y0,x1,y1,…]) als Zeichnung von PDF.js – verschieben, umfärben, löschen wie mit dem Stift. */
+  function addInk(pageNumber, lines, { color = inkColor, thickness = inkThickness, opacity = inkOpacity } = {}) {
+    const xs = lines.flatMap((l) => l.filter((_, i) => i % 2 === 0)), ys = lines.flatMap((l) => l.filter((_, i) => i % 2 === 1));
+    const pad = thickness;
+    return addEditor(pageNumber, {
+      annotationType: T.INK, color: rgb(color), thickness, opacity,
+      paths: { points: lines.map((l) => Float32Array.from(l)) }, boxes: null,
+      rect: [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad],
+    });
+  }
+  app.addEditor = addEditor;
+  app.addInk = addInk;
+
+  // ---------- Formen: aufziehen auf der Seite (Zeichnen-Modus von PDF.js bleibt an, damit sie sich gleich anpassen lassen) ----------
+  let inkColor = PEN_COLORS[0], inkThickness = 2, inkOpacity = 1;
+  function shapes(kind) {
+    let drag = null;
+    const geometry = (a, b, square) => {
+      let [x0, y0] = a, [x1, y1] = b;
+      if (square) {
+        const dx = x1 - x0, dy = y1 - y0;
+        if (kind === 'line' || kind === 'arrow') {
+          // auf 45°-Schritte einrasten
+          const len = Math.hypot(dx, dy), angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+          x1 = x0 + Math.cos(angle) * len; y1 = y0 + Math.sin(angle) * len;
+        } else {
+          const s = Math.max(Math.abs(dx), Math.abs(dy));
+          x1 = x0 + Math.sign(dx || 1) * s; y1 = y0 + Math.sign(dy || 1) * s;
+        }
+      }
+      if (kind === 'rect') return [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]];
+      if (kind === 'ellipse') {
+        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2, pts = [];
+        for (let i = 0; i <= 72; i++) { const t = i / 72 * Math.PI * 2; pts.push(cx + rx * Math.cos(t), cy + ry * Math.sin(t)); }
+        return [pts];
+      }
+      if (kind === 'line') return [[x0, y0, x1, y1]];
+      // Pfeil: Spitze am Ende, Schenkel ~ 4× Strichstärke
+      const angle = Math.atan2(y1 - y0, x1 - x0), head = Math.max(8, inkThickness * 4), spread = Math.PI / 7;
+      return [[x0, y0, x1, y1],
+        [x1, y1, x1 - head * Math.cos(angle - spread), y1 - head * Math.sin(angle - spread)],
+        [x1, y1, x1 - head * Math.cos(angle + spread), y1 - head * Math.sin(angle + spread)]];
+    };
+    const preview = (layer, lines, g) => {
+      let svg = layer.querySelector('svg.shape-preview');
+      if (!svg) {
+        svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('shape-preview');
+        layer.append(svg);
+      }
+      const vp = g.viewport;
+      svg.setAttribute('viewBox', `0 0 ${vp.width} ${vp.height}`);
+      svg.innerHTML = lines.map((l) => {
+        const pts = [];
+        for (let i = 0; i < l.length; i += 2) pts.push(vp.convertToViewportPoint(l[i], l[i + 1]).join(','));
+        return `<polyline points="${pts.join(' ')}"/>`;
+      }).join('');
+      svg.style.setProperty('--stroke', inkColor);
+      svg.style.setProperty('--width', inkThickness * vp.scale);
+      svg.style.opacity = inkOpacity;
+    };
+    const down = (e) => {
+      if (e.button !== 0) return;
+      const pageDiv = e.target.closest?.('#viewer .page');
+      // Auf eine vorhandene Zeichnung geklickt: PDF.js wählt sie aus (verschieben, Größe, Farbe)
+      if (!pageDiv || e.target.closest('.inkEditor, .editToolbar')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const n = +pageDiv.dataset.pageNumber, g = app.pageGeometry(n);
+      drag = { n, g, start: g.eventToPdf(e), layer: app.glassLayer(n), id: e.pointerId };
+      pageDiv.setPointerCapture?.(e.pointerId);
+    };
+    const move = (e) => {
+      if (!drag) return;
+      e.stopPropagation();
+      drag.lines = geometry(drag.start, drag.g.eventToPdf(e), e.shiftKey);
+      preview(drag.layer, drag.lines, drag.g);
+    };
+    const up = async (e) => {
+      if (!drag) return;
+      e.stopPropagation();
+      const { n, lines, layer } = drag;
+      drag = null;
+      layer.querySelector('svg.shape-preview')?.remove();
+      // Nur geklickt, nicht gezogen: nichts anlegen
+      if (!lines) return;
+      const xs = lines.flat().filter((_, i) => i % 2 === 0), ys = lines.flat().filter((_, i) => i % 2 === 1);
+      if (Math.max(...xs) - Math.min(...xs) < 3 && Math.max(...ys) - Math.min(...ys) < 3) return;
+      await addInk(n, lines);
+    };
+    const opts = { capture: true };
+    return {
+      enter() {
+        app.container.addEventListener('pointerdown', down, opts);
+        app.container.addEventListener('pointermove', move, opts);
+        app.container.addEventListener('pointerup', up, opts);
+        document.body.classList.add('shaping');
+      },
+      leave() {
+        app.container.removeEventListener('pointerdown', down, opts);
+        app.container.removeEventListener('pointermove', move, opts);
+        app.container.removeEventListener('pointerup', up, opts);
+        document.body.classList.remove('shaping');
+      },
     };
   }
 
-  // Bild: erst die Datei, dann landet es mittig auf der sichtbaren Seite – verschieben und skalieren wie in Acrobat
+  // ---------- Unterstreichen, Durchstreichen: Text auswählen, beim Loslassen wird die Linie gesetzt ----------
+  let lineColor = LINE_COLORS[0];
+  function markLines(kind) {
+    const up = () => setTimeout(async () => {
+      const selection = getSelection();
+      if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+      const range = selection.getRangeAt(0);
+      if (!range.commonAncestorContainer.parentElement?.closest('#viewer')) return;
+      // Ein Rechteck pro Zeile (die Textebene liefert oft mehrere pro Wort)
+      const lines = [];
+      for (const r of range.getClientRects()) {
+        if (r.width < 1 || r.height < 1) continue;
+        const same = lines.find((l) => Math.abs(l.top - r.top) < r.height * .5 && Math.abs(l.bottom - r.bottom) < r.height * .5);
+        if (same) { same.left = Math.min(same.left, r.left); same.right = Math.max(same.right, r.right); }
+        else lines.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      }
+      const byPage = new Map();
+      for (const l of lines) {
+        const at = document.elementsFromPoint((l.left + l.right) / 2, (l.top + l.bottom) / 2).find((el) => el.matches?.('#viewer .page'));
+        if (!at) continue;
+        const n = +at.dataset.pageNumber, g = app.pageGeometry(n);
+        const y = kind === 'underline' ? l.bottom - (l.bottom - l.top) * .06 : l.top + (l.bottom - l.top) * .56;
+        const [x0, py] = g.eventToPdf({ clientX: l.left, clientY: y });
+        const [x1] = g.eventToPdf({ clientX: l.right, clientY: y });
+        const [, top] = g.eventToPdf({ clientX: l.left, clientY: l.top }), [, bottom] = g.eventToPdf({ clientX: l.left, clientY: l.bottom });
+        const height = Math.abs(top - bottom);
+        if (!byPage.has(n)) byPage.set(n, { lines: [], height });
+        byPage.get(n).lines.push([x0, py, x1, py]);
+      }
+      selection.removeAllRanges();
+      for (const [n, { lines: segs, height }] of byPage) {
+        await addInk(n, segs, { color: lineColor, thickness: Math.min(3, Math.max(.8, height * .08)), opacity: 1 });
+      }
+    }, 0);
+    return {
+      enter() { app.container.addEventListener('pointerup', up); document.body.classList.add('marking'); },
+      leave() { app.container.removeEventListener('pointerup', up); document.body.classList.remove('marking'); },
+    };
+  }
+
+  // ---------- Bild und Stempel ----------
   const imageInput = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', hidden: true });
   document.body.append(imageInput);
-  function pickImage() { imageInput.value = ''; imageInput.click(); }
+  $('pick-image').onclick = () => { imageInput.value = ''; imageInput.click(); };
   imageInput.addEventListener('change', async () => {
     const file = imageInput.files[0];
     if (!file) return;
-    await setTool('stamp');
+    await setMode(T.STAMP);
     param(P.CREATE, { bitmapFile: file });
+  });
+  const author = () => $('note-author').value.trim();
+  const today = () => new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  /** Stempel als Bild (dreifache Auflösung, damit er beim Zoomen scharf bleibt); Größe in PDF-Punkten. */
+  function stampImage(text, color, withDate) {
+    const scale = 3, lines = [text.toUpperCase()];
+    if (withDate) lines.push([author(), today()].filter(Boolean).join(' · '));
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `700 ${20 * scale}px "Segoe UI", system-ui, sans-serif`;
+    const w1 = ctx.measureText(lines[0]).width;
+    ctx.font = `500 ${9 * scale}px "Segoe UI", system-ui, sans-serif`;
+    const w2 = lines[1] ? ctx.measureText(lines[1]).width : 0;
+    const width = Math.ceil(Math.max(w1, w2) + 28 * scale), height = Math.ceil((lines[1] ? 50 : 36) * scale);
+    const canvas = Object.assign(document.createElement('canvas'), { width, height });
+    const c = canvas.getContext('2d');
+    c.strokeStyle = c.fillStyle = color;
+    c.lineWidth = 2.2 * scale;
+    c.beginPath();
+    c.roundRect(c.lineWidth, c.lineWidth, width - 2 * c.lineWidth, height - 2 * c.lineWidth, 7 * scale);
+    c.globalAlpha = .08; c.fill(); c.globalAlpha = 1; c.stroke();
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.font = `700 ${20 * scale}px "Segoe UI", system-ui, sans-serif`;
+    c.fillText(lines[0], width / 2, (lines[1] ? 20 : 18.5) * scale);
+    if (lines[1]) {
+      c.font = `500 ${9 * scale}px "Segoe UI", system-ui, sans-serif`;
+      c.fillText(lines[1], width / 2, 38 * scale);
+    }
+    return { canvas, width: width / scale, height: height / scale };
+  }
+  async function placeStamp(text, color, withDate) {
+    const { canvas, width, height } = stampImage(text, color, withDate);
+    const blob = await new Promise((done) => canvas.toBlob(done));
+    const n = viewer.currentPageNumber;
+    const view = viewer.getPageView(n - 1);
+    await setMode(T.STAMP);
+    // Mitte des sichtbaren Teils der Seite
+    const r = view.div.getBoundingClientRect(), box = app.container.getBoundingClientRect();
+    const cx = (Math.max(r.left, box.left) + Math.min(r.right, box.right)) / 2, cy = (Math.max(r.top, box.top) + Math.min(r.bottom, box.bottom)) / 2;
+    const [x, y] = app.pageGeometry(n).eventToPdf({ clientX: cx, clientY: cy });
+    const editor = await addEditor(n, {
+      annotationType: T.STAMP, bitmapUrl: URL.createObjectURL(blob), isSvg: false,
+      rect: [x - width / 2, y - height / 2, x + width / 2, y + height / 2],
+      accessibilityData: { decorative: false, altText: `Stempel: ${text}` },
+    });
+    if (!editor) app.toast('Die Seite ist noch nicht bereit – bitte noch einmal.');
+  }
+  const STAMPS = [
+    ['Genehmigt', '#1e8a4c'], ['Geprüft', '#1f5fd6'], ['Erledigt', '#1e8a4c'],
+    ['Entwurf', '#5e5ce6'], ['Vertraulich', '#d62f2f'], ['Abgelehnt', '#d62f2f'],
+  ];
+  for (const [text, color] of STAMPS) {
+    const b = Object.assign(document.createElement('button'), { className: 'stamp', textContent: text, title: `„${text}“ einsetzen` });
+    b.style.setProperty('--stamp', color);
+    b.onclick = () => placeStamp(text, color, $('stamp-date').checked);
+    $('stamps').append(b);
+  }
+  $('stamp-custom').onclick = () => {
+    const text = $('stamp-text').value.trim();
+    if (!text) { $('stamp-text').focus(); return; }
+    placeStamp(text, inkColor === '#ffffff' ? '#d62f2f' : inkColor === '#000000' ? '#d62f2f' : inkColor, $('stamp-date').checked);
+  };
+  app.placeStamp = placeStamp;
+  // Stempel oder Bild abgewählt: zurück in den Auswahlmodus, sonst öffnete ein Klick auf die Seite den Bildauswahldialog
+  eventBus.on('annotationeditorstateschanged', ({ details }) => {
+    if (tool === 'stamp' && details.hasSelectedEditor === false && viewer.annotationEditorMode === T.STAMP) setMode(T.NONE);
   });
 
   // ---------- Farben und Stärken ----------
@@ -340,15 +592,17 @@ export function initTools(app) {
   }
   const highlightColors = HIGHLIGHT_COLORS.split(',').map((pair) => pair.split('=')[1]);
   swatches('highlight', highlightColors, (c) => param(P.HIGHLIGHT_COLOR, c), highlightColors[0]);
+  swatches('line', LINE_COLORS, (c) => { lineColor = c; }, LINE_COLORS[0]);
   swatches('freetext', PEN_COLORS.slice(0, 5), (c) => param(P.FREETEXT_COLOR, c), PEN_COLORS[0]);
-  swatches('ink', PEN_COLORS, (c) => param(P.INK_COLOR, c), PEN_COLORS[0]);
+  swatches('ink', PEN_COLORS, (c) => { inkColor = c; param(P.INK_COLOR, c); }, PEN_COLORS[0]);
+  swatches('note', NOTE_COLORS, (c) => { app.notes.color = c; }, NOTE_COLORS[0]);
   const sliders = {
     'highlight-thickness': [P.HIGHLIGHT_THICKNESS, (v) => v, (v) => v],
     'freetext-size': [P.FREETEXT_SIZE, (v) => v, (v) => v],
-    'ink-thickness': [P.INK_THICKNESS, (v) => v, (v) => v],
-    'ink-opacity': [P.INK_OPACITY, (v) => v / 100, (v) => `${v} %`],
+    'ink-thickness': [P.INK_THICKNESS, (v) => { inkThickness = v; return v; }, (v) => v],
+    'ink-opacity': [P.INK_OPACITY, (v) => { inkOpacity = v / 100; return v / 100; }, (v) => `${v} %`],
   };
-  for (const input of panel.querySelectorAll('input[type=range]')) {
+  for (const input of panel.querySelectorAll('input[type=range][data-param]')) {
     const [type, value, label] = sliders[input.dataset.param];
     const out = input.parentElement.querySelector('output');
     input.addEventListener('input', () => {
@@ -388,10 +642,11 @@ export function initTools(app) {
   // ---------- Rückgängig / Wiederholen ----------
   // PDF.js meldet den Stand nur, solange ein Werkzeug aktiv ist – rückgängig machen geht aber auch danach noch.
   // Darum: frei, sobald etwas geändert wurde (app.edited), ein Klick ohne Schritt bewirkt einfach nichts.
+  // Seitenänderungen (Drehen, Wasserzeichen, Schwärzen …) haben einen eigenen Verlauf; der jüngere Schritt gewinnt.
   const undo = $('undo'), redo = $('redo');
-  let canUndo = false, canRedo = false;
+  let canUndo = false, canRedo = false, lastEdit = 0, lastChange = 0;
   const show = () => {
-    undo.disabled = !(canUndo || app.edited);
+    undo.disabled = !(canUndo || app.edited || app.canUndoChange);
     redo.disabled = !canRedo;
   };
   eventBus.on('annotationeditorstateschanged', ({ details }) => {
@@ -401,19 +656,32 @@ export function initTools(app) {
     }
     show();
   });
-  undo.onclick = () => { eventBus.dispatch('editingaction', { source: null, name: 'undo' }); canRedo = true; show(); };
+  addEventListener('glass-edited', () => { lastEdit = performance.now(); show(); });
+  addEventListener('glass-history', () => { lastChange = performance.now(); show(); });
+  const undoStep = () => {
+    if (app.canUndoChange && (lastChange > lastEdit || !(canUndo || app.edited))) return app.undoChange();
+    eventBus.dispatch('editingaction', { source: null, name: 'undo' });
+    canRedo = true;
+    show();
+  };
+  undo.onclick = undoStep;
   redo.onclick = () => { eventBus.dispatch('editingaction', { source: null, name: 'redo' }); show(); };
-  addEventListener('glass-edited', show);
 
   // Tastenkürzel wie in Acrobat – nur wenn gerade nicht getippt wird
+  const KEYS = { e: 'textedit', h: 'markup', n: 'note', t: 'freetext', d: 'draw', b: 'stamp', s: 'signature', f: 'field', r: 'redact' };
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
-    if (e.target.closest?.('input, textarea, [contenteditable], .dialog, #organize')) return;
-    const key = { h: 'highlight', t: 'freetext', d: 'ink', s: 'signature' }[e.key.toLowerCase()];
+    if (e.target.closest?.('input, textarea, select, [contenteditable], .dialog, #organize')) return;
+    const key = KEYS[e.key.toLowerCase()];
     if (key) { e.preventDefault(); setTool(key); }
     // Esc: erst PDF.js die Auswahl aufheben lassen, danach zurück zum Auswählen
-    else if (e.key === 'Escape' && tool !== 'none' && !document.querySelector('.selectedEditor')) setTool('none');
+    else if (e.key === 'Escape' && tool !== 'none' && !document.querySelector('.selectedEditor, .glass-layer .selected')) setTool('none');
+  });
+  // Strg+Z außerhalb der Werkzeuge: Seitenänderungen zurücknehmen
+  window.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.key.toLowerCase() !== 'z' || e.target.closest?.('input, textarea, [contenteditable], .dialog, #organize')) return;
+    if (viewer.annotationEditorMode === T.NONE) { e.preventDefault(); undoStep(); }
   });
 
-  return { setTool, get tool() { return tool; } };
+  return { setTool, setMode, get tool() { return tool; }, get variant() { return sub[tool]; } };
 }

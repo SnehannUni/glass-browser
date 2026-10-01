@@ -145,17 +145,15 @@ try {
   await waitFor(() => page(`!!document.querySelector('input[name="name"]')`), 'form field');
   const formResult = await page(`(async () => {
     const field=document.querySelector('input[name="name"]'); field.value='After'; field.dispatchEvent(new Event('input',{bubbles:true})); field.dispatchEvent(new Event('change',{bubbles:true}));
-    let capture; const original=URL.createObjectURL; URL.createObjectURL=function(blob){if(blob.type==='application/pdf')capture=blob;return original.call(this,blob)};
-    const click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};
-    document.getElementById('download').click();
-    for(let i=0;i<100&&!capture;i++)await new Promise(r=>setTimeout(r,20));
-    URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;
-    const saved=await pdfjsLib.getDocument({data:new Uint8Array(await capture.arrayBuffer())}).promise;
+    // Gespeichert wird die Fassung aus exportBytes (Strg+S schreibt genau diese Bytes)
+    const bytes=await glassPdf.exportBytes();
+    glassPdf.setDirty(false); // wie nach dem Speichern – sonst fragt Neu laden nach
+    const saved=await pdfjsLib.getDocument({data:bytes}).promise;
     return {visible:field.value,saved:(await (await saved.getPage(1)).getAnnotations()).map(a=>({name:a.fieldName,value:a.fieldValue}))};
   })()`);
   assert.equal(formResult.visible, 'After');
-  assert.equal(formResult.saved[0].value, 'After', 'download preserves edited form value');
-  console.log('PASS: downloaded PDF preserves edited form values.');
+  assert.equal(formResult.saved[0].value, 'After', 'saved PDF preserves edited form value');
+  console.log('PASS: the saved PDF preserves edited form values.');
   // Neu laden: wieder der Viewer (die Bytes gibt es nur einmal – die Antwort wird erneut abgefangen)
   await page(`location.reload()`);
   await delay(300);

@@ -4,8 +4,6 @@
 // im Viewer neu. Nur das Drehen einzelner Seiten kann PDF.js nicht speichern – das übernimmt pdf-lib.
 const $ = (id) => document.getElementById(id);
 const THUMB = 150;
-/** So viele Schritte lassen sich zurücknehmen (jeder hält das ganze PDF im Speicher). */
-const UNDO_STEPS = 12;
 
 export function initOrganize(app) {
   const root = $('organize'), grid = $('org-grid'), count = $('org-count');
@@ -14,7 +12,6 @@ export function initOrganize(app) {
     extract: $('org-extract'), insert: $('org-insert'), undo: $('org-undo'),
   };
   let selected = new Set(), anchor = null, busy = false;
-  const undo = [];
   let observer = null, rendered = new WeakSet(), drawToken = 0;
 
   // ---------- Raster ----------
@@ -76,7 +73,7 @@ export function initOrganize(app) {
     // Mindestens eine Seite muss bleiben
     buttons.del.disabled = !n || n >= total || busy;
     buttons.insert.disabled = busy;
-    buttons.undo.disabled = !undo.length || busy;
+    buttons.undo.disabled = !app.canUndoChange || busy;
     app.placeWells();
   }
 
@@ -176,39 +173,34 @@ export function initOrganize(app) {
   });
 
   // ---------- Änderungen ----------
-  /** Führt eine Änderung aus: `make` liefert die Bytes des neuen PDFs, `select` die danach ausgewählten Seiten. */
+  // Jede Änderung läuft über app.applyChange: Grundlage ist die Arbeitsfassung (mit Notizen und allen Anmerkungen),
+  // Rückgängig teilt sich der Viewer mit Wasserzeichen, Schwärzen usw.
+  /** `make(bytes, lib)` liefert das neue PDF, `select` die danach ausgewählten Seiten. */
   async function change(label, make, select) {
     if (busy) return;
     busy = true;
     root.classList.add('busy');
     mark();
     try {
-      const before = await app.currentBytes();
-      const bytes = await make();
-      if (!bytes) return;
-      await app.replaceDocument(bytes);
-      undo.push(before);
-      if (undo.length > UNDO_STEPS) undo.shift();
-      app.setDirty(true);
-      selected = new Set(select || []);
-      build();
-      app.toast(label);
-    } catch (err) {
-      console.error(err);
-      app.toast('Das hat nicht geklappt – das PDF ist unverändert.');
+      if (await app.applyChange(label, make, { toastUndo: false })) {
+        selected = new Set(select || []);
+        build();
+      }
     } finally {
       busy = false;
       root.classList.remove('busy');
       mark();
     }
   }
+  /** extractPages auf der Arbeitsfassung (damit Notizen mit ihrer Seite wandern). */
+  const extractFrom = (bytes, infos) => app.withDocument(bytes, (doc) => doc.extractPages(infos));
 
   const all = () => [...Array(app.doc.numPages).keys()];
-  // Ein Eintrag für das offene Dokument; pageIndices legt fest, wo jede Seite im Ergebnis landet
-  const reorder = (order) => {
+  // Ein Eintrag für das ganze Dokument; pageIndices legt fest, wo jede Seite im Ergebnis landet
+  const reorder = (bytes, order) => {
     const position = new Array(order.length);
     order.forEach((old, at) => { position[old] = at; });
-    return app.doc.extractPages([{ document: null, includePages: all(), pageIndices: position }]);
+    return extractFrom(bytes, [{ document: null, includePages: all(), pageIndices: position }]);
   };
 
   function move(pages, before) {
@@ -217,7 +209,7 @@ export function initOrganize(app) {
     const order = [...rest.slice(0, at), ...pages, ...rest.slice(at)];
     if (order.every((old, i) => old === i)) return;
     const n = pages.length;
-    return change(n === 1 ? 'Seite verschoben' : `${n} Seiten verschoben`, () => reorder(order), pages.map((_, k) => at + k));
+    return change(n === 1 ? 'Seite verschoben' : `${n} Seiten verschoben`, (bytes) => reorder(bytes, order), pages.map((_, k) => at + k));
   }
 
   function remove() {
@@ -227,16 +219,14 @@ export function initOrganize(app) {
     const n = pages.length;
     const next = Math.min(Math.min(...pages), keep.length - 1);
     return change(n === 1 ? 'Seite gelöscht' : `${n} Seiten gelöscht`,
-      () => app.doc.extractPages([{ document: null, includePages: keep }]), [next]);
+      (bytes) => extractFrom(bytes, [{ document: null, includePages: keep }]), [next]);
   }
 
+  // Drehen kann PDF.js nicht speichern – pdf-lib setzt /Rotate (die Arbeitsfassung ist nie verschlüsselt)
   async function rotate(delta) {
     const pages = [...selected];
     if (!pages.length) return;
-    return change(delta > 0 ? 'Nach rechts gedreht' : 'Nach links gedreht', async () => {
-      const { PDFDocument, degrees } = await import(app.BASE + 'pdf-lib/pdf-lib.esm.min.js');
-      // Verschlüsselte PDFs kann pdf-lib nicht lesen: dann erst von PDF.js entschlüsselt neu schreiben lassen
-      const bytes = (await app.isEncrypted()) ? await app.doc.extractPages([{ document: null }]) : await app.currentBytes();
+    return change(delta > 0 ? 'Nach rechts gedreht' : 'Nach links gedreht', async (bytes, { PDFDocument, degrees }) => {
       const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
       for (const i of pages) {
         const page = pdf.getPage(i);
@@ -252,18 +242,15 @@ export function initOrganize(app) {
     // Seitenzahlen der neuen Seiten für die Auswahl danach
     let added = 0;
     for (const data of datas) {
-      const task = app.pdfjsLib.getDocument({ data: data.slice() });
       try {
-        added += (await task.promise).numPages;
-        task.destroy();
+        added += await app.withDocument(data, (d) => d.numPages);
       } catch {
-        task.destroy();
         app.toast('Diese Datei ist kein gültiges PDF.');
         return;
       }
     }
     const label = files.length === 1 ? `„${files[0].name}“ eingefügt` : `${files.length} PDFs eingefügt`;
-    return change(label, () => app.doc.extractPages([
+    return change(label, (bytes) => extractFrom(bytes, [
       { document: null },
       // Mehrere Dateien landen in ihrer Reihenfolge hintereinander an derselben Stelle
       ...datas.map((data) => ({ document: data, insertAfter })),
@@ -276,7 +263,7 @@ export function initOrganize(app) {
     busy = true;
     mark();
     try {
-      const bytes = await app.doc.extractPages([{ document: null, includePages: pages }]);
+      const bytes = await extractFrom(await app.workingBytes(), [{ document: null, includePages: pages }]);
       const stem = app.name.replace(/\.pdf$/i, '');
       const ranges = [];
       for (const i of pages) {
@@ -284,8 +271,8 @@ export function initOrganize(app) {
         if (last && last[1] === i - 1) last[1] = i; else ranges.push([i, i]);
       }
       const label = ranges.map(([a, b]) => (a === b ? `${a + 1}` : `${a + 1}–${b + 1}`)).join(', ');
-      app.saveBytes(bytes, `${stem} (Seite${pages.length > 1 ? 'n' : ''} ${label}).pdf`);
-      app.toast(pages.length === 1 ? 'Seite als eigenes PDF gespeichert' : `${pages.length} Seiten als eigenes PDF gespeichert`);
+      const result = await app.writeFile(bytes, `${stem} (Seite${pages.length > 1 ? 'n' : ''} ${label}).pdf`, true);
+      if (result.ok) app.toast(pages.length === 1 ? 'Seite als eigenes PDF gespeichert' : `${pages.length} Seiten als eigenes PDF gespeichert`);
     } catch (err) {
       console.error(err);
       app.toast('Das Extrahieren hat nicht geklappt.');
@@ -296,15 +283,14 @@ export function initOrganize(app) {
   }
 
   async function undoLast() {
-    if (busy || !undo.length) return;
+    if (busy || !app.canUndoChange) return;
     busy = true;
     mark();
     try {
-      await app.replaceDocument(undo.pop());
-      app.setDirty(true);
-      selected.clear();
-      build();
-      app.toast('Rückgängig gemacht');
+      if (await app.undoChange()) {
+        selected.clear();
+        build();
+      }
     } finally {
       busy = false;
       mark();
