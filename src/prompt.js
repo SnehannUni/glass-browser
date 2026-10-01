@@ -1,5 +1,5 @@
 // Tippt einen Prompt in das Chat-Eingabefeld der Seite und schickt ihn ab – für Anbieter, die keinen
-// Prompt über die Adresse annehmen (Gemini, Kimi, Z.ai; siehe Search::Typed in main.rs).
+// Prompt über die Adresse annehmen (Gemini, Kimi, Z.ai, Grok; siehe Search::Typed in main.rs).
 // Wird nach dem Laden der Seite mit dem Prompt aufgerufen: (…)("Text").
 async (text) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

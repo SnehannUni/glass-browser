@@ -263,12 +263,44 @@ try {
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  // Pencil in the wheel: the providers not in it unroll above the upper-left circle; a click swaps that circle,
+  // the arrow keys turn the next one under the column. Google and the pencil are never swapped.
+  const down = (sel) => `document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`;
+  const front = `document.querySelector('#wheel .slot.on').title`, target = `document.querySelector('#wheel .slot.target').title`;
+  await evaluate(down('#btn-engine'));
+  await evaluate(down('#wheel .slot.edit'));
+  assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('editing')`), true, 'pencil starts editing');
+  assert.equal(await evaluate(front), 'Google', 'editing keeps the selection');
+  assert.equal(await evaluate(target), 'ChatGPT', 'the circle after the selected one gets swapped');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('#wheel .pick')].map(p=>p.title)`), ['Z.ai','Grok','YouTube','Amazon']);
+  await evaluate(down('#wheel .pick[title="YouTube"]'));
+  assert.equal(await evaluate(target), 'YouTube', 'pick replaces the upper-left circle');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('#wheel .pick')].map(p=>p.title)`), ['Z.ai','Grok','ChatGPT','Amazon']);
+  assert.deepEqual(JSON.parse(await evaluate(`localStorage.getItem('glass.wheel')`)), ['youtube','claude','gemini','kimi']);
+  assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'editing the wheel keeps the field focused');
+  await key('ArrowRight', 'ArrowRight'); assert.equal(await evaluate(target), 'Kimi', 'right arrow turns clockwise, never the pencil');
+  await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'YouTube');
+  await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'Claude', 'left arrow turns back');
+  await evaluate(down('#wheel .turn.next')); assert.equal(await evaluate(target), 'YouTube', 'curved arrow on the right turns clockwise');
+  await delay(900);
+  const pickGap = await evaluate(`(() => {
+    const c = (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, r: r.width / 2 }; };
+    const slots = [...document.querySelectorAll('#wheel .slot')].map(c), picks = [...document.querySelectorAll('#wheel .pick')].map(c);
+    return Math.min(...picks.flatMap((p) => slots.map((s) => Math.hypot(p.x - s.x, p.y - s.y) - p.r - s.r)));
+  })()`);
+  assert.ok(pickGap > 1, `picks clear the wheel (${pickGap.toFixed(1)} px)`);
+  await key('Escape', 'Escape');
+  assert.equal(await evaluate(`document.querySelectorAll('#wheel .pick').length`), 0, 'Escape ends editing first');
+  assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`), true);
+  await evaluate(down('#wheel .slot[title="Google"]'));
+  await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  console.log(`PASS: pencil swaps wheel providers (picks clear the wheel by ${pickGap.toFixed(1)} px).`);
   // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   await delay(800);
   const pulseGeometry = await evaluate(`(() => {
     const wheel = document.getElementById('wheel');
-    const slots = [...wheel.querySelectorAll('.slot')];
+    const slots = [...wheel.querySelectorAll('.slot:not(.edit)')];
     const selected = slots.findIndex(s => s.classList.contains('on'));
     const incoming = slots[(selected + slots.length - 1) % slots.length];
     incoming.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true }));
