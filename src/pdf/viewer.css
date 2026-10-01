@@ -33,8 +33,12 @@ html, body {
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
 input { font: inherit; line-height: normal; color: inherit; background: none; border: 0; outline: none; min-width: 0; }
 input::selection { background: rgba(255, 255, 255, .24); color: var(--label); }
-svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75;
-      stroke-linecap: round; stroke-linejoin: round; flex: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .3)); }
+/* Symbole der Oberfläche – nicht die SVGs, mit denen PDF.js Hervorhebungen, Zeichnungen und Unterschriften malt:
+   CSS schlägt deren fill-Attribut, eine Hervorhebung wäre sonst unsichtbar. :where hält die Spezifität bei 0,0,1. */
+svg:where(:not(:is(.canvasWrapper, .annotationEditorLayer, .annotationLayer) svg)) {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round; flex: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .3));
+}
 /* Kein Schriftschatten im Dokument: die unsichtbare Textebene von PDF.js würde ihn sonst über jeden Buchstaben legen */
 #container { text-shadow: none; }
 .textLayer ::selection { background: rgba(10, 132, 255, .3); }

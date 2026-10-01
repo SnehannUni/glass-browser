@@ -165,7 +165,12 @@ try {
       if (attempt === 3) throw err;
     }
   }
-  console.log('PASS: selecting text with the highlighter highlights it.');
+  // Und sie ist zu sehen: die Farbe kommt an (eine CSS-Regel für Symbole hatte fill auf none gesetzt)
+  const look = await page(`(() => { const s = document.querySelector('.page[data-page-number="2"] .canvasWrapper svg.highlight'); return s && { fill: getComputedStyle(s).fill, attr: s.getAttribute('fill') }; })()`);
+  assert.ok(look && look.fill !== 'none' && look.fill.startsWith('rgb'), `highlight is painted: ${JSON.stringify(look)}`);
+  const ink = await page(`(() => { const s = document.querySelector('.canvasWrapper svg.draw'); return s && getComputedStyle(s).stroke; })()`);
+  assert.equal(ink, 'rgb(0, 0, 0)', 'pen keeps its chosen colour (black)');
+  console.log('PASS: selecting text with the highlighter highlights it in colour.');
 
   // ---------- Unterschreiben ----------
   await pressButton('#tools [data-tool="signature"]');
