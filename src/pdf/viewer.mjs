@@ -9,10 +9,18 @@ globalThis.pdfjsLib = pdfjsLib; // pdf_viewer.mjs erwartet die Bibliothek global
 const { EventBus, PDFLinkService, PDFFindController, PDFViewer, LinkTarget, FindState, GenericL10n } = await import(BASE + 'pdf_viewer.mjs');
 const { initTools, Signatures, HIGHLIGHT_COLORS } = await import(BASE + 'editor.mjs');
 const { initOrganize } = await import(BASE + 'organize.mjs');
+const { initNotes } = await import(BASE + 'notes.mjs');
+const { initRedact } = await import(BASE + 'redact.mjs');
+const { initTextEdit } = await import(BASE + 'textedit.mjs');
+const { initFields } = await import(BASE + 'fields.mjs');
+const { initDesign } = await import(BASE + 'design.mjs');
 // A data-URL module worker supports the viewer's opaque sandbox origin. PDF.js's URL-based
 // origin check uses location.href, which still displays the original PDF URL.
 const workerUrl = 'data:text/javascript,' + encodeURIComponent(`import "${BASE}pdf.worker.min.mjs";`);
 pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(workerUrl, { type: 'module' });
+// Ein Worker für alle Dokumente, ausdrücklich übergeben: loadingTask.destroy() eines kurzlebigen Dokuments
+// (Seiten organisieren, Notizen übernehmen) reißt ihn dann nicht mit
+const pdfWorker = pdfjsLib.PDFWorker.create({ port: pdfjsLib.GlobalWorkerOptions.workerPort });
 
 // ---------- Glas: Linse, Glanzkante, Wallpaper, Schriftfarbe (wie ui.html) ----------
 window.GlassLens.watch();
@@ -145,8 +153,10 @@ container.addEventListener('scroll', scheduleInk, { passive: true });
 const eventBus = new EventBus();
 const linkService = new PDFLinkService({ eventBus, externalLinkTarget: LinkTarget.TOP });
 const findController = new PDFFindController({ eventBus, linkService });
+// Was nur der Viewer dieses Tabs darf (Unterschriften, Speichern, Verschlüsseln): geheime Adresse aus pdf.rs
+const API = document.body.dataset.api;
 // Bearbeiten (editor.mjs): die Editoren von PDF.js, deutsch beschriftet, mit eigenem Dialog für Unterschriften
-const signatures = new Signatures(pdfjsLib, document.body.dataset.sigs, () => app.onSignaturesChanged?.());
+const signatures = new Signatures(pdfjsLib, API + 'signatures', () => app.onSignaturesChanged?.());
 const viewer = new PDFViewer({
   container, viewer: $('viewer'), eventBus, linkService, findController,
   annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS,
@@ -165,15 +175,18 @@ function showStatus(text, kind = '') {
   status.className = 'glass ' + kind;
 }
 
+// Passwort, mit dem das PDF geöffnet wurde – es schützt auch die gespeicherte Fassung wieder (siehe exportBytes)
+let openedWith = null;
 // PDF.js übernimmt die Bytes (sie wandern in den Worker) – wer sie noch braucht, gibt eine Kopie.
 const openDocument = (data) => {
   const task = pdfjsLib.getDocument({
-    data,
+    data, worker: pdfWorker,
     cMapUrl: BASE + 'cmaps/', cMapPacked: true,
     standardFontDataUrl: BASE + 'standard_fonts/',
     wasmUrl: BASE + 'wasm/', iccUrl: BASE + 'iccs/',
   });
-  task.onPassword = (answer, reason) => askPassword(answer, reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD);
+  task.onPassword = (answer, reason) => askPassword((password) => { openedWith = password; answer(password); },
+    reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD);
   return task.promise;
 };
 
@@ -209,7 +222,7 @@ function askPassword(answer, wrong) {
   };
 }
 
-// ---------- Änderungen merken, Speichern ----------
+// ---------- Änderungen merken ----------
 let dirty = false, edited = false;
 function setDirty(on) {
   dirty = on;
@@ -221,6 +234,8 @@ addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
 
 /** Setzt ein (neues) Dokument in den Viewer; Seite und Zoom bleiben, wo es geht. */
 let restore = null;
+let encrypted = false;
+const documentListeners = [];
 function useDocument(next) {
   const old = doc;
   if (old && old !== next) restore = { page: viewer.currentPageNumber, scale: viewer.currentScaleValue, top: container.scrollTop };
@@ -228,18 +243,19 @@ function useDocument(next) {
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
   $('page-count').textContent = `/ ${doc.numPages}`;
-  // Formular ausgefüllt, Anmerkung gesetzt …
   // edited: seit dem Laden dieses Dokuments etwas geändert (Rückgängig-Knopf, editor.mjs)
   edited = false;
   doc.annotationStorage.onSetModified = () => { setDirty(true); edited = true; dispatchEvent(new Event('glass-edited')); };
   dispatchEvent(new Event('glass-edited'));
+  encrypted = false;
+  doc.getMetadata().then(({ info }) => { if (next === doc) encrypted = !!info?.EncryptFilterName; }).catch(() => {});
   if (old && old !== next) {
     resetThumbs();
     buildOutline();
     old.loadingTask.destroy();
   }
+  for (const fn of documentListeners) fn(doc);
 }
-useDocument(doc);
 // Titel aus den Dokumentdaten, wenn er aussagekräftiger ist als der Dateiname
 doc.getMetadata().then(({ info }) => {
   const title = info?.Title?.trim();
@@ -312,7 +328,7 @@ container.addEventListener('wheel', (e) => {
   });
 }, { passive: false });
 
-// ---------- Seitenleiste: Vorschaubilder und Inhaltsverzeichnis ----------
+// ---------- Seitenleiste: Vorschaubilder, Inhaltsverzeichnis, Kommentare ----------
 const thumbs = $('thumbs');
 const THUMB_WIDTH = 120;
 let thumbsBuilt = false;
@@ -396,24 +412,25 @@ const buildList = (items) => {
   }
   return list;
 };
+let hasOutline = false;
 async function buildOutline() {
   const source = doc;
   const outline = await source.getOutline().catch(() => null);
   if (source !== doc) return;
-  $('outline').replaceChildren(...(outline?.length ? [buildList(outline)] : []));
-  $('sidebar-tabs').hidden = !outline?.length;
+  hasOutline = !!outline?.length;
+  $('outline').replaceChildren(...(hasOutline ? [buildList(outline)] : []));
+  $('sidebar-tabs').querySelector('[data-view="outline"]').hidden = !hasOutline;
   // Neues Dokument ohne Inhaltsverzeichnis: zurück zu den Seiten
-  if (!outline?.length) document.querySelector('#sidebar-tabs [data-view="thumbs"]').click();
+  if (!hasOutline && !$('outline').hidden) showSidebarView('thumbs');
 }
 buildOutline();
 
-for (const tab of document.querySelectorAll('#sidebar-tabs button')) {
-  tab.onclick = () => {
-    for (const other of document.querySelectorAll('#sidebar-tabs button')) other.classList.toggle('on', other === tab);
-    $('thumbs').hidden = tab.dataset.view !== 'thumbs';
-    $('outline').hidden = tab.dataset.view !== 'outline';
-  };
+function showSidebarView(view) {
+  for (const other of document.querySelectorAll('#sidebar-tabs button')) other.classList.toggle('on', other.dataset.view === view);
+  for (const pane of document.querySelectorAll('.sidebar-view')) pane.hidden = pane.id !== view;
+  if (view === 'comments') app.notes?.refreshList();
 }
+for (const tab of document.querySelectorAll('#sidebar-tabs button')) tab.onclick = () => showSidebarView(tab.dataset.view);
 
 // ---------- Suche ----------
 const find = $('find'), findInput = $('find-input'), findCount = $('find-count');
@@ -456,7 +473,7 @@ eventBus.on('updatefindcontrolstate', ({ state, matchesCount }) => {
   if (state !== FindState.PENDING) showCount(matchesCount);
 });
 
-// ---------- Dunkle Seiten, Drucken, Herunterladen ----------
+// ---------- Dunkle Seiten ----------
 $('theme').onclick = () => {
   const dark = document.body.classList.toggle('dark');
   $('theme').querySelector('use').setAttribute('href', dark ? '#i-sun' : '#i-moon');
@@ -465,57 +482,336 @@ $('theme').onclick = () => {
   scheduleInk();
 };
 
-function saveBytes(bytes, fileName) {
+// ---------- Kurze Rückmeldung (optional mit Knopf, etwa „Rückgängig“) ----------
+let toastTimer = 0;
+function toast(text, action = null) {
+  const box = $('toast');
+  box.replaceChildren(document.createTextNode(text));
+  if (action) {
+    const button = Object.assign(document.createElement('button'), { textContent: action.label });
+    button.onclick = () => { hide(); action.run(); };
+    box.append(button);
+  }
+  box.hidden = false;
+  box.classList.remove('out');
+  clearTimeout(toastTimer);
+  const hide = () => {
+    box.classList.add('out');
+    toastTimer = setTimeout(() => { box.hidden = true; }, 300);
+  };
+  toastTimer = setTimeout(hide, action ? 5000 : 2200);
+  scheduleInk();
+}
+
+// ---------- Bytes: Arbeitsfassung, gespeicherte Fassung ----------
+let pdfLib = null;
+const loadPdfLib = async () => (pdfLib ||= await import(BASE + 'pdf-lib/pdf-lib.esm.min.js'));
+// Ohne Änderungen sind das einfach die Originalbytes (saveDocument warnt dann)
+const currentBytes = () => (doc.annotationStorage.size ? doc.saveDocument() : doc.getData());
+/** Erweiterungen, die beim Speichern in die Bytes schreiben (Notizen) – sie melden mit `active()`, ob nötig. */
+const exportHooks = [];
+/**
+ * Arbeitsfassung: alle Änderungen, unverschlüsselt (pdf-lib kann verschlüsselte PDFs nicht lesen). Grundlage für
+ * Seitenänderungen und das Speichern.
+ */
+async function workingBytes() {
+  let bytes = encrypted ? await doc.extractPages([{ document: null }]) : await currentBytes();
+  for (const hook of exportHooks) if (hook.active()) bytes = await hook.apply(bytes);
+  return bytes;
+}
+/** Schutz beim Speichern: `{ password, original }` – original: das Passwort, mit dem die Datei schon geschützt war. */
+let protection = null;
+async function encryptBytes(bytes, password) {
+  const pw = new TextEncoder().encode(password);
+  const body = new Uint8Array(4 + pw.length + bytes.length);
+  new DataView(body.buffer).setUint32(0, pw.length, true);
+  body.set(pw, 4);
+  body.set(bytes, 4 + pw.length);
+  const res = await fetch(API + 'encrypt', { method: 'POST', body });
+  if (!res.ok) throw new Error('Verschlüsseln fehlgeschlagen');
+  return new Uint8Array(await res.arrayBuffer());
+}
+/** Die Fassung, die gespeichert wird: Arbeitsfassung, bei Bedarf mit Passwort. */
+async function exportBytes() {
+  const hooks = exportHooks.some((h) => h.active());
+  // Schon so geschützt wie gewünscht und nichts umzuschreiben: PDF.js speichert inkrementell (bleibt verschlüsselt)
+  if (encrypted && protection?.original && !hooks) return currentBytes();
+  const bytes = await workingBytes();
+  return protection ? encryptBytes(bytes, protection.password) : bytes;
+}
+
+// ---------- Verlauf der Dokument-Änderungen (Seiten, Wasserzeichen, Schwärzen …) ----------
+const UNDO_STEPS = 12;
+const history = [];
+let changing = false;
+/**
+ * Baut ein neues PDF und setzt es ein: `make(bytes, lib)` bekommt die Arbeitsfassung und pdf-lib und liefert die
+ * neuen Bytes (oder null = nichts zu tun). Rückgängig über `undoChange` oder den Knopf in der Rückmeldung.
+ */
+async function applyChange(label, make, { toastUndo = true } = {}) {
+  if (changing) return false;
+  changing = true;
+  document.body.classList.add('busy');
+  try {
+    const before = await workingBytes();
+    const bytes = await make(before.slice(), await loadPdfLib());
+    if (!bytes) return false;
+    await replaceDocument(bytes);
+    history.push(before);
+    if (history.length > UNDO_STEPS) history.shift();
+    setDirty(true);
+    dispatchEvent(new Event('glass-history'));
+    if (label) toast(label, toastUndo ? { label: 'Rückgängig', run: undoChange } : null);
+    return true;
+  } catch (err) {
+    console.error(err);
+    toast('Das hat nicht geklappt – das PDF ist unverändert.');
+    return false;
+  } finally {
+    changing = false;
+    document.body.classList.remove('busy');
+  }
+}
+async function undoChange() {
+  if (changing || !history.length) return false;
+  changing = true;
+  try {
+    await replaceDocument(history.pop());
+    setDirty(true);
+    dispatchEvent(new Event('glass-history'));
+    toast('Rückgängig gemacht');
+    return true;
+  } finally {
+    changing = false;
+  }
+}
+
+/** Erweiterungen, die beim Öffnen Bytes übernehmen (Notizen): `async (doc) => strippedBytes | null`. */
+const importHooks = [];
+/** Neues PDF (Bytes) statt des offenen; Erweiterungen dürfen vorher übernehmen, was sie selbst zeigen. */
+async function replaceDocument(bytes) {
+  let next = await openDocument(bytes.slice());
+  for (const hook of importHooks) {
+    const stripped = await hook(next);
+    if (stripped) {
+      next.loadingTask.destroy();
+      next = await openDocument(stripped);
+    }
+  }
+  const shown = new Promise((done) => eventBus.on('pagesinit', done, { once: true }));
+  useDocument(next);
+  await shown;
+}
+
+// ---------- Speichern, Speichern unter, Öffnen ----------
+let fileKey = document.body.dataset.file || ''; // Datei auf der Festplatte, in die Strg+S schreibt
+let savedResolve = null;
+window.__glassSaved = (result) => savedResolve?.(result);
+function download(bytes, fileName) {
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   Object.assign(document.createElement('a'), { href: url, download: fileName }).click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
-// Speichern: mit allen Anmerkungen, Unterschriften, Formularwerten und Seitenänderungen
-// Ohne Änderungen sind das einfach die Originalbytes (saveDocument warnt dann)
-const currentBytes = () => (doc.annotationStorage.size ? doc.saveDocument() : doc.getData());
-async function download() {
-  saveBytes(await currentBytes(), name);
-  if (dirty) toast('Gespeichert – mit allen Änderungen');
-  setDirty(false);
+/** Bytes in eine Datei: `as` = Dialog „Speichern unter“ (Vorschlag `fileName`). Fällt notfalls auf einen Download zurück. */
+async function writeFile(bytes, fileName, as) {
+  try {
+    if (!as && fileKey) {
+      const res = await fetch(API + 'save?file=' + encodeURIComponent(fileKey), { method: 'POST', body: bytes });
+      if (res.ok) return { ok: true };
+      throw new Error('save ' + res.status);
+    }
+    const result = new Promise((done) => { savedResolve = done; });
+    const res = await fetch(API + 'save-as?name=' + encodeURIComponent(fileName), { method: 'POST', body: bytes });
+    if (res.status !== 202) throw new Error('save-as ' + res.status);
+    return await result;
+  } catch (err) {
+    console.warn(err);
+    download(bytes, fileName);
+    return { ok: true, downloaded: true };
+  } finally {
+    savedResolve = null;
+  }
 }
-$('download').onclick = download;
+let saving = false;
+async function save(as = false) {
+  if (saving) return;
+  saving = true;
+  try {
+    const bytes = await exportBytes();
+    const result = await writeFile(bytes, name, as || !fileKey);
+    if (!result.ok) {
+      if (!result.cancelled) toast('Speichern hat nicht geklappt' + (result.error ? `: ${result.error}` : '.'));
+      return;
+    }
+    if (result.file) fileKey = result.file;
+    setDirty(false);
+    toast(result.downloaded ? 'Als Download gespeichert' : result.name ? `Gespeichert unter „${result.name}“` : 'Gespeichert');
+  } catch (err) {
+    console.error(err);
+    toast('Speichern hat nicht geklappt.');
+  } finally {
+    saving = false;
+  }
+}
+$('download').onclick = () => save();
+const openFile = () => window.ipc?.postMessage(JSON.stringify({ pdf: 'open' }));
 
-// Kurze Rückmeldung unten über der Leiste
-let toastTimer = 0;
-function toast(text) {
-  const box = $('toast');
-  box.textContent = text;
-  box.hidden = false;
-  box.classList.remove('out');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    box.classList.add('out');
-    toastTimer = setTimeout(() => { box.hidden = true; }, 300);
-  }, 2200);
+// ---------- Mehr: Öffnen, Speichern unter, Seiten gestalten, Schützen ----------
+const more = $('more-menu');
+function toggleMore(open = more.hidden) {
+  more.hidden = !open;
+  $('more').classList.toggle('on', open);
+  if (!open) return;
+  // Über dem Knopf, rechtsbündig mit ihm
+  const r = $('more').getBoundingClientRect();
+  more.style.right = `${Math.max(8, innerWidth - r.right - 8)}px`;
+  more.style.bottom = `${innerHeight - r.top + 14}px`;
+  placeWells();
   scheduleInk();
 }
+$('more').onclick = (e) => { e.stopPropagation(); toggleMore(); };
+document.addEventListener('pointerdown', (e) => { if (!more.hidden && !e.target.closest('#more-menu, #more')) toggleMore(false); });
+for (const item of more.querySelectorAll('[data-action]')) {
+  item.onclick = () => {
+    toggleMore(false);
+    ({
+      open: openFile,
+      'save-as': () => save(true),
+      design: () => app.design.open(),
+      protect: () => openProtect(),
+      print: () => print(),
+    })[item.dataset.action]?.();
+  };
+}
 
-// ---------- Bearbeiten und Seiten organisieren ----------
+// Mit Passwort schützen (wirkt beim Speichern, wie in Acrobat)
+const protectDialog = $('protect-dialog');
+function openProtect() {
+  $('protect-state').textContent = protection
+    ? 'Das PDF ist mit einem Passwort geschützt. Ein neues Passwort ersetzt es.'
+    : 'Wer das PDF öffnen will, braucht dann dieses Passwort.';
+  $('protect-remove').hidden = !protection;
+  $('protect-password').value = $('protect-repeat').value = '';
+  $('protect-error').textContent = '';
+  protectDialog.hidden = false;
+  $('protect-password').focus();
+}
+const closeProtect = () => { protectDialog.hidden = true; container.focus(); };
+$('protect-cancel').onclick = closeProtect;
+$('protect-remove').onclick = () => {
+  protection = null;
+  setDirty(true);
+  closeProtect();
+  toast('Passwortschutz wird beim Speichern entfernt');
+};
+$('protect-form').onsubmit = (e) => {
+  e.preventDefault();
+  const pw = $('protect-password').value, again = $('protect-repeat').value;
+  if (pw.length < 4) { $('protect-error').textContent = 'Mindestens 4 Zeichen.'; return; }
+  if (pw !== again) { $('protect-error').textContent = 'Die Passwörter stimmen nicht überein.'; return; }
+  protection = { password: pw, original: false };
+  setDirty(true);
+  closeProtect();
+  toast('Wird beim Speichern mit Passwort geschützt (AES-256)');
+};
+protectDialog.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') closeProtect(); });
+protectDialog.addEventListener('pointerdown', (e) => { if (e.target === protectDialog) closeProtect(); });
+
+// ---------- Eigene Ebene auf jeder Seite (Notizen, Schwärzen, Formularfelder, Text bearbeiten) ----------
+const layerRenderers = [];
+/** Ebene über der Seite `n` (1-basiert); PDF.js baut Seiten beim Zoomen neu – dann wird sie neu angelegt. */
+function glassLayer(n) {
+  const view = viewer.getPageView(n - 1);
+  if (!view?.div) return null;
+  let layer = view.div.querySelector(':scope > .glass-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'glass-layer';
+    layer.dataset.page = n;
+    view.div.append(layer);
+  }
+  return layer;
+}
+/** Umrechnung PDF-Punkte ↔ Prozent der Seite (bleibt beim Zoomen gültig). */
+function pageGeometry(n) {
+  const view = viewer.getPageView(n - 1);
+  const vp = view.viewport;
+  return {
+    view, viewport: vp,
+    toPercent: (x, y) => { const [vx, vy] = vp.convertToViewportPoint(x, y); return [vx / vp.width * 100, vy / vp.height * 100]; },
+    toPdf: (px, py) => vp.convertToPdfPoint(px / 100 * vp.width, py / 100 * vp.height),
+    /** Position eines Zeigerereignisses (clientX/Y) in PDF-Punkten */
+    eventToPdf: (e) => { const r = view.div.getBoundingClientRect(); return vp.convertToPdfPoint((e.clientX - r.left) / r.width * vp.width, (e.clientY - r.top) / r.height * vp.height); },
+    /** PDF-Rechteck [x1,y1,x2,y2] → CSS in Prozent */
+    rectStyle: (rect) => {
+      const [a, b] = vp.convertToViewportPoint(rect[0], rect[1]), [c, d] = vp.convertToViewportPoint(rect[2], rect[3]);
+      const left = Math.min(a, c), top = Math.min(b, d);
+      return { left: `${left / vp.width * 100}%`, top: `${top / vp.height * 100}%`, width: `${Math.abs(c - a) / vp.width * 100}%`, height: `${Math.abs(d - b) / vp.height * 100}%` };
+    },
+  };
+}
+const refreshLayers = (n) => {
+  const pages = n ? [n] : Array.from({ length: doc.numPages }, (_, i) => i + 1);
+  for (const page of pages) {
+    const layer = glassLayer(page);
+    if (layer) for (const render of layerRenderers) render(page, layer);
+  }
+};
+eventBus.on('pagerendered', ({ pageNumber }) => refreshLayers(pageNumber));
+
+// ---------- Erweiterungen ----------
 const app = {
-  BASE, pdfjsLib, viewer, eventBus, container, name, signatures,
+  BASE, API, pdfjsLib, viewer, eventBus, container, name, signatures,
   get doc() { return doc; },
   get edited() { return edited; },
-  placeWells, scheduleInk, toast, saveBytes, setDirty, currentBytes,
-  async isEncrypted() { return !!(await doc.getMetadata().catch(() => null))?.info?.EncryptFilterName; },
-  /** Neues PDF (Bytes) statt des offenen – nach Drehen, Löschen, Umsortieren, Einfügen. */
-  async replaceDocument(bytes) {
-    const next = await openDocument(bytes.slice());
-    const shown = new Promise((done) => eventBus.on('pagesinit', done, { once: true }));
-    useDocument(next);
-    await shown;
+  get dirty() { return dirty; },
+  get canUndoChange() { return history.length > 0; },
+  get protection() { return protection; },
+  get fileKey() { return fileKey; },
+  placeWells, scheduleInk, toast, setDirty, currentBytes, workingBytes, exportBytes, save, writeFile, download,
+  loadPdfLib, applyChange, undoChange, replaceDocument, glassLayer, pageGeometry, refreshLayers, showSidebarView,
+  exportHooks, importHooks, layerRenderers,
+  onDocument: (fn) => documentListeners.push(fn),
+  /** Bytes kurz als eigenes PDF.js-Dokument öffnen (etwa für extractPages auf der Arbeitsfassung). */
+  async withDocument(bytes, fn) {
+    const task = pdfjsLib.getDocument({ data: bytes.slice(), worker: pdfWorker, cMapUrl: BASE + 'cmaps/', cMapPacked: true, standardFontDataUrl: BASE + 'standard_fonts/', wasmUrl: BASE + 'wasm/', iccUrl: BASE + 'iccs/' });
+    try { return await fn(await task.promise); } finally { task.destroy(); }
   },
+  async isEncrypted() { return encrypted; },
 };
 // Für Tests (tests/pdf-editor.mjs) und DevTools; im Viewer-Dokument läuft kein Skript der Website
 globalThis.glassPdf = app;
 app.tools = initTools(app);
 app.organize = initOrganize(app);
+app.notes = initNotes(app);
+app.redact = initRedact(app);
+app.textEdit = initTextEdit(app);
+app.fields = initFields(app);
+app.design = initDesign(app);
 
-// Drucken: jede Seite einmal als Bild mit 150 dpi, dann der Druckdialog von Chromium
+// Erstes Dokument: Notizen übernehmen, dann anzeigen (so wie nach jeder Änderung)
+{
+  let first = doc;
+  for (const hook of importHooks) {
+    const stripped = await hook(first);
+    if (stripped) {
+      first.loadingTask.destroy();
+      first = await openDocument(stripped);
+    }
+  }
+  const original = doc;
+  doc = null;
+  useDocument(first);
+  if (first !== original) {
+    // Vorschaubilder und Inhaltsverzeichnis stammen noch vom übernommenen Original
+    resetThumbs();
+    buildOutline();
+  }
+  // Mit Passwort geöffnet: gespeichert wird wieder geschützt
+  if (openedWith !== null) protection = { password: openedWith, original: true };
+}
+
+// Drucken: jede Seite einmal als Bild mit 150 dpi (mit allen Anmerkungen), dann der Druckdialog von Chromium
 let printing = false;
 async function print() {
   if (printing) return;
@@ -531,7 +827,10 @@ async function print() {
       const canvas = document.createElement('canvas');
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport, intent: 'print' }).promise;
+      await page.render({
+        canvasContext: canvas.getContext('2d'), viewport, intent: 'print',
+        annotationMode: pdfjsLib.AnnotationMode.ENABLE_STORAGE,
+      }).promise;
       const blob = await new Promise((done) => canvas.toBlob(done));
       const img = new Image();
       img.src = URL.createObjectURL(blob);
@@ -550,14 +849,15 @@ $('print').onclick = print;
 
 // ---------- Tastatur ----------
 window.addEventListener('keydown', (e) => {
-  // Auch Textfelder der Werkzeuge (contenteditable) und der Unterschrifts-Dialog
-  const typing = !!e.target.closest?.('input, textarea, [contenteditable=true], .dialog');
-  if (e.ctrlKey && !e.altKey && !document.querySelector('#sign-dialog:not([hidden])')) {
+  // Auch Textfelder der Werkzeuge (contenteditable) und Dialoge
+  const typing = !!e.target.closest?.('input, textarea, select, [contenteditable=true], .dialog');
+  if (e.ctrlKey && !e.altKey && !document.querySelector('.dialog:not([hidden])')) {
     const key = e.key.toLowerCase();
     const action =
       key === 'f' ? openFind :
       key === 'p' ? print :
-      key === 's' ? download :
+      key === 's' ? () => save(e.shiftKey) :
+      key === 'o' ? openFile :
       key === '+' || key === '=' ? () => viewer.increaseScale() :
       key === '-' ? () => viewer.decreaseScale() :
       key === '0' ? () => { viewer.currentScaleValue = '1'; } :
@@ -570,7 +870,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !find.hidden) closeFind();
   // Links/Rechts blättern, solange die Seite nicht seitlich scrollen kann – und keine Anmerkung gewählt ist
   // (die verschiebt PDF.js mit den Pfeilen)
-  if (document.querySelector('.selectedEditor')) return;
+  if (document.querySelector('.selectedEditor, .glass-layer .selected')) return;
   const wide = container.scrollWidth > container.clientWidth;
   if (!wide && e.key === 'ArrowRight') { e.preventDefault(); viewer.nextPage(); }
   if (!wide && e.key === 'ArrowLeft') { e.preventDefault(); viewer.previousPage(); }

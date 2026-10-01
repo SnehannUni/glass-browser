@@ -424,3 +424,139 @@ body.dark .tile canvas { filter: invert(.9) hue-rotate(180deg); }
   --glass-fill-top: .14; --glass-fill-bottom: .1; backdrop-filter: blur(18px) saturate(1.6) brightness(.7);
 }
 #toast.out { opacity: 0; translate: -50% 6px; }
+
+/* ======================================================================================================
+   Notizen, Formen, Markieren, Stempel, Formularfelder, Schwärzen, Text bearbeiten, Mehr-Menü, Dialoge
+   ====================================================================================================== */
+
+/* Varianten eines Werkzeugs (Markieren, Zeichnen, Formularfeld) */
+#tool-options .segmented { margin: 0; }
+.segmented.variants button { display: grid; place-items: center; height: 26px; font-size: 12px; }
+.segmented.variants svg { width: 15px; height: 15px; filter: none; }
+#tool-options .field, .dialog .field { display: flex; flex-direction: column; gap: 6px; color: var(--label-2); font-size: 12px; }
+#tool-options .field input, #tool-options .field textarea {
+  height: 30px; padding: 0 10px; border-radius: 9px; background: rgba(255, 255, 255, .1); color: var(--label); font: inherit; border: 0; outline: none;
+}
+#tool-options .field textarea { height: auto; padding: 6px 10px; resize: vertical; }
+#tool-options .check { display: flex; align-items: center; gap: 8px; color: var(--label-2); font-size: 12px; }
+#tool-options .check input { accent-color: var(--blue); margin: 0; }
+#tool-options .count { margin: 0; color: var(--label-2); font-size: 12px; }
+.wide.danger { background: #d62f2f; color: #fff; text-shadow: none; }
+.wide.danger:hover { background: #e23b3b; }
+.wide:disabled { opacity: .45; }
+
+/* Stempel-Vorlagen sehen aus wie das, was sie einsetzen */
+#stamps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.stamp {
+  height: 30px; border-radius: 7px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--stamp); background: color-mix(in srgb, var(--stamp) 14%, rgba(255, 255, 255, .85));
+  box-shadow: inset 0 0 0 1.5px var(--stamp); text-shadow: none; transition: transform .3s var(--spring);
+}
+.stamp:hover { transform: scale(1.04); }
+
+/* ---------- Eigene Ebene auf jeder Seite ---------- */
+.glass-layer { position: absolute; inset: 0; pointer-events: none; z-index: 6; text-shadow: none; }
+.glass-layer > * { pointer-events: auto; }
+body:is(.shaping, .noting, .redacting, .placing-field) #viewer .page { cursor: crosshair; }
+body:is(.shaping, .noting, .placing-field) #viewer .textLayer { pointer-events: none; }
+body.marking #viewer .textLayer, body.redacting #viewer .textLayer span { cursor: text; }
+svg.shape-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; filter: none; overflow: visible; }
+svg.shape-preview polyline { fill: none; stroke: var(--stroke); stroke-width: var(--width); stroke-linecap: round; stroke-linejoin: round; }
+
+/* Notizen: Symbol und aufgeklappte Karte */
+.note-pin {
+  position: absolute; width: 26px; height: 26px; border-radius: 8px 8px 8px 2px; display: grid; place-items: center;
+  background: var(--note); color: rgba(0, 0, 0, .72); cursor: grab;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35), inset 0 0 0 .5px rgba(0, 0, 0, .25);
+  transition: transform .3s var(--spring), box-shadow .2s;
+}
+.note-pin svg { width: 15px; height: 15px; filter: none; stroke-width: 1.6; }
+.note-pin:hover { transform: scale(1.1); }
+.note-pin.selected { box-shadow: 0 0 0 2px var(--blue), 0 4px 12px rgba(0, 0, 0, .4); }
+.note-pin:active { cursor: grabbing; }
+.note-card {
+  position: absolute; width: 240px; padding: 10px 12px 10px; border-radius: 14px; display: flex; flex-direction: column; gap: 6px;
+  background: color-mix(in srgb, var(--note) 22%, rgba(32, 33, 38, .86)); backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .2), inset 3px 0 0 var(--note), 0 12px 30px -8px rgba(0, 0, 0, .55);
+  color: var(--label); font-size: 12px; animation: pop-in .35s var(--spring) both; z-index: 2;
+}
+.note-card header { display: flex; align-items: baseline; gap: 8px; }
+.note-card header b { font-weight: 600; }
+.note-card header span { color: var(--label-3); font-size: 11px; flex: 1; }
+.note-card .close { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--label-2); }
+.note-card .close:hover { background: var(--control-hover); }
+.note-card .close svg { width: 12px; height: 12px; }
+.note-card textarea {
+  width: 100%; min-height: 70px; resize: vertical; border: 0; outline: none; border-radius: 8px; padding: 6px 8px;
+  background: rgba(0, 0, 0, .18); color: var(--label); font: 13px/1.35 var(--font);
+}
+.note-card footer { display: flex; justify-content: flex-end; }
+.note-card .delete { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px; color: var(--label-2); font-size: 11px; }
+.note-card .delete svg { width: 12px; height: 12px; }
+.note-card .delete:hover { background: rgba(255, 69, 58, .2); color: #ff6961; }
+
+/* Kommentarliste in der Seitenleiste */
+#comments { padding: 6px 10px 20px; display: flex; flex-direction: column; gap: 4px; }
+#comments h4 { margin: 10px 4px 2px; color: var(--label-3); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+#comments .empty { color: var(--label-3); font-size: 12px; line-height: 1.4; padding: 10px 6px; margin: 0; }
+.comment { display: flex; gap: 8px; text-align: left; padding: 7px 8px; border-radius: 10px; transition: background-color .15s; }
+.comment:hover { background: var(--control-hover); }
+.comment .dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--note); flex: none; }
+.comment div { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.comment b { font-size: 12px; font-weight: 600; }
+.comment small { color: var(--label-3); font-size: 10.5px; }
+.comment p { margin: 2px 0 0; color: var(--label-2); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+/* Schwärzen: markierte Bereiche (noch nicht angewendet) */
+.redact-mark {
+  position: absolute; background: rgba(0, 0, 0, .38); outline: 2px solid #ff453a; outline-offset: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .5);
+}
+.redact-mark.drawing { pointer-events: none; }
+.redact-mark .remove {
+  position: absolute; top: -9px; right: -9px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  background: #ff453a; color: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); opacity: 0; transition: opacity .15s;
+}
+.redact-mark:hover .remove { opacity: 1; }
+.redact-mark .remove svg { width: 10px; height: 10px; filter: none; stroke-width: 2.2; }
+
+/* Formularfeld aufziehen */
+.field-draft { position: absolute; border: 1.5px dashed var(--blue); background: rgba(10, 132, 255, .12); border-radius: 3px; pointer-events: none; }
+.field-draft::after { content: attr(data-kind); position: absolute; left: 0; top: -18px; font-size: 10px; color: #fff; background: var(--blue); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+
+/* Text bearbeiten: Zeilen beim Überfahren umranden, Eingabe direkt darüber */
+body.text-editing #viewer .textLayer span:not(.markedContent):not(:has(span)) { cursor: text; }
+body.text-editing #viewer .textLayer span:not(.markedContent):not(:has(span)):hover { outline: 1.5px dashed var(--blue); outline-offset: 1px; background: rgba(10, 132, 255, .08); }
+.textLayer span.editing-source { visibility: hidden; }
+.text-edit {
+  position: absolute; box-sizing: content-box; padding: 0 2px; margin-left: -2px; white-space: pre; line-height: 1; outline: 2px solid var(--blue);
+  background: #fff; color: #111; border-radius: 2px; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); display: flex; align-items: center;
+}
+
+/* ---------- Mehr-Menü ---------- */
+#more-menu { position: fixed; z-index: 12; border-radius: 16px; animation: drop-in .35s var(--spring) both; }
+#more-menu > .glass { border-radius: 16px; padding: 6px; }
+.menu { display: flex; flex-direction: column; min-width: 280px; }
+.menu button { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: 9px; text-align: left; transition: background-color .12s; }
+.menu button:hover { background: var(--control-hover); }
+.menu kbd { margin-left: auto; color: var(--label-3); font: 11px var(--font); }
+.menu hr { width: calc(100% - 16px); height: 1px; margin: 4px auto; border: 0; background: var(--label-3); opacity: .35; }
+
+/* ---------- Dialoge: Passwort, Seiten gestalten ---------- */
+.dialog .hint { margin: -6px 0 0; }
+.dialog .error { margin: -4px 0 0; min-height: 1em; color: #ff6961; font-size: 12px; }
+.dialog .actions .left { margin-right: auto; }
+.dialog select, .dialog .grid3 input, .dialog input[type=number] {
+  height: 32px; padding: 0 10px; border-radius: 10px; background: rgba(255, 255, 255, .1); color: var(--label); border: 0; outline: none; font: 13px var(--font);
+}
+.dialog select option { background: #2a2b31; }
+.dialog .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: end; }
+.dialog .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.dialog .grid3 input:focus, .dialog select:focus { background: rgba(255, 255, 255, .16); }
+.design-pane { display: flex; flex-direction: column; gap: 12px; }
+
+/* Rückmeldung mit Knopf (Rückgängig) */
+#toast { display: flex; align-items: center; gap: 12px; }
+#toast button { color: var(--blue); font-weight: 600; padding: 2px 4px; border-radius: 6px; }
+#toast button:hover { background: var(--control-hover); }
+body.busy, body.busy * { cursor: progress !important; }
