@@ -782,11 +782,13 @@ export function initTools(app) {
   // PDF.js meldet den Stand nur, solange ein Werkzeug aktiv ist – rückgängig machen geht aber auch danach noch.
   // Darum: frei, sobald etwas geändert wurde (app.edited), ein Klick ohne Schritt bewirkt einfach nichts.
   // Seitenänderungen (Drehen, Wasserzeichen, Schwärzen …) haben einen eigenen Verlauf; der jüngere Schritt gewinnt.
+  // Wiederholen nimmt in umgekehrter Reihenfolge zurück, was Rückgängig gemacht hat: 'change' (Dokument) oder 'editor'
   const undo = $('undo'), redo = $('redo');
   let canUndo = false, canRedo = false, lastEdit = 0, lastChange = 0;
+  const redoOrder = [];
   const show = () => {
     undo.disabled = !(canUndo || app.edited || app.canUndoChange);
-    redo.disabled = !canRedo;
+    redo.disabled = !(canRedo || app.canRedoChange || redoOrder.length);
   };
   eventBus.on('annotationeditorstateschanged', ({ details }) => {
     if (details.isEditing) {
@@ -796,15 +798,34 @@ export function initTools(app) {
     show();
   });
   addEventListener('glass-edited', () => { lastEdit = performance.now(); show(); });
-  addEventListener('glass-history', () => { lastChange = performance.now(); show(); });
-  const undoStep = () => {
-    if (app.canUndoChange && (lastChange > lastEdit || !(canUndo || app.edited))) return app.undoChange();
-    eventBus.dispatch('editingaction', { source: null, name: 'undo' });
-    canRedo = true;
+  addEventListener('glass-history', (e) => {
+    lastChange = performance.now();
+    // Neue Dokument-Änderung: nichts mehr zu wiederholen (auch PDF.js hat seinen Verlauf mit dem Neuladen verloren)
+    if (e.detail === 'new') { redoOrder.length = 0; canRedo = false; }
+    show();
+  });
+  /** Ist der jüngste Schritt eine Dokument-Änderung (Formularfeld, Seiten, Wasserzeichen …)? */
+  const changeIsNewest = () => app.canUndoChange && (lastChange > lastEdit || !(canUndo || app.edited));
+  const undoStep = async () => {
+    if (changeIsNewest()) {
+      if (await app.undoChange()) redoOrder.push('change');
+    } else {
+      eventBus.dispatch('editingaction', { source: null, name: 'undo' });
+      redoOrder.push('editor');
+      canRedo = true;
+    }
+    show();
+  };
+  const redoStep = async () => {
+    const kind = redoOrder.pop() || (app.canRedoChange ? 'change' : 'editor');
+    if (kind === 'change') await app.redoChange();
+    else eventBus.dispatch('editingaction', { source: null, name: 'redo' });
     show();
   };
   undo.onclick = undoStep;
-  redo.onclick = () => { eventBus.dispatch('editingaction', { source: null, name: 'redo' }); show(); };
+  redo.onclick = redoStep;
+  app.undoStep = undoStep;
+  app.redoStep = redoStep;
 
   // Tastenkürzel wie in Acrobat – nur wenn gerade nicht getippt wird
   const KEYS = { e: 'textedit', h: 'markup', n: 'note', t: 'freetext', d: 'draw', b: 'stamp', s: 'signature', f: 'field', r: 'redact' };
@@ -816,11 +837,20 @@ export function initTools(app) {
     // Esc: erst PDF.js die Auswahl aufheben lassen, danach zurück zum Auswählen
     else if (e.key === 'Escape' && tool !== 'none' && !document.querySelector('.selectedEditor, .glass-layer .selected')) setTool('none');
   });
-  // Strg+Z außerhalb der Werkzeuge: Seitenänderungen zurücknehmen
+  // Strg+Z / Strg+Y (oder Strg+Umschalt+Z): ohne Werkzeug immer über den gemeinsamen Verlauf; mit Werkzeug macht
+  // PDF.js seine Anmerkungen selbst – nur Dokument-Änderungen übernimmt Glass dann (vor PDF.js, daher capture)
   window.addEventListener('keydown', (e) => {
-    if (!e.ctrlKey || e.key.toLowerCase() !== 'z' || e.target.closest?.('input, textarea, [contenteditable], .dialog, #organize')) return;
-    if (viewer.annotationEditorMode === T.NONE) { e.preventDefault(); undoStep(); }
-  });
+    if (!e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, [contenteditable], .dialog, #organize')) return;
+    const key = e.key.toLowerCase();
+    const isUndo = key === 'z' && !e.shiftKey, isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+    if (!isUndo && !isRedo) return;
+    const editing = viewer.annotationEditorMode !== T.NONE;
+    const mine = !editing || (isUndo ? changeIsNewest() : redoOrder.at(-1) === 'change' || (!canRedo && app.canRedoChange));
+    if (!mine) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (isUndo) undoStep(); else redoStep();
+  }, true);
 
   return { setTool, setMode, get tool() { return tool; }, get variant() { return sub[tool]; } };
 }

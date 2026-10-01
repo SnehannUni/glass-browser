@@ -273,7 +273,21 @@ try {
   await H.press('#undo');
   await H.idle();
   await waitFor(async () => (await H.inspect()).pages[1].text.includes('Seite 2'), 'undo text edit');
-  console.log('PASS: undo brings the original text back.');
+  // Wiederholen holt die Änderung zurück, Strg+Z nimmt sie wieder weg, Strg+Y bringt sie erneut
+  assert.equal(await page(`document.getElementById('redo').disabled`), false, 'redo available');
+  await H.press('#redo');
+  await H.idle();
+  await waitFor(async () => (await H.inspect()).pages[1].text.includes('Kapitel 2'), 'redo text edit');
+  await H.key('z', 'KeyZ', 90, 2);
+  await H.idle();
+  await waitFor(async () => (await H.inspect()).pages[1].text.includes('Seite 2'), 'undo with Ctrl+Z');
+  await H.key('y', 'KeyY', 89, 2);
+  await H.idle();
+  await waitFor(async () => (await H.inspect()).pages[1].text.includes('Kapitel 2'), 'redo with Ctrl+Y');
+  await H.key('z', 'KeyZ', 90, 2);
+  await H.idle();
+  await waitFor(async () => (await H.inspect()).pages[1].text.includes('Seite 2'), 'back to the original');
+  console.log('PASS: undo brings the original text back, redo (button, Ctrl+Y) brings the change again.');
 
   // 7: Wasserzeichen und Seitenzahlen
   await H.press('#more');

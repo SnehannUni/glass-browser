@@ -134,7 +134,13 @@ try {
   await pressButton('#tools [data-tool="freetext"]');
   await waitFor(() => page(`document.body.dataset.tool === 'freetext' && document.querySelectorAll('.inkEditor').length === 1`), 'ink editor on page');
   await waitFor(() => page(`document.getElementById('download').classList.contains('dirty') && !document.getElementById('undo').disabled`), 'unsaved dot, undo available');
-  console.log('PASS: drawing with the pen creates an ink annotation and marks the document as changed.');
+  // Rückgängig nimmt die Zeichnung weg, Wiederholen holt sie zurück
+  await pressButton('#undo');
+  await waitFor(() => page(`document.querySelectorAll('.inkEditor').length === 0`), 'ink undone');
+  await waitFor(() => page(`!document.getElementById('redo').disabled`), 'redo available');
+  await pressButton('#redo');
+  await waitFor(() => page(`document.querySelectorAll('.inkEditor').length === 1`), 'ink redone');
+  console.log('PASS: drawing with the pen creates an ink annotation; undo and redo work on it.');
 
   // ---------- Text ----------
   await waitFor(() => page(`!!document.querySelector('.page[data-page-number="1"] .annotationEditorLayer.freetextEditing')`), 'text layer ready');
