@@ -548,10 +548,11 @@ impl Browser {
         let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &start, bounds, false) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
         deny_notifications(&webview);
+        self.watch_downloads(&webview, id, false); // Anhänge laufen über dieselbe Download-Liste
         self.mail.boxes[p].tab = Some(Tab {
             id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: start, loading: true, private: false,
             blocked: 0, webview: Some(webview), home: false, pending_prompt: None,
-            hidden_since: Cell::new(Some(Instant::now())), mail_view: false,
+            hidden_since: Cell::new(Some(Instant::now())), mail_view: false, popup: false,
         });
         self.mail.boxes[p].heard = Some(Instant::now());
     }
