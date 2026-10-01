@@ -1,0 +1,386 @@
+// Seiten organisieren wie in Acrobat: alle Seiten als Raster – auswählen (Klick, Strg, Umschalt, Strg+A), ziehen,
+// drehen, löschen, andere PDFs einfügen, Auswahl als eigenes PDF speichern.
+// Jede Änderung baut mit PDF.js (extractPages) ein neues PDF, Anmerkungen und Formularwerte inklusive, und lädt es
+// im Viewer neu. Nur das Drehen einzelner Seiten kann PDF.js nicht speichern – das übernimmt pdf-lib.
+const $ = (id) => document.getElementById(id);
+const THUMB = 150;
+/** So viele Schritte lassen sich zurücknehmen (jeder hält das ganze PDF im Speicher). */
+const UNDO_STEPS = 12;
+
+export function initOrganize(app) {
+  const root = $('organize'), grid = $('org-grid'), count = $('org-count');
+  const buttons = {
+    left: $('org-rotate-left'), right: $('org-rotate-right'), del: $('org-delete'),
+    extract: $('org-extract'), insert: $('org-insert'), undo: $('org-undo'),
+  };
+  let selected = new Set(), anchor = null, busy = false;
+  const undo = [];
+  let observer = null, rendered = new WeakSet(), drawToken = 0;
+
+  // ---------- Raster ----------
+  function build() {
+    const doc = app.doc, token = ++drawToken;
+    observer?.disconnect();
+    rendered = new WeakSet();
+    observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (entry.isIntersecting) draw(entry.target, doc, token);
+    }, { root: grid, rootMargin: '400px 0px' });
+    const tiles = [];
+    for (let i = 0; i < doc.numPages; i++) {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.dataset.index = i;
+      tile.draggable = true;
+      tile.tabIndex = -1;
+      tile.innerHTML = `<div class="sheet" style="width:${THUMB}px;height:${Math.round(THUMB * 1.3)}px"></div><span>${i + 1}</span>`;
+      tiles.push(tile);
+      observer.observe(tile);
+    }
+    // Fokus war auf einer der alten Kacheln: auf die (erste) ausgewählte, damit Tastenkürzel weiter wirken
+    const hadFocus = grid.contains(document.activeElement) || document.activeElement === document.body;
+    grid.replaceChildren(...tiles);
+    selected = new Set([...selected].filter((i) => i < doc.numPages));
+    if (selected.size) anchor = Math.min(...selected);
+    mark();
+    if (hadFocus && !root.hidden) (tiles[anchor] || grid).focus({ preventScroll: true });
+  }
+
+  async function draw(tile, doc, token) {
+    if (rendered.has(tile)) return;
+    rendered.add(tile);
+    const page = await doc.getPage(+tile.dataset.index + 1);
+    if (token !== drawToken) return;
+    const base = page.getViewport({ scale: 1 });
+    // Hochformat und Querformat passen in dieselbe Kachel
+    const fit = Math.min(THUMB / base.width, THUMB * 1.3 / base.height);
+    const viewport = page.getViewport({ scale: fit * devicePixelRatio });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const sheet = tile.firstElementChild;
+    sheet.style.width = `${Math.round(base.width * fit)}px`;
+    sheet.style.height = `${Math.round(base.height * fit)}px`;
+    // Anmerkungen und ausgefüllte Formulare mitzeichnen, wie sie gespeichert würden
+    await page.render({
+      canvasContext: canvas.getContext('2d'), viewport,
+      annotationMode: app.pdfjsLib.AnnotationMode.ENABLE_STORAGE,
+    }).promise.catch(() => {});
+    if (token === drawToken) sheet.replaceChildren(canvas);
+  }
+
+  function mark() {
+    for (const tile of grid.children) tile.classList.toggle('selected', selected.has(+tile.dataset.index));
+    const n = selected.size, total = app.doc.numPages;
+    count.textContent = n ? `${n} von ${total} ausgewählt` : `${total} ${total === 1 ? 'Seite' : 'Seiten'}`;
+    for (const key of ['left', 'right', 'extract']) buttons[key].disabled = !n || busy;
+    // Mindestens eine Seite muss bleiben
+    buttons.del.disabled = !n || n >= total || busy;
+    buttons.insert.disabled = busy;
+    buttons.undo.disabled = !undo.length || busy;
+    app.placeWells();
+  }
+
+  // ---------- Auswahl ----------
+  grid.addEventListener('click', (e) => {
+    const tile = e.target.closest('.tile');
+    if (!tile) { if (!e.ctrlKey && !e.shiftKey) { selected.clear(); mark(); } return; }
+    const i = +tile.dataset.index;
+    if (e.shiftKey && anchor !== null) {
+      if (!e.ctrlKey) selected.clear();
+      for (let k = Math.min(anchor, i); k <= Math.max(anchor, i); k++) selected.add(k);
+    } else if (e.ctrlKey) {
+      selected.has(i) ? selected.delete(i) : selected.add(i);
+      anchor = i;
+    } else {
+      selected = new Set([i]);
+      anchor = i;
+    }
+    tile.focus({ preventScroll: true });
+    mark();
+  });
+  // Doppelklick: zu dieser Seite im Dokument
+  grid.addEventListener('dblclick', (e) => {
+    const tile = e.target.closest('.tile');
+    if (!tile) return;
+    close();
+    app.viewer.currentPageNumber = +tile.dataset.index + 1;
+  });
+
+  // ---------- Ziehen: Seiten umsortieren, PDF-Dateien einfügen ----------
+  let dragging = null;
+  const marker = document.createElement('div');
+  marker.className = 'drop-marker';
+  /** Vor welcher Seite abgelegt wird (0 … Seitenzahl), aus der Lage des Mauszeigers über dem Raster. */
+  function dropIndex(e) {
+    const tiles = [...grid.querySelectorAll('.tile')];
+    let best = tiles.length, bestDist = Infinity;
+    for (const tile of tiles) {
+      const r = tile.getBoundingClientRect();
+      if (e.clientY < r.top - 12 || e.clientY > r.bottom + 12) continue;
+      const mid = r.left + r.width / 2;
+      const dist = Math.abs(e.clientX - mid);
+      if (dist < bestDist) { bestDist = dist; best = +tile.dataset.index + (e.clientX > mid ? 1 : 0); }
+    }
+    if (bestDist === Infinity) {
+      // Unter der letzten Zeile: ans Ende; darüber: an den Anfang
+      const first = tiles[0]?.getBoundingClientRect();
+      best = first && e.clientY < first.top ? 0 : tiles.length;
+    }
+    return best;
+  }
+  function showMarker(index) {
+    const tiles = grid.querySelectorAll('.tile');
+    const ref = tiles[Math.min(index, tiles.length - 1)];
+    if (!ref) return;
+    const r = ref.getBoundingClientRect(), g = grid.getBoundingClientRect();
+    const x = index >= tiles.length ? r.right + 9 : r.left - 9;
+    marker.style.transform = `translate(${x - g.left + grid.scrollLeft}px, ${r.top - g.top + grid.scrollTop}px)`;
+    marker.style.height = `${r.height}px`;
+    if (!marker.isConnected) grid.append(marker);
+  }
+  grid.addEventListener('dragstart', (e) => {
+    const tile = e.target.closest('.tile');
+    if (!tile || busy) return e.preventDefault();
+    const i = +tile.dataset.index;
+    if (!selected.has(i)) { selected = new Set([i]); anchor = i; mark(); }
+    dragging = [...selected].sort((a, b) => a - b);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragging.map((k) => k + 1).join(','));
+    requestAnimationFrame(() => { for (const k of dragging) grid.children[k]?.classList.add('dragging'); });
+  });
+  grid.addEventListener('dragover', (e) => {
+    const files = [...e.dataTransfer.items].some((item) => item.kind === 'file');
+    if (!dragging && !files) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = dragging ? 'move' : 'copy';
+    showMarker(dropIndex(e));
+  });
+  grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) marker.remove(); });
+  grid.addEventListener('dragend', () => {
+    dragging = null;
+    marker.remove();
+    for (const tile of grid.querySelectorAll('.dragging')) tile.classList.remove('dragging');
+  });
+  grid.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const at = dropIndex(e);
+    marker.remove();
+    if (dragging) {
+      const moved = dragging;
+      dragging = null;
+      await move(moved, at);
+    } else {
+      const pdfs = [...e.dataTransfer.files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+      if (pdfs.length) await insert(pdfs, at);
+    }
+  });
+
+  // ---------- Änderungen ----------
+  /** Führt eine Änderung aus: `make` liefert die Bytes des neuen PDFs, `select` die danach ausgewählten Seiten. */
+  async function change(label, make, select) {
+    if (busy) return;
+    busy = true;
+    root.classList.add('busy');
+    mark();
+    try {
+      const before = await app.currentBytes();
+      const bytes = await make();
+      if (!bytes) return;
+      await app.replaceDocument(bytes);
+      undo.push(before);
+      if (undo.length > UNDO_STEPS) undo.shift();
+      app.setDirty(true);
+      selected = new Set(select || []);
+      build();
+      app.toast(label);
+    } catch (err) {
+      console.error(err);
+      app.toast('Das hat nicht geklappt – das PDF ist unverändert.');
+    } finally {
+      busy = false;
+      root.classList.remove('busy');
+      mark();
+    }
+  }
+
+  const all = () => [...Array(app.doc.numPages).keys()];
+  // Ein Eintrag für das offene Dokument; pageIndices legt fest, wo jede Seite im Ergebnis landet
+  const reorder = (order) => {
+    const position = new Array(order.length);
+    order.forEach((old, at) => { position[old] = at; });
+    return app.doc.extractPages([{ document: null, includePages: all(), pageIndices: position }]);
+  };
+
+  function move(pages, before) {
+    const rest = all().filter((i) => !pages.includes(i));
+    const at = before - pages.filter((i) => i < before).length;
+    const order = [...rest.slice(0, at), ...pages, ...rest.slice(at)];
+    if (order.every((old, i) => old === i)) return;
+    const n = pages.length;
+    return change(n === 1 ? 'Seite verschoben' : `${n} Seiten verschoben`, () => reorder(order), pages.map((_, k) => at + k));
+  }
+
+  function remove() {
+    const pages = [...selected];
+    if (!pages.length || pages.length >= app.doc.numPages) return;
+    const keep = all().filter((i) => !selected.has(i));
+    const n = pages.length;
+    const next = Math.min(Math.min(...pages), keep.length - 1);
+    return change(n === 1 ? 'Seite gelöscht' : `${n} Seiten gelöscht`,
+      () => app.doc.extractPages([{ document: null, includePages: keep }]), [next]);
+  }
+
+  async function rotate(delta) {
+    const pages = [...selected];
+    if (!pages.length) return;
+    return change(delta > 0 ? 'Nach rechts gedreht' : 'Nach links gedreht', async () => {
+      const { PDFDocument, degrees } = await import(app.BASE + 'pdf-lib/pdf-lib.esm.min.js');
+      // Verschlüsselte PDFs kann pdf-lib nicht lesen: dann erst von PDF.js entschlüsselt neu schreiben lassen
+      const bytes = (await app.isEncrypted()) ? await app.doc.extractPages([{ document: null }]) : await app.currentBytes();
+      const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+      for (const i of pages) {
+        const page = pdf.getPage(i);
+        page.setRotation(degrees((((page.getRotation().angle + delta) % 360) + 360) % 360));
+      }
+      return pdf.save({ updateFieldAppearances: false });
+    }, pages);
+  }
+
+  async function insert(files, before) {
+    const datas = await Promise.all(files.map(async (f) => new Uint8Array(await f.arrayBuffer())));
+    const insertAfter = before - 1;
+    // Seitenzahlen der neuen Seiten für die Auswahl danach
+    let added = 0;
+    for (const data of datas) {
+      const task = app.pdfjsLib.getDocument({ data: data.slice() });
+      try {
+        added += (await task.promise).numPages;
+        task.destroy();
+      } catch {
+        task.destroy();
+        app.toast('Diese Datei ist kein gültiges PDF.');
+        return;
+      }
+    }
+    const label = files.length === 1 ? `„${files[0].name}“ eingefügt` : `${files.length} PDFs eingefügt`;
+    return change(label, () => app.doc.extractPages([
+      { document: null },
+      // Mehrere Dateien landen in ihrer Reihenfolge hintereinander an derselben Stelle
+      ...datas.map((data) => ({ document: data, insertAfter })),
+    ]), Array.from({ length: added }, (_, k) => before + k));
+  }
+
+  async function extract() {
+    const pages = [...selected].sort((a, b) => a - b);
+    if (!pages.length || busy) return;
+    busy = true;
+    mark();
+    try {
+      const bytes = await app.doc.extractPages([{ document: null, includePages: pages }]);
+      const stem = app.name.replace(/\.pdf$/i, '');
+      const ranges = [];
+      for (const i of pages) {
+        const last = ranges.at(-1);
+        if (last && last[1] === i - 1) last[1] = i; else ranges.push([i, i]);
+      }
+      const label = ranges.map(([a, b]) => (a === b ? `${a + 1}` : `${a + 1}–${b + 1}`)).join(', ');
+      app.saveBytes(bytes, `${stem} (Seite${pages.length > 1 ? 'n' : ''} ${label}).pdf`);
+      app.toast(pages.length === 1 ? 'Seite als eigenes PDF gespeichert' : `${pages.length} Seiten als eigenes PDF gespeichert`);
+    } catch (err) {
+      console.error(err);
+      app.toast('Das Extrahieren hat nicht geklappt.');
+    } finally {
+      busy = false;
+      mark();
+    }
+  }
+
+  async function undoLast() {
+    if (busy || !undo.length) return;
+    busy = true;
+    mark();
+    try {
+      await app.replaceDocument(undo.pop());
+      app.setDirty(true);
+      selected.clear();
+      build();
+      app.toast('Rückgängig gemacht');
+    } finally {
+      busy = false;
+      mark();
+    }
+  }
+
+  buttons.left.onclick = () => rotate(-90);
+  buttons.right.onclick = () => rotate(90);
+  buttons.del.onclick = remove;
+  buttons.extract.onclick = extract;
+  buttons.undo.onclick = undoLast;
+  const fileInput = $('org-file');
+  buttons.insert.onclick = () => { fileInput.value = ''; fileInput.click(); };
+  fileInput.addEventListener('change', () => {
+    const files = [...fileInput.files];
+    if (!files.length) return;
+    const after = selected.size ? Math.max(...selected) + 1 : app.doc.numPages;
+    insert(files, after);
+  });
+  $('org-done').onclick = () => close();
+
+  root.addEventListener('keydown', (e) => {
+    if (e.target.closest('input')) return;
+    const key = e.key.toLowerCase();
+    // Behandelte Tasten gehen nicht weiter an den Viewer (Pfeile blättern dort); Strg+S, Strg+P usw. schon
+    const handled = (e.ctrlKey && (key === 'a' || key === 'z')) || ['Delete', 'Backspace', 'Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+    if (handled) e.stopPropagation();
+    if (e.ctrlKey && key === 'a') { e.preventDefault(); selected = new Set(all()); mark(); }
+    else if (e.ctrlKey && key === 'z') { e.preventDefault(); undoLast(); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); remove(); }
+    else if (e.key === 'Escape') { e.preventDefault(); selected.size ? (selected.clear(), mark()) : close(); }
+    else if (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selected.size) {
+      // Strg+Pfeil: Auswahl um eine Stelle verschieben
+      e.preventDefault();
+      const pages = [...selected].sort((a, b) => a - b);
+      const before = e.key === 'ArrowLeft' ? Math.max(0, pages[0] - 1) : Math.min(app.doc.numPages, pages.at(-1) + 2);
+      move(pages, before);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const i = Math.max(0, Math.min(app.doc.numPages - 1, (anchor ?? -1) + (e.key === 'ArrowLeft' ? -1 : 1)));
+      if (e.shiftKey && anchor !== null) selected.add(i); else selected = new Set([i]);
+      anchor = i;
+      grid.children[i]?.scrollIntoView({ block: 'nearest' });
+      mark();
+    }
+  });
+
+  // ---------- Öffnen / Schließen ----------
+  function open() {
+    if (!root.hidden) return;
+    app.tools.setTool('none');
+    document.body.classList.add('organizing');
+    root.hidden = false;
+    $('organize-open').classList.add('on');
+    selected = new Set([app.viewer.currentPageNumber - 1]);
+    anchor = app.viewer.currentPageNumber - 1;
+    build();
+    grid.focus({ preventScroll: true });
+    requestAnimationFrame(() => grid.children[anchor]?.scrollIntoView({ block: 'center' }));
+    app.placeWells();
+    app.scheduleInk();
+  }
+  function close() {
+    if (root.hidden) return;
+    observer?.disconnect();
+    drawToken++;
+    root.hidden = true;
+    document.body.classList.remove('organizing');
+    $('organize-open').classList.remove('on');
+    const first = Math.min(...selected);
+    if (Number.isFinite(first)) app.viewer.currentPageNumber = first + 1;
+    app.container.focus();
+    app.placeWells();
+    app.scheduleInk();
+  }
+  $('organize-open').onclick = () => (root.hidden ? open() : close());
+
+  return { open, close, get isOpen() { return !root.hidden; } };
+}

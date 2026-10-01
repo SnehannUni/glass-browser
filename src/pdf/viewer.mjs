@@ -6,7 +6,9 @@ const name = document.body.dataset.name;
 
 const pdfjsLib = await import(BASE + 'pdf.min.mjs');
 globalThis.pdfjsLib = pdfjsLib; // pdf_viewer.mjs erwartet die Bibliothek global
-const { EventBus, PDFLinkService, PDFFindController, PDFViewer, LinkTarget, FindState } = await import(BASE + 'pdf_viewer.mjs');
+const { EventBus, PDFLinkService, PDFFindController, PDFViewer, LinkTarget, FindState, GenericL10n } = await import(BASE + 'pdf_viewer.mjs');
+const { initTools, Signatures, HIGHLIGHT_COLORS } = await import(BASE + 'editor.mjs');
+const { initOrganize } = await import(BASE + 'organize.mjs');
 // A data-URL module worker supports the viewer's opaque sandbox origin. PDF.js's URL-based
 // origin check uses location.href, which still displays the original PDF URL.
 const workerUrl = 'data:text/javascript,' + encodeURIComponent(`import "${BASE}pdf.worker.min.mjs";`);
@@ -143,9 +145,16 @@ container.addEventListener('scroll', scheduleInk, { passive: true });
 const eventBus = new EventBus();
 const linkService = new PDFLinkService({ eventBus, externalLinkTarget: LinkTarget.TOP });
 const findController = new PDFFindController({ eventBus, linkService });
+// Bearbeiten (editor.mjs): die Editoren von PDF.js, deutsch beschriftet, mit eigenem Dialog für Unterschriften
+const signatures = new Signatures(pdfjsLib, document.body.dataset.sigs, () => app.onSignaturesChanged?.());
 const viewer = new PDFViewer({
   container, viewer: $('viewer'), eventBus, linkService, findController,
   annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS,
+  annotationEditorMode: pdfjsLib.AnnotationEditorType.NONE,
+  annotationEditorHighlightColors: HIGHLIGHT_COLORS,
+  signatureManager: signatures,
+  l10n: new GenericL10n('de'),
+  imageResourcesPath: BASE + 'images/',
 });
 linkService.setViewer(viewer);
 
@@ -156,19 +165,24 @@ function showStatus(text, kind = '') {
   status.className = 'glass ' + kind;
 }
 
-let doc;
-try {
-  const res = await fetch(document.body.dataset.doc);
-  // Die Bytes gibt es nur einmal – etwa nach „Seite wiederherstellen“ fehlen sie: dann einfach neu laden lassen.
-  if (!res.ok) throw new Error('gone');
+// PDF.js übernimmt die Bytes (sie wandern in den Worker) – wer sie noch braucht, gibt eine Kopie.
+const openDocument = (data) => {
   const task = pdfjsLib.getDocument({
-    data: new Uint8Array(await res.arrayBuffer()),
+    data,
     cMapUrl: BASE + 'cmaps/', cMapPacked: true,
     standardFontDataUrl: BASE + 'standard_fonts/',
     wasmUrl: BASE + 'wasm/', iccUrl: BASE + 'iccs/',
   });
   task.onPassword = (answer, reason) => askPassword(answer, reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD);
-  doc = await task.promise;
+  return task.promise;
+};
+
+let doc;
+try {
+  const res = await fetch(document.body.dataset.doc);
+  // Die Bytes gibt es nur einmal – etwa nach „Seite wiederherstellen“ fehlen sie: dann einfach neu laden lassen.
+  if (!res.ok) throw new Error('gone');
+  doc = await openDocument(new Uint8Array(await res.arrayBuffer()));
 } catch (err) {
   if (err.message === 'gone') {
     showStatus('Das Dokument ist nicht mehr im Speicher.', 'error');
@@ -195,9 +209,37 @@ function askPassword(answer, wrong) {
   };
 }
 
-viewer.setDocument(doc);
-linkService.setDocument(doc, null);
-$('page-count').textContent = `/ ${doc.numPages}`;
+// ---------- Änderungen merken, Speichern ----------
+let dirty = false, edited = false;
+function setDirty(on) {
+  dirty = on;
+  $('download').classList.toggle('dirty', on);
+  $('download').title = on ? 'Änderungen speichern (Strg S)' : 'Speichern (Strg S)';
+}
+// Ungespeicherte Änderungen: vor Neu laden oder Wegnavigieren nachfragen
+addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+
+/** Setzt ein (neues) Dokument in den Viewer; Seite und Zoom bleiben, wo es geht. */
+let restore = null;
+function useDocument(next) {
+  const old = doc;
+  if (old && old !== next) restore = { page: viewer.currentPageNumber, scale: viewer.currentScaleValue, top: container.scrollTop };
+  doc = next;
+  viewer.setDocument(doc);
+  linkService.setDocument(doc, null);
+  $('page-count').textContent = `/ ${doc.numPages}`;
+  // Formular ausgefüllt, Anmerkung gesetzt …
+  // edited: seit dem Laden dieses Dokuments etwas geändert (Rückgängig-Knopf, editor.mjs)
+  edited = false;
+  doc.annotationStorage.onSetModified = () => { setDirty(true); edited = true; dispatchEvent(new Event('glass-edited')); };
+  dispatchEvent(new Event('glass-edited'));
+  if (old && old !== next) {
+    resetThumbs();
+    buildOutline();
+    old.loadingTask.destroy();
+  }
+}
+useDocument(doc);
 // Titel aus den Dokumentdaten, wenn er aussagekräftiger ist als der Dateiname
 doc.getMetadata().then(({ info }) => {
   const title = info?.Title?.trim();
@@ -205,9 +247,16 @@ doc.getMetadata().then(({ info }) => {
 }).catch(() => {});
 
 eventBus.on('pagesinit', () => {
-  viewer.currentScaleValue = '1'; // Originalgröße
+  if (restore) {
+    const { page, scale } = restore;
+    restore = null;
+    viewer.currentScaleValue = scale;
+    viewer.currentPageNumber = Math.min(page, doc.numPages);
+  } else {
+    viewer.currentScaleValue = '1'; // Originalgröße
+    container.focus();
+  }
   status.classList.add('done');
-  container.focus();
   scheduleInk();
 });
 eventBus.on('scalechanging', scheduleInk);
@@ -277,12 +326,23 @@ function toggleSidebar(open = !document.body.classList.contains('sidebar-open'))
 $('toggle-sidebar').onclick = () => toggleSidebar();
 toggleSidebar(true); // Seitenleiste ist beim Öffnen da
 
+let thumbObserver = null;
+function resetThumbs() {
+  thumbObserver?.disconnect();
+  thumbs.replaceChildren();
+  drawn.clear();
+  thumbsBuilt = false;
+  if (document.body.classList.contains('sidebar-open')) buildThumbs();
+}
+
 async function buildThumbs() {
   if (thumbsBuilt) return;
   thumbsBuilt = true;
+  const source = doc;
   // Platzhalter im Seitenformat der ersten Seite – beim Zeichnen bekommt jede ihr eigenes
-  const first = (await doc.getPage(1)).getViewport({ scale: 1 });
-  const observer = new IntersectionObserver((entries) => {
+  const first = (await source.getPage(1)).getViewport({ scale: 1 });
+  if (source !== doc) return;
+  const observer = thumbObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) if (entry.isIntersecting) drawThumb(entry.target);
   }, { root: thumbs, rootMargin: '300px 0px' });
   for (let n = 1; n <= doc.numPages; n++) {
@@ -301,7 +361,9 @@ async function drawThumb(item) {
   const n = +item.dataset.page;
   if (drawn.has(n)) return;
   drawn.add(n);
-  const page = await doc.getPage(n);
+  const source = doc;
+  const page = await source.getPage(n);
+  if (source !== doc) return;
   const base = page.getViewport({ scale: 1 });
   const viewport = page.getViewport({ scale: THUMB_WIDTH * devicePixelRatio / base.width });
   const canvas = document.createElement('canvas');
@@ -309,8 +371,8 @@ async function drawThumb(item) {
   canvas.height = Math.ceil(viewport.height);
   const sheet = item.firstElementChild;
   sheet.style.height = `${Math.round(THUMB_WIDTH * base.height / base.width)}px`;
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-  sheet.append(canvas);
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise.catch(() => {});
+  if (source === doc) sheet.append(canvas);
 }
 
 function markThumb(n) {
@@ -322,23 +384,28 @@ function markThumb(n) {
 }
 
 // Inhaltsverzeichnis nur, wenn das PDF eines hat
-doc.getOutline().then((outline) => {
-  if (!outline?.length) return;
-  const build = (items) => {
-    const list = document.createElement('ul');
-    for (const item of items) {
-      const li = document.createElement('li');
-      const link = Object.assign(document.createElement('button'), { textContent: item.title, title: item.title });
-      link.onclick = () => item.dest ? linkService.goToDestination(item.dest) : item.url && window.top.location.assign(item.url);
-      li.append(link);
-      if (item.items?.length) li.append(build(item.items));
-      list.append(li);
-    }
-    return list;
-  };
-  $('outline').append(build(outline));
-  $('sidebar-tabs').hidden = false;
-}).catch(() => {});
+const buildList = (items) => {
+  const list = document.createElement('ul');
+  for (const item of items) {
+    const li = document.createElement('li');
+    const link = Object.assign(document.createElement('button'), { textContent: item.title, title: item.title });
+    link.onclick = () => item.dest ? linkService.goToDestination(item.dest) : item.url && window.top.location.assign(item.url);
+    li.append(link);
+    if (item.items?.length) li.append(buildList(item.items));
+    list.append(li);
+  }
+  return list;
+};
+async function buildOutline() {
+  const source = doc;
+  const outline = await source.getOutline().catch(() => null);
+  if (source !== doc) return;
+  $('outline').replaceChildren(...(outline?.length ? [buildList(outline)] : []));
+  $('sidebar-tabs').hidden = !outline?.length;
+  // Neues Dokument ohne Inhaltsverzeichnis: zurück zu den Seiten
+  if (!outline?.length) document.querySelector('#sidebar-tabs [data-view="thumbs"]').click();
+}
+buildOutline();
 
 for (const tab of document.querySelectorAll('#sidebar-tabs button')) {
   tab.onclick = () => {
@@ -398,12 +465,55 @@ $('theme').onclick = () => {
   scheduleInk();
 };
 
-async function download() {
-  const url = URL.createObjectURL(new Blob([await doc.saveDocument()], { type: 'application/pdf' }));
-  Object.assign(document.createElement('a'), { href: url, download: name }).click();
+function saveBytes(bytes, fileName) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  Object.assign(document.createElement('a'), { href: url, download: fileName }).click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+// Speichern: mit allen Anmerkungen, Unterschriften, Formularwerten und Seitenänderungen
+// Ohne Änderungen sind das einfach die Originalbytes (saveDocument warnt dann)
+const currentBytes = () => (doc.annotationStorage.size ? doc.saveDocument() : doc.getData());
+async function download() {
+  saveBytes(await currentBytes(), name);
+  if (dirty) toast('Gespeichert – mit allen Änderungen');
+  setDirty(false);
+}
 $('download').onclick = download;
+
+// Kurze Rückmeldung unten über der Leiste
+let toastTimer = 0;
+function toast(text) {
+  const box = $('toast');
+  box.textContent = text;
+  box.hidden = false;
+  box.classList.remove('out');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    box.classList.add('out');
+    toastTimer = setTimeout(() => { box.hidden = true; }, 300);
+  }, 2200);
+  scheduleInk();
+}
+
+// ---------- Bearbeiten und Seiten organisieren ----------
+const app = {
+  BASE, pdfjsLib, viewer, eventBus, container, name, signatures,
+  get doc() { return doc; },
+  get edited() { return edited; },
+  placeWells, scheduleInk, toast, saveBytes, setDirty, currentBytes,
+  async isEncrypted() { return !!(await doc.getMetadata().catch(() => null))?.info?.EncryptFilterName; },
+  /** Neues PDF (Bytes) statt des offenen – nach Drehen, Löschen, Umsortieren, Einfügen. */
+  async replaceDocument(bytes) {
+    const next = await openDocument(bytes.slice());
+    const shown = new Promise((done) => eventBus.on('pagesinit', done, { once: true }));
+    useDocument(next);
+    await shown;
+  },
+};
+// Für Tests (tests/pdf-editor.mjs) und DevTools; im Viewer-Dokument läuft kein Skript der Website
+globalThis.glassPdf = app;
+app.tools = initTools(app);
+app.organize = initOrganize(app);
 
 // Drucken: jede Seite einmal als Bild mit 150 dpi, dann der Druckdialog von Chromium
 let printing = false;
@@ -440,8 +550,9 @@ $('print').onclick = print;
 
 // ---------- Tastatur ----------
 window.addEventListener('keydown', (e) => {
-  const typing = e.target instanceof HTMLInputElement;
-  if (e.ctrlKey && !e.altKey) {
+  // Auch Textfelder der Werkzeuge (contenteditable) und der Unterschrifts-Dialog
+  const typing = !!e.target.closest?.('input, textarea, [contenteditable=true], .dialog');
+  if (e.ctrlKey && !e.altKey && !document.querySelector('#sign-dialog:not([hidden])')) {
     const key = e.key.toLowerCase();
     const action =
       key === 'f' ? openFind :
@@ -457,8 +568,15 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'F3') { e.preventDefault(); find.hidden ? openFind() : search('again', e.shiftKey); return; }
   if (typing || e.altKey || e.metaKey) return;
   if (e.key === 'Escape' && !find.hidden) closeFind();
-  // Links/Rechts blättern, solange die Seite nicht seitlich scrollen kann
+  // Links/Rechts blättern, solange die Seite nicht seitlich scrollen kann – und keine Anmerkung gewählt ist
+  // (die verschiebt PDF.js mit den Pfeilen)
+  if (document.querySelector('.selectedEditor')) return;
   const wide = container.scrollWidth > container.clientWidth;
   if (!wide && e.key === 'ArrowRight') { e.preventDefault(); viewer.nextPage(); }
   if (!wide && e.key === 'ArrowLeft') { e.preventDefault(); viewer.previousPage(); }
 });
+
+// Formular wie in Acrobat ankündigen: Felder lassen sich direkt ausfüllen, Speichern behält die Werte
+doc.getFieldObjects().then((fields) => {
+  if (fields && Object.keys(fields).length) toast('Formular – Felder direkt ausfüllen, dann speichern (Strg S)');
+}).catch(() => {});

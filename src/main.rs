@@ -1430,6 +1430,17 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
             let mut uri = PWSTR::null();
             args.Request()?.Uri(&mut uri)?;
             let uri = webview2_com::take_pwstr(uri);
+            // Der PDF-Viewer speichert seine Unterschriften (nur über die geheime Adresse des Tabs, siehe pdf.rs)
+            let mut method = PWSTR::null();
+            args.Request()?.Method(&mut method)?;
+            if webview2_com::take_pwstr(method) == "POST" && uri.starts_with("http://glass-pdf.localhost/") {
+                let body = args.Request()?.Content().ok().map(|stream| read_stream(&stream)).unwrap_or_default();
+                let status = if pdf::save_signatures(&docs, &uri, &body) { 204 } else { 403 };
+                let headers = windows::core::w!("Access-Control-Allow-Origin: *\r\nCache-Control: no-store");
+                let response = env.CreateWebResourceResponse(None, status, windows::core::w!(""), headers)?;
+                args.SetResponse(&response)?;
+                return Ok(());
+            }
             // Der PDF-Viewer und seine Dateien kommen aus der Exe (siehe pdf.rs)
             if let Some((status, mime, body)) = pdf::serve(&docs, &uri, wallpaper) {
                 let stream = windows::Win32::UI::Shell::SHCreateMemStream(Some(&body));
@@ -1469,6 +1480,20 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
     }));
     let mut token = 0;
     let _ = unsafe { wv.add_WebResourceRequested(&handler, &mut token) };
+}
+
+/// Inhalt einer Anfrage (POST) ganz auslesen.
+fn read_stream(stream: &windows::Win32::System::Com::IStream) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let mut read = 0u32;
+        let ok = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read)) };
+        if ok.is_err() || read == 0 {
+            return out;
+        }
+        out.extend_from_slice(&buf[..read as usize]);
+    }
 }
 
 /// Adresse, Hostname oder Suchbegriff → URL.

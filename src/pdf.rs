@@ -28,11 +28,13 @@ struct Inner {
     pending: RefCell<VecDeque<(String, Vec<u8>)>>,
     /// Geheime Adresse des Wallpapers für diesen Tab – andere Seiten sollen das Hintergrundbild nicht abrufen können.
     wall: String,
+    /// Ebenso für die gespeicherten Unterschriften (lesen und schreiben, siehe `save_signatures`).
+    sigs: String,
 }
 
 impl Default for Documents {
     fn default() -> Self {
-        Self(Rc::new(Inner { pending: RefCell::default(), wall: token() }))
+        Self(Rc::new(Inner { pending: RefCell::default(), wall: token(), sigs: token() }))
     }
 }
 
@@ -126,7 +128,8 @@ fn paused(core: &ICoreWebView2, docs: &Documents, p: &Value) {
         let html = VIEWER_HTML
             .replace("{{TITLE}}", &escape_html(&name))
             .replace("{{DOC}}", &format!("{HOST}doc/{}", docs.add(bytes)))
-            .replace("{{WALL}}", &format!("{HOST}wallpaper/{}", docs.0.wall));
+            .replace("{{WALL}}", &format!("{HOST}wallpaper/{}", docs.0.wall))
+            .replace("{{SIGS}}", &format!("{HOST}signatures/{}", docs.0.sigs));
         let fulfill = json!({
             "requestId": id,
             "responseCode": 200,
@@ -159,9 +162,16 @@ fn call(core: &ICoreWebView2, method: &str, params: Value, done: impl FnOnce(Opt
 pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec<u8>>) -> Option<(u16, &'static str, Cow<'static, [u8]>)> {
     let path = uri.strip_prefix(HOST)?.split(['?', '#']).next().unwrap_or_default();
     let wall = path.strip_prefix("wallpaper/").is_some_and(|key| key == docs.0.wall);
+    let sigs = path.strip_prefix("signatures/").is_some_and(|key| key == docs.0.sigs);
     let body: Option<Cow<'static, [u8]>> = match path {
         "viewer.mjs" => Some(Cow::Borrowed(include_bytes!("pdf/viewer.mjs"))),
         "viewer.css" => Some(Cow::Borrowed(include_bytes!("pdf/viewer.css"))),
+        "editor.mjs" => Some(Cow::Borrowed(include_bytes!("pdf/editor.mjs"))),
+        "organize.mjs" => Some(Cow::Borrowed(include_bytes!("pdf/organize.mjs"))),
+        // Deutsche Texte für die Werkzeuge von PDF.js (Englisch bleibt als Rückfall eingebaut)
+        "l10n/locale.json" => Some(Cow::Borrowed(br#"{"de":"de.ftl"}"#)),
+        "l10n/de.ftl" => Some(Cow::Borrowed(include_bytes!("pdf/de.ftl"))),
+        _ if sigs => Some(Cow::Owned(std::fs::read(signatures_file()).unwrap_or_else(|_| b"[]".to_vec()))),
         // Dieselben Glas-Bausteine wie die Oberfläche (ui.html)
         "glass-lens.js" => Some(Cow::Borrowed(include_bytes!("glass-lens.js"))),
         "glass-rim.js" => Some(Cow::Borrowed(include_bytes!("glass-rim.js"))),
@@ -175,6 +185,9 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
     let mime = match path.rsplit('.').next().unwrap_or_default() {
         _ if wall => match &body { Some(b) if b.starts_with(b"\x89PNG") => "image/png", _ => "image/jpeg" },
         _ if path.starts_with("doc/") => "application/pdf",
+        _ if sigs => "application/json",
+        "json" => "application/json",
+        "ftl" => "text/plain; charset=utf-8",
         "mjs" | "js" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "wasm" => "application/wasm",
@@ -185,6 +198,31 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
         Some(body) => (200, mime, body),
         None => (404, "text/plain", Cow::Borrowed(b"")),
     })
+}
+
+/// Der Viewer speichert seine Unterschriften (POST an die geheime Adresse des Tabs, JSON-Liste).
+/// `false`: nicht diese Adresse oder kein gültiger Inhalt – dann bleibt die Datei unverändert.
+pub fn save_signatures(docs: &Documents, uri: &str, body: &[u8]) -> bool {
+    let Some(path) = uri.strip_prefix(HOST) else { return false };
+    if path.split(['?', '#']).next() != Some(format!("signatures/{}", docs.0.sigs).as_str()) || body.len() > MAX_SIGNATURES {
+        return false;
+    }
+    let Ok(list @ Value::Array(_)) = serde_json::from_slice::<Value>(body) else { return false };
+    let file = signatures_file();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(file, list.to_string()).is_ok()
+}
+
+/// Höchstens so groß darf die Liste der Unterschriften werden (wenige, als Linienzüge).
+const MAX_SIGNATURES: usize = 4 << 20;
+
+fn signatures_file() -> std::path::PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(|p| std::path::PathBuf::from(p).join("GlassBrowser"))
+        .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"))
+        .join("signatures.json")
 }
 
 /// Dateiname für den Tab-Titel: aus `Content-Disposition`, sonst der letzte Teil der Adresse.
@@ -252,6 +290,17 @@ mod tests {
         assert_eq!(serve(&docs, &uri, none).unwrap().0, 404);
         assert_eq!(serve(&docs, "https://example.com/", none), None);
         assert_eq!(serve(&docs, &format!("{HOST}pdf.min.mjs"), none).unwrap().0, 200);
+    }
+
+    #[test]
+    fn signatures_only_with_the_tabs_key() {
+        let docs = Documents::default();
+        let uri = format!("{HOST}signatures/{}", docs.0.sigs);
+        assert!(!save_signatures(&docs, &format!("{HOST}signatures/guess"), b"[]"));
+        assert!(!save_signatures(&Documents::default(), &uri, b"[]"));
+        assert!(!save_signatures(&docs, &uri, br#"{"not":"a list"}"#));
+        assert_eq!(serve(&docs, &format!("{HOST}signatures/guess"), || None).unwrap().0, 404);
+        assert_eq!(serve(&docs, &uri, || None).unwrap().1, "application/json");
     }
 
     #[test]

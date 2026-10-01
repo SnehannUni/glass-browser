@@ -18,6 +18,10 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
   Mails aller Postfächer zusammen, rechts das echte Postfach mit der gewählten Mail (siehe unten)
 - **PDF-Viewer** – eigener Viewer auf Basis von PDF.js statt des Edge-Viewers: Vorschaubilder, Inhaltsverzeichnis,
   Suche, Zoom (auch Strg+Mausrad und Touchpad), dunkle Seiten, Drucken und Herunterladen
+- **PDFs bearbeiten wie in Acrobat** – Werkzeugleiste rechts im PDF-Viewer: Text hervorheben, Textfelder, Stift,
+  Bilder, Unterschriften (zeichnen, tippen oder als Bild; bis zu 5 werden gespeichert), Formulare ausfüllen;
+  „Seiten organisieren“ zum Drehen, Löschen, Umsortieren (Ziehen oder Strg+Pfeil), Einfügen anderer PDFs und
+  Extrahieren einzelner Seiten. Speichern (Strg S) schreibt alles ins PDF.
 
 ## Bauen
 
@@ -39,12 +43,12 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
 | `src/mail.rs`, `src/mail-content.js` | Mail-Ansicht: Postfächer im Hintergrund, Ungelesene und neueste Mails aus den Web-Postfächern |
-| `src/pdf.rs`, `src/pdf/` | PDF-Viewer: PDF-Antworten abfangen (DevTools `Fetch`) und Oberfläche; PDF.js liegt in `src/pdf/vendor` |
+| `src/pdf.rs`, `src/pdf/` | PDF-Viewer: PDF-Antworten abfangen (DevTools `Fetch`) und Oberfläche; Bearbeiten in `editor.mjs`, Seiten in `organize.mjs`; PDF.js und pdf-lib liegen in `src/pdf/vendor` |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
 | `build.rs` | bettet das Icon, die Programminfos und PDF.js in die Exe ein |
 
-Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter `%LOCALAPPDATA%\GlassBrowser`.
+Browserdaten, Filterlisten, die Ausnahmeliste des Werbeblockers und gespeicherte Unterschriften (`signatures.json`) liegen unter `%LOCALAPPDATA%\GlassBrowser`.
 
 ## Mail
 
