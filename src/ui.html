@@ -273,7 +273,7 @@
   /* Startbildschirm: Aus dem Logo klappt ein Kreis aus Anbietern nach rechts auf, jeder in seiner eigenen
      Glaskugel. Der gewählte sitzt links an der Stelle des Knopfs; wählt man einen anderen, dreht er sich dorthin. */
   #wheel {
-    --slot: 46px; --orbit: 78px; --rot: 0deg; /* --orbit = WHEEL_ORBIT im Skript */
+    --slot: 46px; --orbit: 78px; /* --orbit = WHEEL_ORBIT im Skript */
     position: fixed; z-index: 11; width: calc(2 * var(--orbit) + var(--slot) + 10px); aspect-ratio: 1;
     display: none; pointer-events: none;
   }
@@ -281,28 +281,33 @@
   body.wheel-open #btn-engine { opacity: 0; }
   /* Knopf und oberster Kreis blenden weich ineinander über (siehe openWheel/closeWheel) */
   body.start #btn-engine { transition: transform .45s var(--spring), background-color .2s, opacity .18s; }
-  #wheel .spin { position: absolute; inset: 0; transform: rotate(var(--rot)); transition: transform .7s var(--spring); }
+  #wheel .spin { position: absolute; inset: 0; isolation: isolate; } /* Stapel der Kreise unter Stift und Reihe */
   @property --off { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
   @property --travel-scale { syntax: "<number>"; inherits: false; initial-value: 1; }
   @property --arrival-scale { syntax: "<number>"; inherits: true; initial-value: 1; }
-  #wheel .slot {
+  #wheel :is(.slot, .wheel-edit) {
     position: absolute; left: 50%; top: 50%; width: var(--slot); height: var(--slot); margin: calc(var(--slot) / -2);
     border-radius: 50%; display: grid; place-items: center; pointer-events: auto;
-    /* auf die Umlaufbahn setzen (Platz 0 links, --off = Aus-/Eindrehen), dann zurückdrehen: die Logos bleiben aufrecht */
-    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--orbit))) rotate(calc(90deg - var(--a) - var(--off) - var(--rot))) scale(calc(var(--arrival-scale) * var(--travel-scale)));
+    /* auf die Umlaufbahn setzen (--a: Winkel ab links im Uhrzeigersinn, --off = Aus-/Eindrehen), dann zurückdrehen:
+       die Logos bleiben aufrecht. Beim Drehen ändert turnWheel --a, die transition bewegt den Kreis auf der Bahn. */
+    transform: rotate(calc(var(--a) - 90deg + var(--off))) translateY(calc(-1 * var(--r, var(--orbit)))) rotate(calc(90deg - var(--a) - var(--off))) scale(calc(var(--arrival-scale) * var(--travel-scale)));
     transition: transform .7s var(--spring), background-color .2s;
     /* ohne Schlagschatten: gestapelt würden sich die Schatten aufaddieren */
     box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 -10px 18px -12px rgba(255, 255, 255, .16);
   }
   /* Stapel: der gewählte liegt obenauf, darunter die übrigen – je weiter weg, desto tiefer (z-index aus turnWheel) */
   #wheel .slot.on { background-color: rgba(255, 255, 255, .22); }
-  #wheel.instant :is(.spin, .slot) { transition: none; }
+  #wheel.instant :is(.slot, .wheel-edit) { transition: none; }
   #wheel .slot img { scale: calc(1 / var(--arrival-scale)); width: 24px; height: 24px; border-radius: 5px; transition: transform .45s var(--spring); }
   #wheel .slot:is(:hover, .vh):not(.on) { background-color: rgba(255, 255, 255, .14); }
   #wheel .slot:active img { transform: scale(1.15); }
-  #wheel .slot.edit .ic { scale: calc(1 / var(--arrival-scale)); width: 18px; height: 18px; color: var(--label-2); }
-  #wheel .slot.edit:is(:hover, .vh) .ic { color: var(--label); }
-  #wheel.editing :is(.slot.edit, .slot.target) { background-color: rgba(255, 255, 255, .22); }
+  /* Stift: Kreis wie die anderen auf dem letzten Platz (unten links). Er fächert mit auf und dreht mit ein, beim
+     Wechseln des Anbieters bleibt er stehen; wer dabei über seinen Platz muss, läuft unter ihm durch (z-index). */
+  #wheel .wheel-edit { color: var(--label-2); transition: transform .7s var(--spring), background-color .2s, color .2s; }
+  #wheel .wheel-edit .ic { width: 18px; height: 18px; }
+  #wheel .wheel-edit:is(:hover, .vh) { color: var(--label); background-color: rgba(255, 255, 255, .14); }
+  #wheel.editing :is(.wheel-edit, .slot.target) { background-color: rgba(255, 255, 255, .22); }
+  #wheel.editing .wheel-edit { color: var(--label); --r: 0px; } /* beim Bearbeiten gleitet der Stift in die Mitte */
   #wheel.editing .slot.on { background-color: transparent; }
   /* Stift: Vom Kreis oben links reihen sich die übrigen Anbieter schräg nach außen auf (Lage: pickAt im Skript);
      getauscht wird dieser Kreis (.target) */
@@ -1832,12 +1837,18 @@
   // Startbildschirm: Anbieter-Rad. Es klappt nach rechts auf, der gewählte Anbieter sitzt links am Knopf.
   const wheel = $('wheel'), wheelSpin = wheel.querySelector('.spin');
   const WHEEL_ORBIT = 78;
-  let wheelRot = 0, wheelTimer = 0;
-  // Die Kreise: je Anbieter im Rad einer (`shown`, gleiche Reihenfolge), dahinter der Stift
+  let wheelTimer = 0;
+  // Die Kreise: je Anbieter im Rad einer (`shown`, gleiche Reihenfolge). Das Rad hat einen Platz mehr als Anbieter:
+  // Der letzte (unten links, gleich vor dem gewählten) gehört fest dem Stift. Die Anbieter rücken nur über die
+  // übrigen Plätze – der gewählte links am Knopf, die nächsten im Uhrzeigersinn dahinter.
   const shown = [ENGINES[0], ...wheelIds.map(engineById)];
   const STEP = 360 / (shown.length + 1);
   const slots = shown.map((_, i) => {
     const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'glass slot';
+    slot.angle = i * STEP; // fortlaufend, damit jede Drehung den kurzen Weg in ihre Richtung nimmt
+    slot.style.setProperty('--a', `${slot.angle}deg`);
     slot.append(engineImg(shown[i]));
     slot.title = shown[i].name;
     slot.addEventListener('pointerdown', (ev) => {
@@ -1847,24 +1858,23 @@
     });
     return slot;
   });
-  const editSlot = document.createElement('button');
-  editSlot.innerHTML = svg('pencil', 'ic'); // (der Glasrand ist ein eigenes svg)
-  editSlot.title = 'Rad anpassen';
-  editSlot.addEventListener('pointerdown', (ev) => {
+  // Der Stift sitzt auf dem letzten Platz: Er fächert mit den anderen auf (moveSlots), dreht aber nie weiter
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'glass wheel-edit';
+  editBtn.style.setProperty('--a', `${shown.length * STEP}deg`);
+  editBtn.innerHTML = svg('pencil', 'ic'); // (der Glasrand ist ein eigenes svg)
+  editBtn.title = 'Rad anpassen';
+  editBtn.addEventListener('pointerdown', (ev) => {
     ev.preventDefault(); ev.stopPropagation();
     setWheelEditing(!wheelEditing);
   });
-  slots.push(editSlot);
-  slots.forEach((slot, i) => {
-    slot.type = 'button';
-    slot.className = slot === editSlot ? 'glass slot edit' : 'glass slot';
-    slot.style.setProperty('--a', `${i * STEP}deg`);
-  });
-  wheelSpin.append(...slots);
+  const circles = [...slots, editBtn]; // alles, was auffächert und sich gegenseitig ausspart (maskSlots)
+  wheelSpin.append(...circles);
 
   // Stift: Vom Kreis oben links (der nach dem gewählten) reihen sich schräg nach außen die Anbieter auf, die nicht im Rad stehen.
   // Ein Klick tauscht diesen Kreis gegen den Anbieter (der bisherige rückt in die Reihe), die Pfeile neben ihm
-  // drehen einen Nachbarn an seine Stelle. Google lässt sich nicht tauschen, der Stift auch nicht.
+  // drehen einen Nachbarn an seine Stelle. Google lässt sich nicht tauschen.
   const picks = document.createElement('div');
   picks.className = 'picks';
   // Auf der Linie von der Radmitte durch den Platz oben links, außerhalb der Umlaufbahn: So stößt die Reihe an
@@ -1912,7 +1922,7 @@
     wheelEditing = on;
     wheel.classList.toggle('editing', on);
     if (!on) { picks.replaceChildren(); slots.forEach((s) => s.classList.remove('target')); return; }
-    // Läge der Stift unter der Spalte (der letzte Anbieter ist gewählt): einen Platz zurückdrehen
+    // Läge Google unter der Reihe (der letzte Anbieter ist gewählt): einen Platz zurückdrehen
     if (editTarget() >= shown.length) { setEngine(shown[shown.length - 2]); turnWheel(-1); } else turnWheel();
     picks.replaceChildren(...ENGINES.filter((e) => !shown.includes(e)).map((e, i) => {
       const pick = document.createElement('button');
@@ -1948,34 +1958,36 @@
     }
   }
   // Einen Platz weiterdrehen: -1 im Uhrzeigersinn (von unten rückt der nächste nach), +1 zurück.
-  // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google, nicht der Stift).
+  // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google).
   function rotateWheel(step) {
     const list = wheelEditing ? shown.slice(0, -1) : shown, n = list.length;
     setEngine(list[(((list.indexOf(engine) + step) % n) + n) % n]);
     turnWheel(step < 0 ? 1 : -1);
   }
-  // Auf den gewählten Anbieter drehen – im Uhrzeigersinn (`dir` 1) oder dagegen (-1)
+  // Auf den gewählten Anbieter drehen – im Uhrzeigersinn (`dir` 1) oder dagegen (-1). Jeder Kreis rückt auf seinen
+  // Platz; der über das Ende hinaus muss, läuft dabei unter dem Stift durch (zwei Plätze in derselben Zeit).
   function turnWheel(dir = 1) {
-    const n = slots.length, sel = shown.indexOf(engine), target = -sel * STEP;
-    let turn = (((target - wheelRot) % 360) + 360) % 360;
-    if (dir < 0 && turn) turn -= 360;
-    wheelRot += turn;
-    wheel.style.setProperty('--rot', `${wheelRot}deg`);
-    if (turn && wheelEditing) {
+    const n = slots.length, sel = shown.indexOf(engine);
+    let moved = false;
+    slots.forEach((s, i) => {
+      const j = (i - sel + n) % n;
+      let turn = (((j * STEP - s.angle) % 360) + 360) % 360;
+      if (dir < 0 && turn) turn -= 360;
+      if (turn) { s.angle += turn; s.style.setProperty('--a', `${s.angle}deg`); moved = true; }
+      s.classList.toggle('on', i === sel);
+      s.classList.toggle('target', wheelEditing && i === sel + 1);
+      s.style.zIndex = n - j;
+    });
+    if (moved && wheelEditing) {
       wheel.classList.add('turning');
       clearTimeout(turningTimer);
       turningTimer = setTimeout(() => wheel.classList.remove('turning'), 650);
     }
-    slots.forEach((s, i) => {
-      s.classList.toggle('on', i === sel);
-      s.classList.toggle('target', wheelEditing && i === sel + 1);
-      s.style.zIndex = n - ((i - sel + n) % n);
-    });
   }
   function openWheel() {
     closeSuggest();
     clearTimeout(wheelTimer);
-    slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
+    circles.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
     delete wheel.dataset.closing;
     wheel.classList.add('open', 'instant');
     // Mittelpunkt des Rads eine Umlaufbahn rechts vom Knopf: so liegt der linke Platz genau auf ihm
@@ -1986,7 +1998,8 @@
     requestAnimationFrame(() => requestAnimationFrame(() => wheel.classList.remove('instant')));
     document.body.classList.add('wheel-open');
     slots[shown.indexOf(engine)].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180 });
-    moveSlots(true);
+    // Aufgefächert liegt der Stift obenauf: Wer beim Drehen über seinen Platz muss, läuft unter ihm durch
+    moveSlots(true).then(() => { if (!wheel.dataset.closing) editBtn.style.zIndex = slots.length + 2; }, () => {});
     if (!maskFrame) maskFrame = requestAnimationFrame(maskSlots);
   }
   // Die Kreise sind aus Glas, also durchscheinend: Wo einer über einem anderen liegt, wäre die Fläche doppelt so
@@ -1995,14 +2008,14 @@
   let maskFrame = 0;
   function maskSlots() {
     maskFrame = 0;
-    if (!wheel.classList.contains('open')) { slots.forEach((s) => { s.style.mask = ''; }); return; }
-    const rects = slots.map((s) => s.getBoundingClientRect());
-    slots.forEach((s, i) => {
+    if (!wheel.classList.contains('open')) { circles.forEach((s) => { s.style.mask = ''; }); return; }
+    const rects = circles.map((s) => s.getBoundingClientRect());
+    circles.forEach((s, i) => {
       const r = rects[i], half = r.width / 2, scale = r.width / s.offsetWidth, z = +s.style.zIndex;
       const holes = [];
       rects.forEach((q, k) => {
         const radius = q.width / 2, dx = q.left + radius - r.left - half, dy = q.top + radius - r.top - half;
-        if (+slots[k].style.zIndex <= z || Math.hypot(dx, dy) >= half + radius) return;
+        if (+circles[k].style.zIndex <= z || Math.hypot(dx, dy) >= half + radius) return;
         holes.push(`radial-gradient(circle at ${(half + dx) / scale}px ${(half + dy) / scale}px, transparent ${(radius - .25) / scale}px, #000 ${(radius + .5) / scale}px)`);
       });
       s.style.mask = holes.join(', ');
@@ -2015,19 +2028,21 @@
   // Schließen: jeder Kreis, der links am Knopf ankommt, bleibt dort liegen – unter dem bisherigen Anbieter,
   // nur ein neu gewählter (`pick`) legt sich obendrauf.
   function moveSlots(out, pick = -1) {
-    const n = slots.length, from = shown.indexOf(engine), last = n - 1; // `from` liegt gerade links am Knopf
+    // `from` liegt gerade links am Knopf; `last`: weitester Weg in Plätzen (das Rad hat einen mehr, den des Stifts)
+    const n = slots.length, from = shown.indexOf(engine), last = n;
     const tuckedScale = matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : .82;
-    return Promise.all(slots.map((s, i) => {
-      const j = (i - from + n) % n; // Plätze im Uhrzeigersinn hinter dem Knopf
+    return Promise.all(circles.map((s, i) => {
+      // Plätze im Uhrzeigersinn hinter dem Knopf; der Stift hat immer den letzten und liegt im Stapel zuunterst
+      const j = s === editBtn ? n : (i - from + n) % n;
       s.style.zIndex = i === pick ? n + 1 : n - j;
-      if (pick >= 0) s.classList.toggle('on', i === pick);
+      if (pick >= 0 && s !== editBtn) s.classList.toggle('on', i === pick);
       if (!j) return null;
       const deg = (k) => ({ '--off': `${k * STEP}deg` });
       if (out) {
         return s.animate([{ ...deg(-j), '--travel-scale': tuckedScale, offset: 0 }, { ...deg(-j), '--travel-scale': tuckedScale, offset: (last - j) / last }, { ...deg(0), '--travel-scale': 1, offset: 1 }],
           { duration: 750, easing: 'cubic-bezier(.3, 1.1, .45, 1)', fill: 'backwards' }).finished;
       }
-      const d = n - j; // so viele Plätze bis zum Knopf
+      const d = n + 1 - j; // so viele Plätze bis zum Knopf (über den des Stifts hinweg)
       // Nicht gewählte Kugeln samt Logo vor dem Eintauchen verkleinern.
       // Der gewählte Anbieter behält seinen separaten Ankunfts-Pop.
       const endScale = i === pick ? 1 : tuckedScale;
@@ -2044,7 +2059,8 @@
   function swapWheelIcon(from, to) {
     const n = slots.length, j = (to - from + n) % n;
     if (!j || matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
-    const progress = (n - j) / (n - 1);
+    const progress = (n + 1 - j) / n; // Weg bis zum Knopf wie in moveSlots
+
     // moveSlots nutzt cubic-bezier(.45, 0, .4, 1): Wegfortschritt in Zeit zurückrechnen.
     let lo = 0, hi = 1;
     for (let i = 0; i < 16; i++) {
@@ -2087,7 +2103,7 @@
     }).then(() => {
       delete wheel.dataset.closing;
       wheel.classList.remove('open');
-      slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
+      circles.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
       if (editing() && !suggestBox.classList.contains('open')) refreshSuggest(input.value);
     }, () => {}); // abgebrochen, weil das Rad gleich wieder aufgeht
   }
