@@ -688,6 +688,14 @@ impl Browser {
 
     /// Zurück im Verlauf – steht die Seite schon am Anfang, geht es weiter zum Startbildschirm.
     fn go_back(&mut self) {
+        // Mail-Ansicht (ein Tab ohne eigene Webseite): zurück zum Startbildschirm, der Tab ist wieder leer
+        if std::mem::take(&mut self.tabs[self.active].mail_view) {
+            self.tabs[self.active].title.clear();
+            self.layout();
+            self.sync_ui();
+            self.focus_address();
+            return;
+        }
         let tab = &self.tabs[self.active];
         let Some(wv) = tab.webview.as_ref().filter(|_| !tab.home) else { return };
         let mut can = windows::core::BOOL::default();

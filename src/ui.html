@@ -1561,7 +1561,7 @@
     reload.innerHTML = svg(tab?.loading ? 'stop' : 'reload');
     reload.title = tab?.loading ? 'Laden stoppen' : 'Neu laden (F5)';
     reload.style.visibility = tab?.page ? 'visible' : 'hidden';
-    $('btn-back').disabled = !tab?.page;
+    $('btn-back').disabled = !(tab?.page || tab?.mail); // aus der Mail-Ansicht führt Zurück zum Startbildschirm
     $('btn-fwd').disabled = !(tab?.page || tab?.home);
     renderStar();
     renderShield();
