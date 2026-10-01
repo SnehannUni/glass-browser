@@ -11,6 +11,8 @@ mod clipboard;
 mod mail;
 mod downloads;
 mod pdf;
+mod default_browser;
+mod single_instance;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -141,6 +143,8 @@ enum UserEvent {
     PdfOpen,
     /// Der PDF-Viewer hat ein neues PDF gebaut (etwa aus Bildern): in einem neuen Tab zeigen (Adresse aus `pdf::post`).
     PdfNewTab(String),
+    /// Eine weitere Instanz wurde mit diesen Adressen gestartet (z. B. ein Link aus einer anderen App).
+    OpenUrls(Vec<String>),
 }
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
@@ -899,6 +903,10 @@ impl Browser {
         }
     }
 
+    fn show_default_browser(&self) {
+        let _ = self.ui.evaluate_script(&format!("window.setDefaultBrowser?.({})", default_browser::is_default()));
+    }
+
     fn focus_address(&self) {
         let _ = self.ui.focus();
         let _ = self.ui.evaluate_script("window.focusAddress()");
@@ -930,6 +938,12 @@ impl Browser {
                 self.show_update();
                 self.sync_mail();
                 self.sync_downloads(false);
+                self.show_default_browser();
+            }
+            // Hinweis auf dem Startbildschirm: anmelden und die Windows-Einstellung dafür öffnen
+            "default_browser" => {
+                default_browser::register();
+                default_browser::open_settings();
             }
             // Mail-Knopf und Mail-Ansicht: Postfach (oder eine Mail darin) rechts zeigen, Postfach trennen
             "mail_view" => self.mail_view(),
@@ -1199,6 +1213,13 @@ impl Browser {
                 }
             }
             UserEvent::PdfNewTab(url) => self.new_tab(Some(url), false),
+            UserEvent::OpenUrls(urls) => {
+                for url in urls {
+                    self.new_tab(Some(resolve_input(&url)), false);
+                }
+                self.window.set_minimized(false);
+                self.window.set_focus();
+            }
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -1766,8 +1787,29 @@ fn style_frame(window: &Window) {
 fn main() -> wry::Result<()> {
     // Nach einem Update zuerst auf die alte Instanz warten – beide dürfen WebView2 nicht gleichzeitig öffnen.
     let args = update::startup(std::env::args().skip(1).collect());
+    // Dateien mit vollem Pfad: Das offene Glass hat ein anderes Arbeitsverzeichnis
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|a| match std::path::absolute(&a) {
+            Ok(path) if path.is_file() => path.display().to_string(),
+            _ => a,
+        })
+        .collect();
+    // Läuft Glass schon, öffnet das offene Fenster die Adressen als Tabs.
+    let listener = single_instance::claim();
+    if listener.is_none() && single_instance::forward(&args) {
+        return Ok(());
+    }
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    if let Some(listener) = listener {
+        let p_open = proxy.clone();
+        listener.listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
+    }
+    // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf).
+    if update::current_build().is_some() {
+        std::thread::spawn(default_browser::register);
+    }
 
     // Icon aus der Exe (Ressource 1, eingebettet von build.rs) – Windows wählt je Stelle die passende Größe
     let icon = |px: u32| Icon::from_resource(1, Some(tao::dpi::PhysicalSize::new(px, px))).ok();
@@ -1931,7 +1973,13 @@ fn main() -> wry::Result<()> {
                     browser.sync_geometry();
                 }
                 WindowEvent::Moved(_) => browser.sync_geometry(),
-                WindowEvent::Focused(_) => browser.sync_ui(),
+                WindowEvent::Focused(focused) => {
+                    browser.sync_ui();
+                    // Zurück aus den Windows-Einstellungen: Hinweis ausblenden, sobald Glass Standard ist
+                    if focused {
+                        browser.show_default_browser();
+                    }
+                }
                 _ => {}
             },
             Event::UserEvent(event) => {
