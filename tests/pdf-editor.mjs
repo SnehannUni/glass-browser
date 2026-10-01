@@ -170,7 +170,12 @@ try {
   assert.ok(look && look.fill !== 'none' && look.fill.startsWith('rgb'), `highlight is painted: ${JSON.stringify(look)}`);
   const ink = await page(`(() => { const s = document.querySelector('.canvasWrapper svg.draw'); return s && getComputedStyle(s).stroke; })()`);
   assert.equal(ink, 'rgb(0, 0, 0)', 'pen keeps its chosen colour (black)');
-  console.log('PASS: selecting text with the highlighter highlights it in colour.');
+  // Umfärben über die Farben in den Einstellungen rechts – an der Markierung selbst gibt es keinen Farbwähler
+  await waitFor(() => page(`!!document.querySelector('.highlightEditor.selectedEditor')`), 'new highlight selected');
+  assert.equal(await page(`[...document.querySelectorAll('.editToolbar .colorPicker')].filter(b => b.offsetWidth).length`), 0, 'no second colour picker on the highlight');
+  await pressButton('#tool-options .swatches[data-param="highlight"] .swatch:nth-child(3)');
+  await waitFor(() => page(`getComputedStyle(document.querySelector('.page[data-page-number="2"] .canvasWrapper svg.highlight')).fill === 'rgb(128, 235, 255)'`), 'highlight recoloured from the panel');
+  console.log('PASS: selecting text with the highlighter highlights it in colour; the panel recolours it.');
 
   // ---------- Unterschreiben ----------
   await pressButton('#tools [data-tool="signature"]');
