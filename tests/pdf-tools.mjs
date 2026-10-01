@@ -213,7 +213,13 @@ try {
   const radius = center[1] - (handle.y + handle.h / 2);
   const arc = [0, 30, 60, 90].map((d) => [center[0] + radius * Math.sin(d * Math.PI / 180), center[1] - radius * Math.cos(d * Math.PI / 180)]);
   await H.drag([[handle.x + handle.w / 2, handle.y + handle.h / 2], ...arc.slice(1)]);
-  await waitFor(async () => { const b = await H.rect('.stampEditor'); return b.h > b.w; }, 'stamp turned upright');
+  // Erst wenn der neu gezeichnete Editor den alten ersetzt hat (die Vorschau ist nur gedreht dargestellt)
+  await waitFor(() => page(`(() => { const e = document.querySelectorAll('.stampEditor'); return e.length === 1 && !e[0].classList.contains('rotating') && e[0].offsetHeight > e[0].offsetWidth; })()`), 'stamp turned upright');
+  // Gedreht um die eigene Mitte: sie bleibt, wo sie war – auch die Vorschau beim Ziehen dreht um die Mitte
+  const turned = await H.rect('.stampEditor');
+  assert.ok(Math.hypot(turned.x + turned.w / 2 - center[0], turned.y + turned.h / 2 - center[1]) < 3, `stamp keeps its centre: ${JSON.stringify({ turned, center })}`);
+  const origin = await page(`(() => { const e = document.querySelector('.stampEditor'); e.classList.add('rotating'); const o = getComputedStyle(e).transformOrigin.split(' ').map(parseFloat); e.classList.remove('rotating'); const r = e.getBoundingClientRect(); return [o, r.width / 2, r.height / 2]; })()`);
+  assert.ok(Math.abs(origin[0][0] - origin[1]) < 1 && Math.abs(origin[0][1] - origin[2]) < 1, `preview rotates around the centre: ${JSON.stringify(origin)}`);
   await H.tool('none');
   result = await H.inspect();
   const types = result.pages.flatMap(p => p.annotations.map(a => a.type));

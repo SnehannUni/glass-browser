@@ -642,12 +642,12 @@ export function initTools(app) {
     el.append(handle);
   }
   /** Ein Bild-Editor, den Glass nicht selbst gesetzt hat (etwa nach dem Speichern neu geladen): sein Bild als Vorlage. */
-  async function adopt(el) {
+  async function adopt(el, r = el.getBoundingClientRect()) {
     const canvas = el.querySelector('canvas');
     const editor = [...rotatable.values()].find((i) => i.editor.div === el)?.editor;
     if (editor) return rotatable.get(editor.id);
     if (!canvas) return null;
-    const n = +el.closest('.page').dataset.pageNumber, g = app.pageGeometry(n), r = el.getBoundingClientRect();
+    const n = +el.closest('.page').dataset.pageNumber, g = app.pageGeometry(n);
     const [x1, y1] = g.eventToPdf({ clientX: r.left, clientY: r.top }), [x2, y2] = g.eventToPdf({ clientX: r.right, clientY: r.bottom });
     const blob = await new Promise((done) => canvas.toBlob(done));
     // Den Editor selbst führt der uiManager von PDF.js nach seiner ID (= ID des Elements)
@@ -674,13 +674,16 @@ export function initTools(app) {
       delta = snap(raw, ev.shiftKey) - from;
       el.style.rotate = `${delta}deg`;
     };
+    // Vorschau bleibt stehen, bis das gedreht neu gezeichnete Bild den Editor ersetzt hat (kein Zurückspringen)
+    const reset = () => { el.classList.remove('rotating'); el.style.rotate = ''; };
     handle.onpointerup = async (ev) => {
       ev.stopPropagation();
       handle.onpointermove = handle.onpointerup = null;
-      el.classList.remove('rotating');
-      el.style.rotate = '';
-      if (Math.abs(delta) < .5) return;
-      const current = rotatable.get(el.id) || (await adopt(el));
+      if (Math.abs(delta) < .5) { reset(); return; }
+      try { await commit(); } finally { reset(); }
+    };
+    const commit = async () => {
+      const current = rotatable.get(el.id) || (await adopt(el, r));
       if (!current) { app.toast('Dieses Bild lässt sich nicht drehen.'); return; }
       // Mitte und Maßstab aus der jetzigen Lage – das Bild kann inzwischen verschoben oder skaliert sein
       const g = app.pageGeometry(current.n);
