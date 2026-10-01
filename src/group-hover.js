@@ -15,10 +15,11 @@
     const buttons = [...group.querySelectorAll(':scope > button.key')]
       .map(button => ({button, rect:button.getBoundingClientRect()}))
       .filter(({rect}) => rect.width > 0 && rect.height > 0);
-    // Rectangular, contiguous horizontal zones; disabled buttons keep their own
+    // Rectangular, contiguous zones; disabled buttons keep their own
     // zone so they cannot accidentally highlight an enabled neighbour.
     const target = buttons.reduce((best, candidate) => {
-      const distance = Math.abs(x - (candidate.rect.left + candidate.rect.width / 2));
+      // 2D: waagrechte Gruppen wie bisher, senkrechte (Werkzeugleiste im PDF-Viewer) genauso
+      const distance = Math.hypot(x - (candidate.rect.left + candidate.rect.width / 2), y - (candidate.rect.top + candidate.rect.height / 2));
       return !best || distance < best.distance ? {...candidate, distance} : best;
     }, null);
     if (!target || target.button.disabled) { clear(); return; }

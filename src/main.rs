@@ -10,6 +10,7 @@ mod resize_preview;
 mod clipboard;
 mod mail;
 mod downloads;
+mod pdf;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -130,6 +131,16 @@ enum UserEvent {
     MailSync,
     /// Beim Beenden: Die Anmeldungen der Postfächer sind gesichert (`mail_before_exit`), Glass darf zu.
     ExitReady,
+    /// Im Tab läuft der PDF-Viewer (pdf.rs) und möchte wissen, wo das Wallpaper hinter ihm liegt.
+    PdfViewer(u32),
+    /// Ein PDF von der Festplatte (file://-Adresse, Kommandozeile): im Viewer zeigen, damit Strg+S dorthin speichert.
+    OpenPdfFile(u32, std::path::PathBuf),
+    /// Der PDF-Viewer möchte „Speichern unter“ (Tab, Ticket aus `pdf::post`).
+    PdfSaveAs(u32, String),
+    /// Strg+O im PDF-Viewer: Datei auswählen und in einem neuen Tab öffnen.
+    PdfOpen,
+    /// Der PDF-Viewer hat ein neues PDF gebaut (etwa aus Bildern): in einem neuen Tab zeigen (Adresse aus `pdf::post`).
+    PdfNewTab(String),
 }
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
@@ -187,6 +198,8 @@ struct Tab {
     mail_view: bool,
     /// Von einer Webseite geöffnet (Link in neuem Tab): War darin nur ein Download, schließt Glass ihn wieder.
     popup: bool,
+    /// Zeigt gerade den PDF-Viewer: bekommt die Lage des Wallpapers (`sync_pdf_walls`).
+    pdf_viewer: bool,
 }
 
 impl Tab {
@@ -292,6 +305,7 @@ impl Browser {
         unsafe { windows_sys::Win32::Graphics::Dwm::DwmFlush() };
         if start.elapsed().as_secs_f64() >= self.chrome_slide_duration() {
             self.chrome_slide = None;
+            self.slide_pdf_viewers(None);
             self.layout();
             return;
         }
@@ -304,6 +318,64 @@ impl Browser {
             if let Some(wv) = self.mail.shown_tab().and_then(|t| t.webview.as_ref()) {
                 let _ = wv.set_bounds(to_rect(self.mail_pane(self.content_area())));
             }
+        }
+        // Der PDF-Viewer rechnet seine Lage in dieser Zeit selbst mit (`slide_pdf_viewers`) – eine Nachricht pro Bild
+        // käme ein Bild zu spät und ließe das Wallpaper in seinen Kapseln zittern
+    }
+
+    /// Beim Gleiten behält jede Seite ihre volle Größe, das Fenster schneidet unten bzw. rechts ab (`content_area`).
+    /// Der PDF-Viewer hält seine Leisten am Rand und sein Wallpaper trotzdem still: Er bekommt Beginn (Uhrzeit),
+    /// Dauer, Lage vorher/nachher und wie viel abgeschnitten ist, und rechnet in jedem Bild mit derselben Kurve
+    /// (`chrome_ease`) selbst aus, wo die Seite gerade steht (viewer.mjs `__glassSlide`). `None`: fertig.
+    fn slide_pdf_viewers(&self, slide: Option<([f64; 2], [f64; 2])>) {
+        let scale = self.window.scale_factor();
+        let size = self.window.inner_size().to_logical::<f64>(scale);
+        let pos = self.window.inner_position().unwrap_or_default().to_logical::<f64>(scale);
+        let full = |[x, y]: [f64; 2]| -> Area { [x, y, size.width - 2.0 * MARGIN, size.height - 2.0 * MARGIN] };
+        let clip = |[x, y, w, h]: Area| [(x + w - (size.width - MARGIN)).max(0.0), (y + h - (size.height - MARGIN)).max(0.0)];
+        let ms = self.chrome_slide_duration() * 1000.0;
+        // Beginn als Uhrzeit (ms seit 1970) – der Viewer vergleicht mit performance.timeOrigin + Bildzeit
+        let elapsed = self.chrome_slide.map(|(start, ..)| start.elapsed()).unwrap_or_default();
+        let start = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().saturating_sub(elapsed);
+        let start = start.as_secs_f64() * 1000.0;
+        let panes = |at: [f64; 2]| self.panes_in(full(at));
+        let messages: Vec<(usize, String)> = match slide {
+            Some((from, to)) => panes(from)
+                .into_iter()
+                .zip(panes(to))
+                .map(|((i, a), (_, b))| {
+                    let msg = json!({
+                        "from": clip(a), "to": clip(b), "ms": ms, "start": start,
+                        "wallFrom": [pos.x + a[0], pos.y + a[1]], "wallTo": [pos.x + b[0], pos.y + b[1]],
+                    });
+                    (i, msg.to_string())
+                })
+                .collect(),
+            None => self.panes().into_iter().map(|(i, _)| (i, "null".to_owned())).collect(),
+        };
+        for (i, msg) in messages {
+            let tab = &self.tabs[i];
+            if let Some(wv) = tab.webview.as_ref().filter(|_| tab.pdf_viewer) {
+                let _ = wv.evaluate_script(&format!("window.__glassSlide?.({msg})"));
+            }
+        }
+    }
+
+    /// Der PDF-Viewer legt das Wallpaper wie die Oberfläche deckungsgleich hinter sein Glas – dazu braucht er
+    /// die Lage seiner Seite auf dem Bildschirm (Fensterposition + Platz der Seite im Fenster) und den Monitor.
+    fn sync_pdf_walls(&self) {
+        let scale = self.window.scale_factor();
+        let pos = self.window.inner_position().unwrap_or_default().to_logical::<f64>(scale);
+        let (mpos, msize) = self
+            .window
+            .current_monitor()
+            .map(|m| (m.position().to_logical::<f64>(scale), m.size().to_logical::<f64>(scale)))
+            .unwrap_or_default();
+        for (i, [x, y, ..]) in self.panes() {
+            let tab = &self.tabs[i];
+            let Some(wv) = tab.webview.as_ref().filter(|_| tab.pdf_viewer) else { continue };
+            let geo = json!({ "x": pos.x + x, "y": pos.y + y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height });
+            let _ = wv.evaluate_script(&format!("window.__glassWall?.({geo})"));
         }
     }
 
@@ -347,6 +419,7 @@ impl Browser {
             .unwrap_or_default();
         let geo = json!({ "x": pos.x, "y": pos.y, "mx": mpos.x, "my": mpos.y, "mw": msize.width, "mh": msize.height, "floating": floating });
         let _ = self.ui.evaluate_script(&format!("window.setGeometry({geo})"));
+        self.sync_pdf_walls();
     }
 
     /// Positioniert alle Webseiten: sichtbare an ihren Platz, alle anderen ausgeblendet.
@@ -375,6 +448,7 @@ impl Browser {
         }
         self.mail_layout();
         self.round_content_views();
+        self.sync_pdf_walls();
     }
 
     /// Legt Tabs schlafen, die seit `SLEEP_AFTER` unsichtbar sind: Skripte und Timer stehen still, der Renderer
@@ -546,7 +620,9 @@ impl Browser {
             .iter()
             // Auf dem Startbildschirm (home) sieht die Oberfläche einen leeren Tab – mit „Vor“ zurück zur Seite
             .map(|t| {
-                let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), t.url.as_str()) };
+                // PDF von der Festplatte: im Adressfeld die Datei, nicht die Adresse des Viewers
+                let local = pdf::display_url(&t.url);
+                let (title, url) = if t.home { ("", "") } else { (t.title.as_str(), local.as_deref().unwrap_or(&t.url)) };
                 json!({
                     "id": t.id, "title": title, "url": url, "loading": t.loading && !t.home, "private": t.private,
                     "favicon": if t.home { "" } else if !t.page_favicon.is_empty() { &t.page_favicon } else { &t.favicon },
@@ -595,7 +671,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false, pdf_viewer: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -982,6 +1058,7 @@ impl Browser {
                     self.chrome_hidden = hidden;
                     let [tx, ty, ..] = self.resting_area();
                     self.chrome_slide = Some((std::time::Instant::now(), [x, y], [tx, ty]));
+                    self.slide_pdf_viewers(Some(([x, y], [tx, ty])));
                     self.layout();
                     self.sync_ui();
                 }
@@ -1094,6 +1171,34 @@ impl Browser {
             UserEvent::MailSleep(round) => self.mail_sleep(round),
             UserEvent::MailKeep => self.mail_keep(),
             UserEvent::ExitReady => {} // in der Ereignisschleife behandelt
+            UserEvent::PdfViewer(id) => {
+                if let Some(i) = self.index_of(id) {
+                    self.tabs[i].pdf_viewer = true;
+                    self.sync_pdf_walls();
+                }
+            }
+            UserEvent::OpenPdfFile(id, path) => {
+                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
+                    let _ = wv.load_url(&pdf::local_url(&path));
+                }
+            }
+            UserEvent::PdfSaveAs(id, ticket) => {
+                let hwnd = self.window.hwnd() as isize;
+                // Tests (tests/pdf-editor.mjs) speichern ohne Dialog in einen festen Ordner
+                let result = pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
+                    Some(dir) => Some(std::path::PathBuf::from(dir).join(name)),
+                    None => file_dialog(hwnd, true, name),
+                });
+                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
+                    let _ = wv.evaluate_script(&format!("window.__glassSaved?.({result})"));
+                }
+            }
+            UserEvent::PdfOpen => {
+                if let Some(path) = file_dialog(self.window.hwnd() as isize, false, "") {
+                    self.new_tab(Some(pdf::local_url(&path)), false);
+                }
+            }
+            UserEvent::PdfNewTab(url) => self.new_tab(Some(url), false),
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
@@ -1158,6 +1263,7 @@ impl Browser {
                     if loading {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
+                        tab.pdf_viewer = false;
                     } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
                         let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
                     }
@@ -1255,7 +1361,7 @@ fn build_content_webview(
     let webview = WebViewBuilder::new()
         .with_environment(ui.environment())
         .with_incognito(private)
-        .with_url(url)
+        // Keine Startadresse: die lädt erst `pdf::intercept`, sobald PDFs abgefangen werden
         .with_bounds(bounds)
         .with_visible(visible)
         .with_devtools(true)
@@ -1278,11 +1384,20 @@ fn build_content_webview(
                     UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
+                } else if msg["pdf"] == "open" {
+                    UserEvent::PdfOpen
+                } else if msg.get("pdf").is_some() {
+                    UserEvent::PdfViewer(id)
                 } else { UserEvent::Cosmetic(id, body) }
             } else { UserEvent::Content(id, body) };
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
+            // PDF von der Festplatte: statt des Edge-Viewers unser Viewer (der auch dorthin speichern kann)
+            if let Some(path) = pdf::pdf_path_from_file_url(&url) {
+                let _ = p_nav.send_event(UserEvent::OpenPdfFile(id, path));
+                return false;
+            }
             // Wry's PageLoadEvent::Started maps to ContentLoading on Windows, after
             // the server responds. NavigationStarting also covers the wait after
             // in-page links, history navigation and reloads.
@@ -1338,7 +1453,12 @@ fn build_content_webview(
         };
     }
 
-    watch_requests(&webview, ui, proxy, id, main_nav);
+    let docs = pdf::Documents::default();
+    watch_requests(&webview, ui, proxy, id, main_nav, docs.clone());
+    let (core, first) = (webview.webview(), windows::core::HSTRING::from(url));
+    pdf::intercept(&webview.webview(), docs, move || {
+        let _ = unsafe { core.Navigate(&first) };
+    });
 
     // wry meldet Vollbild nicht weiter – also direkt am WebView2-Ereignis lauschen.
     let p_fs = proxy.clone();
@@ -1364,7 +1484,7 @@ fn build_content_webview(
 
 /// Werbeblocker: jede Anfrage der Seite (auch aus iframes und Service Workern) läuft durch die Filter-Engine;
 /// gesperrte bekommen sofort eine leere 403-Antwort und gehen gar nicht erst ins Netz.
-fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEvent>, id: u32, main_nav: Rc<RefCell<String>>) {
+fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEvent>, id: u32, main_nav: Rc<RefCell<String>>, docs: pdf::Documents) {
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
     use windows::core::{Interface, PWSTR};
     let wv = webview.webview();
@@ -1390,6 +1510,40 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
             let mut uri = PWSTR::null();
             args.Request()?.Uri(&mut uri)?;
             let uri = webview2_com::take_pwstr(uri);
+            // Der PDF-Viewer und seine Dateien kommen aus der Exe; POST: Unterschriften, Speichern, Verschlüsseln
+            // (nur über die geheime Adresse des Tabs, siehe pdf.rs)
+            let respond = |served: pdf::Served| -> windows::core::Result<()> {
+                let stream = (!served.body.is_empty()).then(|| windows::Win32::UI::Shell::SHCreateMemStream(Some(&served.body))).flatten();
+                let mut headers = format!("Content-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store", served.mime);
+                if let Some(csp) = &served.csp {
+                    headers.push_str(&format!("\r\nContent-Security-Policy: {csp}"));
+                }
+                let reason = if served.status < 300 { windows::core::w!("OK") } else { windows::core::w!("Error") };
+                let response = env.CreateWebResourceResponse(stream.as_ref(), served.status as i32, reason, &windows::core::HSTRING::from(headers))?;
+                args.SetResponse(&response)
+            };
+            let mut method = PWSTR::null();
+            args.Request()?.Method(&mut method)?;
+            if webview2_com::take_pwstr(method) == "POST" && uri.starts_with(pdf::HOST) {
+                let body = args.Request()?.Content().ok().map(|stream| read_stream(&stream)).unwrap_or_default();
+                match pdf::post(&docs, &uri, body) {
+                    Some(pdf::Post::Reply(served)) => respond(served)?,
+                    // Der Dialog kommt aus der Ereignisschleife, nicht aus diesem Rückruf
+                    Some(pdf::Post::SaveAs(ticket)) => {
+                        respond(pdf::Served { status: 202, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfSaveAs(id, ticket));
+                    }
+                    Some(pdf::Post::OpenTab(url)) => {
+                        respond(pdf::Served { status: 204, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfNewTab(url));
+                    }
+                    None => {}
+                }
+                return Ok(());
+            }
+            if let Some(served) = pdf::serve(&docs, &uri, wallpaper) {
+                return respond(served);
+            }
             let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
             args.ResourceContext(&mut context)?;
             let kind = match context {
@@ -1422,6 +1576,54 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
     let _ = unsafe { wv.add_WebResourceRequested(&handler, &mut token) };
 }
 
+/// Windows-Dialog „Speichern unter“ (`save`, Vorschlag `name`) oder „Öffnen“ für PDFs; `None` = abgebrochen.
+fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf> {
+    use windows::core::{w, Interface, HSTRING};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::{
+        Common::COMDLG_FILTERSPEC, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
+        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, SIGDN_FILESYSPATH,
+    };
+    unsafe {
+        let dialog: IFileDialog = if save {
+            CoCreateInstance::<_, IFileSaveDialog>(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?.cast().ok()?
+        } else {
+            CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?.cast().ok()?
+        };
+        let filters = [COMDLG_FILTERSPEC { pszName: w!("PDF-Dokument"), pszSpec: w!("*.pdf") }];
+        dialog.SetFileTypes(&filters).ok()?;
+        dialog.SetDefaultExtension(w!("pdf")).ok()?;
+        let mut options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
+        if save {
+            options |= FOS_OVERWRITEPROMPT;
+        }
+        dialog.SetOptions(options).ok()?;
+        if save && !name.is_empty() {
+            dialog.SetFileName(&HSTRING::from(name)).ok()?;
+        }
+        dialog.Show(Some(HWND(hwnd as _))).ok()?;
+        let raw = dialog.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = raw.to_string().ok();
+        CoTaskMemFree(Some(raw.0 as _));
+        path.map(std::path::PathBuf::from)
+    }
+}
+
+/// Inhalt einer Anfrage (POST) ganz auslesen.
+fn read_stream(stream: &windows::Win32::System::Com::IStream) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let mut read = 0u32;
+        let ok = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read)) };
+        if ok.is_err() || read == 0 {
+            return out;
+        }
+        out.extend_from_slice(&buf[..read as usize]);
+    }
+}
+
 /// Adresse, Hostname oder Suchbegriff → URL.
 /// Eingabe als Webadresse, falls sie wie eine aussieht – sonst `None` (dann ist es ein Suchbegriff).
 fn as_url(input: &str) -> Option<String> {
@@ -1442,7 +1644,16 @@ fn as_url(input: &str) -> Option<String> {
 }
 
 /// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
+/// Eine vorhandene Datei (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) wird zur file://-Adresse.
 fn resolve_input(input: &str) -> String {
+    let path = std::path::Path::new(input.trim());
+    if path.is_file() {
+        if let Ok(full) = std::fs::canonicalize(path) {
+            // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse
+            let full = full.to_string_lossy().trim_start_matches(r"\\?\").to_owned();
+            return pdf::file_url(std::path::Path::new(&full));
+        }
+    }
     as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())))
 }
 

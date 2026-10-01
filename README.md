@@ -16,6 +16,17 @@ Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieb
   blendet Werbeflächen aus und lässt sich pro Website abschalten
 - **Mail an einem Ort** – Briefumschlag rechts oben auf dem Startbildschirm: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten
   Mails aller Postfächer zusammen, rechts das echte Postfach mit der gewählten Mail (siehe unten)
+- **PDF-Viewer** – eigener Viewer auf Basis von PDF.js statt des Edge-Viewers: Vorschaubilder, Inhaltsverzeichnis,
+  Suche, Zoom (auch Strg+Mausrad und Touchpad), dunkle Seiten, Drucken und Herunterladen
+- **PDFs bearbeiten wie in Acrobat** – Werkzeugleiste rechts im PDF-Viewer:
+  - *Text bearbeiten* (Zeile anklicken und ändern – der alte Text wird aus dem PDF entfernt, der neue in einer Standardschrift gesetzt)
+  - *Markieren*: Hervorheben, Unterstreichen, Durchstreichen; *Notizen* mit Kommentarliste in der Seitenleiste
+  - *Text*, *Zeichnen* (Stift, Rechteck, Ellipse, Linie, Pfeil), *Bild und Stempel* (Genehmigt, Entwurf … oder eigener Text mit Datum)
+  - *Unterschreiben* (zeichnen, tippen oder als Bild; bis zu 5 werden gespeichert), Formulare ausfüllen und *Formularfelder anlegen*
+  - *Schwärzen*: Bereiche markieren, „Anwenden“ entfernt Text und Anmerkungen darunter wirklich (Seiten mit Bildern darunter werden als Bild neu geschrieben)
+  - „Seiten organisieren“ zum Drehen, Löschen, Umsortieren (Ziehen oder Strg+Pfeil), Einfügen anderer PDFs und Extrahieren
+  - Menü „Mehr“: Öffnen (Strg O), Speichern unter (Strg Umschalt S), Wasserzeichen, Kopf- und Fußzeile, Seitenzahlen, Passwortschutz (AES-256)
+  - PDFs von der Festplatte (Kommandozeile, file://, Öffnen-Dialog) öffnen im Glass-Viewer; Strg S speichert zurück in die Datei, PDFs aus dem Netz fragen beim ersten Mal nach dem Ort
 
 ## Bauen
 
@@ -37,11 +48,12 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `src/content.js` | Skript in jeder Webseite: Tastenkürzel, Werbeflächen ausblenden |
 | `src/blocker.rs` | Werbeblocker: Filterlisten laden, Anfragen prüfen, Ausnahmen pro Website |
 | `src/mail.rs`, `src/mail-content.js` | Mail-Ansicht: Postfächer im Hintergrund, Ungelesene und neueste Mails aus den Web-Postfächern |
+| `src/pdf.rs`, `src/pdf/` | PDF-Viewer: PDF-Antworten abfangen (DevTools `Fetch`), lokale Dateien, Speichern, Verschlüsseln (lopdf) und Oberfläche; Werkzeuge in `editor.mjs`, Seiten in `organize.mjs`, Notizen in `notes.mjs`, Schwärzen in `redact.mjs`, Text bearbeiten in `textedit.mjs` (beide auf `content.mjs`), Formularfelder in `fields.mjs`, Wasserzeichen usw. in `design.mjs`; PDF.js und pdf-lib liegen in `src/pdf/vendor` |
 | `src/suggest.rs` | Google-Suchvorschläge über WinHTTP |
 | `assets/icon.svg` | Logo („B“ aus Klarglas, Bookman Old Style Bold Italic als Pfad); daraus erzeugt: `assets/glass.ico` |
-| `build.rs` | bettet das Icon und die Programminfos in die Exe ein |
+| `build.rs` | bettet das Icon, die Programminfos und PDF.js in die Exe ein |
 
-Browserdaten, Filterlisten und die Ausnahmeliste des Werbeblockers liegen unter `%LOCALAPPDATA%\GlassBrowser`.
+Browserdaten, Filterlisten, die Ausnahmeliste des Werbeblockers und gespeicherte Unterschriften (`signatures.json`) liegen unter `%LOCALAPPDATA%\GlassBrowser`.
 
 ## Mail
 
@@ -149,4 +161,5 @@ nicht auf Updates – selbst wenn eine Build-Nummer gesetzt ist – und erlauben
 ## Lizenz
 
 MIT – siehe `LICENSE`. Die Lizenzen der verwendeten Bibliotheken liegen jedem Release als
-`THIRD_PARTY_LICENSES.html` bei (erzeugt mit `cargo about`).
+`THIRD_PARTY_LICENSES.html` bei (erzeugt mit `cargo about`). PDF.js (Apache 2.0) bringt seine Lizenz und die
+der Schriften und Bild-Decoder in `src/pdf/vendor` mit.

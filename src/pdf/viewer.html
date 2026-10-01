@@ -1,0 +1,415 @@
+<!doctype html>
+<!-- Glass-PDF-Viewer. pdf.rs setzt {{TITLE}} (Dateiname), {{DOC}} (einmalige Adresse der PDF-Bytes),
+     {{WALL}} (geheime Adresse des Wallpapers), {{API}} (geheime Adresse für Unterschriften, Speichern, Verschlüsseln)
+     und {{FILE}} (Schlüssel der Datei auf der Festplatte, leer bei PDFs aus dem Netz) ein. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="http://glass-pdf.localhost/pdf_viewer.css">
+<link rel="stylesheet" href="http://glass-pdf.localhost/viewer.css">
+<!-- Deutsche Texte für die Werkzeuge von PDF.js (GenericL10n liest diese Liste) -->
+<link rel="resource" type="application/l10n" href="http://glass-pdf.localhost/l10n/locale.json">
+<script type="module" src="http://glass-pdf.localhost/viewer.mjs"></script>
+</head>
+<body data-doc="{{DOC}}" data-wall="{{WALL}}" data-api="{{API}}" data-file="{{FILE}}" data-name="{{TITLE}}">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs id="filters"></defs>
+  <symbol id="i-sidebar" viewBox="0 0 16 16"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2.4"/><path d="M6 2.6v10.8"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="m4.5 9.5 3.5-3.5 3.5 3.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.5 8h9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"/></symbol>
+  <symbol id="i-fit-width" viewBox="0 0 16 16"><path d="M2 8h12M4.4 5.6 2 8l2.4 2.4M11.6 5.6 14 8l-2.4 2.4"/></symbol>
+  <symbol id="i-fit-page" viewBox="0 0 16 16"><rect x="3.6" y="1.8" width="8.8" height="12.4" rx="1.6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.2 3.2"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.3 9.7A5.6 5.6 0 0 1 6.3 2.7a5.6 5.6 0 1 0 7 7Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.4v1.4M8 13.2v1.4M1.4 8h1.4M13.2 8h1.4M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1"/></symbol>
+  <symbol id="i-print" viewBox="0 0 16 16"><path d="M4.6 5.8V2h6.8v3.8M4.6 11.8H3a1.2 1.2 0 0 1-1.2-1.2V7a1.2 1.2 0 0 1 1.2-1.2h10A1.2 1.2 0 0 1 14.2 7v3.6a1.2 1.2 0 0 1-1.2 1.2h-1.6"/><path d="M4.6 9.4h6.8V14H4.6z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 16 16"><path d="M3.4 2.2h7.4l2.8 2.8v7.6a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2V3.4a1.2 1.2 0 0 1 1.2-1.2Z"/><path d="M5 2.2v3.2h5V2.2M4.6 13.8V9.6h6.8v4.2"/></symbol>
+  <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></symbol>
+  <!-- Werkzeuge -->
+  <symbol id="i-cursor" viewBox="0 0 16 16"><path d="M4 2.2v10.4l2.7-2.5 1.9 4.1 1.9-.9-1.9-4h3.6Z"/></symbol>
+  <symbol id="i-highlight" viewBox="0 0 16 16"><path d="m9.6 2.6 3.8 3.8-5.6 5.6-3.8-3.8Z"/><path d="m4 8.2-1.5 4.4 1 1 4.4-1.5M2 14.5h4"/></symbol>
+  <symbol id="i-text" viewBox="0 0 16 16"><path d="M3 4V2.8h10V4M8 2.8v10.4M6 13.2h4"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 16 16"><path d="M11 2.4a1.6 1.6 0 0 1 2.3 2.3l-8 8-3 .7.7-3Z"/><path d="m9.8 3.6 2.6 2.6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><circle cx="5.6" cy="6.4" r="1.2"/><path d="m2.2 12 3.8-3.6 2.6 2.4 1.8-1.6 3.6 3"/></symbol>
+  <symbol id="i-sign" viewBox="0 0 16 16"><path d="M1.8 11.6c1.6-.2 2.6-4.8 3.6-7.4.7-1.8 1.9-1.4 1.4.6-.6 2.6-2.4 6.2-1.2 6.4 1 .2 1.8-2.6 2.8-2.4.8.2.2 2 1 2.1.7.1 1.1-1 1.8-1"/><path d="M1.8 14h12.4"/></symbol>
+  <symbol id="i-pages" viewBox="0 0 16 16"><rect x="1.8" y="1.8" width="5.2" height="5.2" rx="1.2"/><rect x="9" y="1.8" width="5.2" height="5.2" rx="1.2"/><rect x="1.8" y="9" width="5.2" height="5.2" rx="1.2"/><rect x="9" y="9" width="5.2" height="5.2" rx="1.2"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5.4 3.4 2.6 6.2 5.4 9"/><path d="M2.6 6.2h7a3.8 3.8 0 0 1 0 7.6H7"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 16 16"><path d="m10.6 3.4 2.8 2.8L10.6 9"/><path d="M13.4 6.2h-7a3.8 3.8 0 0 0 0 7.6H9"/></symbol>
+  <symbol id="i-rotate-left" viewBox="0 0 16 16"><path d="M2.6 2.6v3.6h3.6"/><path d="M2.9 6.2a5.4 5.4 0 1 1 .5 4.6"/></symbol>
+  <symbol id="i-rotate-right" viewBox="0 0 16 16"><path d="M13.4 2.6v3.6H9.8"/><path d="M13.1 6.2a5.4 5.4 0 1 0-.5 4.6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.6 4.2h10.8M6.2 4.2V2.6h3.6v1.6M4 4.2l.7 9.2h6.6l.7-9.2M6.6 6.8v4.2M9.4 6.8v4.2"/></symbol>
+  <symbol id="i-extract" viewBox="0 0 16 16"><path d="M9.4 1.8H4a1.4 1.4 0 0 0-1.4 1.4v9.6A1.4 1.4 0 0 0 4 14.2h3"/><path d="M9.4 1.8 12.6 5v2.4M9.4 1.8V5h3.2"/><path d="M11.6 9.4v4.8M9.4 12l2.2 2.2 2.2-2.2"/></symbol>
+  <symbol id="i-insert" viewBox="0 0 16 16"><path d="M9.4 1.8H4a1.4 1.4 0 0 0-1.4 1.4v9.6A1.4 1.4 0 0 0 4 14.2h4.4"/><path d="M9.4 1.8 12.6 5v3M9.4 1.8V5h3.2"/><path d="M11.6 10v4.4M9.4 12.2h4.4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.2 8.4 3 3 6.6-6.8"/></symbol>
+  <symbol id="i-edit-text" viewBox="0 0 16 16"><path d="M2.4 4.4V3h7.2v1.4M6 3v9.6M4.6 12.6h2.8"/><path d="M12.4 6.6v7.6M11 6.6h2.8M11 14.2h2.8"/></symbol>
+  <symbol id="i-note" viewBox="0 0 16 16"><path d="M3.4 2.6h9.2a1.2 1.2 0 0 1 1.2 1.2v6.4a1.2 1.2 0 0 1-1.2 1.2H8.2L5 14v-2.6H3.4a1.2 1.2 0 0 1-1.2-1.2V3.8a1.2 1.2 0 0 1 1.2-1.2Z"/><path d="M5 5.8h6M5 8.2h4"/></symbol>
+  <symbol id="i-field" viewBox="0 0 16 16"><rect x="1.8" y="4.4" width="12.4" height="7.2" rx="1.6"/><path d="M4.4 6.6v2.8"/></symbol>
+  <symbol id="i-redact" viewBox="0 0 16 16"><path d="M2.4 4.2h4.4M2.4 11.8h3.4"/><rect x="2" y="6.4" width="12" height="3.2" rx=".6" fill="currentColor"/><path d="M9.6 4.2h4M8.6 11.8h5"/></symbol>
+  <symbol id="i-underline" viewBox="0 0 16 16"><path d="M4.6 2.6v4.8a3.4 3.4 0 0 0 6.8 0V2.6M3.2 13.6h9.6"/></symbol>
+  <symbol id="i-strike" viewBox="0 0 16 16"><path d="M11.2 4.4c-.6-1.2-1.8-1.8-3.2-1.8-1.8 0-3.2 1-3.2 2.4 0 1 .6 1.7 1.8 2.1M2.6 8.4h10.8M10.6 9.6c.5.4.8 1 .8 1.6 0 1.5-1.5 2.4-3.4 2.4-1.6 0-2.9-.7-3.4-1.9"/></symbol>
+  <symbol id="i-rect" viewBox="0 0 16 16"><rect x="2.4" y="3.4" width="11.2" height="9.2" rx="1"/></symbol>
+  <symbol id="i-ellipse" viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="5.8" ry="4.6"/></symbol>
+  <symbol id="i-line" viewBox="0 0 16 16"><path d="m3 13 10-10"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="m3 13 10-10M7.2 3h5.8v5.8"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.6" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.4" cy="8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2a1.4 1.4 0 0 1 1.4-1.4h2.6l1.6 1.6h5.4a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4Z"/></symbol>
+  <symbol id="i-design" viewBox="0 0 16 16"><rect x="3" y="1.8" width="10" height="12.4" rx="1.4"/><path d="M5.2 4.4h5.6M5.2 11.8h5.6M6 9.6l4-3.2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.6"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+  <symbol id="i-blank" viewBox="0 0 16 16"><path d="M9.4 1.8H4.4A1.4 1.4 0 0 0 3 3.2v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.4Z"/><path d="M9.4 1.8v3.6H13"/><path d="M8 7.6v4.4M5.8 9.8h4.4"/></symbol>
+  <symbol id="i-compress" viewBox="0 0 16 16"><path d="M8 1.6v4.6M5.8 4 8 6.2 10.2 4M8 14.4V9.8M5.8 12 8 9.8l2.2 2.2M2.4 8h11.2"/></symbol>
+  <symbol id="i-images" viewBox="0 0 16 16"><rect x="1.6" y="4.4" width="10.4" height="8.8" rx="1.8"/><path d="M4.4 2.8h8a1.8 1.8 0 0 1 1.8 1.8v6.2"/><circle cx="4.8" cy="7.4" r="1"/><path d="m2 12.2 3.2-3 2.2 2 1.4-1.2 3 2.6"/></symbol>
+  <symbol id="i-comments" viewBox="0 0 16 16"><path d="M2.2 3.4a1.2 1.2 0 0 1 1.2-1.2h7a1.2 1.2 0 0 1 1.2 1.2v4.4a1.2 1.2 0 0 1-1.2 1.2H6.4L4 11V9H3.4a1.2 1.2 0 0 1-1.2-1.2Z"/><path d="M13.8 6v4.6a1.2 1.2 0 0 1-1.2 1.2H12v2l-2.4-2H7.4"/></symbol>
+</svg>
+
+<!-- Das Wallpaper, deckungsgleich mit dem Desktop (Lage kommt aus main.rs, sync_pdf_walls) -->
+<canvas id="wall"></canvas>
+
+<aside id="sidebar" class="glass" data-lens aria-label="Seitenleiste">
+  <div id="sidebar-tabs" class="segmented">
+    <button data-view="thumbs" class="on">Seiten</button>
+    <button data-view="outline" hidden>Inhalt</button>
+    <button data-view="comments">Kommentare</button>
+  </div>
+  <div id="thumbs" class="sidebar-view"></div>
+  <nav id="outline" class="sidebar-view" hidden></nav>
+  <div id="comments" class="sidebar-view" hidden></div>
+</aside>
+
+<div id="container" tabindex="-1"><div id="viewer" class="pdfViewer"></div></div>
+
+<!-- .well: Unterlage mit dem Stück Wallpaper hinter der Kapsel – das Glas bricht das Hintergrundbild, nicht das PDF darunter -->
+<div id="find" class="well" hidden><div class="glass capsule" data-lens data-button-group>
+  <label class="field" data-group-skip>
+    <svg><use href="#i-search"/></svg>
+    <input id="find-input" placeholder="Im Dokument suchen" spellcheck="false" autocomplete="off">
+    <span id="find-count"></span>
+  </label>
+  <button class="key" id="find-prev" title="Vorheriger Treffer (Umschalt+Eingabe)"><svg><use href="#i-up"/></svg></button>
+  <button class="key" id="find-next" title="Nächster Treffer (Eingabe)"><svg><use href="#i-down"/></svg></button>
+  <button class="key" id="find-close" title="Schließen (Esc)"><svg><use href="#i-close"/></svg></button>
+</div></div>
+
+<!-- Werkzeuge rechts am Rand, senkrecht wie in Acrobat (editor.mjs); Gruppen mit Varianten in den Einstellungen -->
+<nav id="tools" class="well" aria-label="Bearbeiten"><div class="glass capsule vertical" data-lens data-button-group>
+  <button class="key on" data-tool="none" title="Auswählen (Esc)"><svg><use href="#i-cursor"/></svg></button>
+  <button class="key" data-tool="textedit" title="Text und Bilder bearbeiten (E)"><svg><use href="#i-edit-text"/></svg></button>
+  <button class="key" data-tool="markup" title="Markieren: Hervorheben, Unterstreichen, Durchstreichen (H)"><svg><use href="#i-highlight"/></svg></button>
+  <button class="key" data-tool="note" title="Notiz (N)"><svg><use href="#i-note"/></svg></button>
+  <button class="key" data-tool="freetext" title="Text hinzufügen (T)"><svg><use href="#i-text"/></svg></button>
+  <button class="key" data-tool="draw" title="Zeichnen und Formen (D)"><svg><use href="#i-pen"/></svg></button>
+  <button class="key" data-tool="stamp" title="Bild und Stempel (B)"><svg><use href="#i-image"/></svg></button>
+  <button class="key" data-tool="signature" title="Unterschreiben (S)"><svg><use href="#i-sign"/></svg></button>
+  <button class="key" data-tool="field" title="Formularfeld anlegen (F)"><svg><use href="#i-field"/></svg></button>
+  <button class="key" data-tool="redact" title="Schwärzen (R)"><svg><use href="#i-redact"/></svg></button>
+  <hr data-group-skip>
+  <button class="key" id="undo" title="Rückgängig (Strg Z)" disabled><svg><use href="#i-undo"/></svg></button>
+  <button class="key" id="redo" title="Wiederholen (Strg Y)" disabled><svg><use href="#i-redo"/></svg></button>
+  <hr data-group-skip>
+  <button class="key" id="organize-open" title="Seiten organisieren"><svg><use href="#i-pages"/></svg></button>
+</div></nav>
+
+<!-- Einstellungen des gewählten Werkzeugs, links neben der Leiste -->
+<div id="tool-options" class="well panel" hidden><div class="glass">
+  <section data-for="textedit">
+    <h3>Text und Bilder bearbeiten</h3>
+    <p class="hint" id="edit-hint">Auf eine Textzeile klicken und ändern; Eingabe übernimmt, Esc bricht ab. Ein Bild anklicken, um es zu verschieben, an einer Ecke die Größe zu ändern, es zu ersetzen oder zu löschen.</p>
+    <!-- Während eine Zeile offen ist (textedit.mjs) -->
+    <div id="text-format" class="format" hidden>
+      <label class="field"><span>Schrift</span><select id="te-font"></select></label>
+      <div class="format-row">
+        <label class="field"><span>Größe (pt)</span><input id="te-size" inputmode="decimal" autocomplete="off"></label>
+        <div class="segmented toggles">
+          <button id="te-bold" title="Fett (Strg B)"><b>F</b></button>
+          <button id="te-italic" title="Kursiv (Strg I)"><i>K</i></button>
+        </div>
+      </div>
+      <div class="swatches" id="te-colors"></div>
+    </div>
+    <!-- Während ein Bild ausgewählt ist (imageedit.mjs) -->
+    <div id="image-actions" class="format" hidden>
+      <p class="hint">Ziehen verschiebt das Bild, die Ecken ändern die Größe. Eine Bilddatei darauf ziehen ersetzt es.</p>
+      <button class="wide" id="image-replace"><svg><use href="#i-image"/></svg>Bild ersetzen …</button>
+      <button class="wide" id="image-delete"><svg><use href="#i-trash"/></svg>Bild löschen</button>
+    </div>
+  </section>
+  <section data-for="markup">
+    <h3>Markieren</h3>
+    <div class="segmented variants" data-group="markup">
+      <button data-sub="highlight" class="on" title="Hervorheben"><svg><use href="#i-highlight"/></svg></button>
+      <button data-sub="underline" title="Unterstreichen"><svg><use href="#i-underline"/></svg></button>
+      <button data-sub="strike" title="Durchstreichen"><svg><use href="#i-strike"/></svg></button>
+    </div>
+    <p class="hint">Text auswählen – die Markierung erscheint beim Loslassen.</p>
+    <div class="swatches" data-param="highlight" data-sub-only="highlight"></div>
+    <div class="swatches" data-param="line" data-sub-only="underline strike"></div>
+    <label class="slider" data-sub-only="highlight"><span>Stärke (frei) <output>12</output></span><input type="range" min="8" max="24" value="12" data-param="highlight-thickness"></label>
+  </section>
+  <section data-for="note">
+    <h3>Notiz</h3>
+    <p class="hint">Auf die Seite klicken, um eine Notiz anzuheften. Alle Notizen stehen unter „Kommentare“ in der Seitenleiste.</p>
+    <div class="swatches" data-param="note"></div>
+    <label class="field"><span>Autor</span><input id="note-author" placeholder="Ihr Name" autocomplete="off"></label>
+  </section>
+  <section data-for="freetext">
+    <h3>Text</h3>
+    <p class="hint">Auf die Seite klicken und tippen.</p>
+    <div class="swatches" data-param="freetext"></div>
+    <label class="slider"><span>Größe <output>12</output></span><input type="range" min="6" max="48" value="12" data-param="freetext-size"></label>
+  </section>
+  <section data-for="draw">
+    <h3>Zeichnen</h3>
+    <div class="segmented variants" data-group="draw">
+      <button data-sub="pen" class="on" title="Stift"><svg><use href="#i-pen"/></svg></button>
+      <button data-sub="rect" title="Rechteck"><svg><use href="#i-rect"/></svg></button>
+      <button data-sub="ellipse" title="Ellipse"><svg><use href="#i-ellipse"/></svg></button>
+      <button data-sub="line" title="Linie"><svg><use href="#i-line"/></svg></button>
+      <button data-sub="arrow" title="Pfeil"><svg><use href="#i-arrow"/></svg></button>
+    </div>
+    <p class="hint" data-sub-only="rect ellipse line arrow">Auf der Seite aufziehen; Umschalt hält Quadrat, Kreis oder 45°.</p>
+    <div class="swatches" data-param="ink"></div>
+    <label class="slider"><span>Stärke <output>2</output></span><input type="range" min="1" max="20" value="2" data-param="ink-thickness"></label>
+    <label class="slider"><span>Deckkraft <output>100 %</output></span><input type="range" min="10" max="100" value="100" data-param="ink-opacity"></label>
+  </section>
+  <section data-for="stamp">
+    <h3>Bild und Stempel</h3>
+    <button class="wide" id="pick-image"><svg><use href="#i-image"/></svg>Bild einfügen …</button>
+    <div id="stamps"></div>
+    <label class="field"><span>Eigener Stempel</span><input id="stamp-text" placeholder="z. B. Bezahlt" autocomplete="off"></label>
+    <label class="check"><input type="checkbox" id="stamp-date" checked> Datum und Name dazu</label>
+    <button class="wide" id="stamp-custom">Stempel einsetzen</button>
+  </section>
+  <section data-for="signature">
+    <h3>Unterschreiben</h3>
+    <div id="saved-signatures"></div>
+    <button class="wide" id="new-signature"><svg><use href="#i-plus"/></svg>Neue Unterschrift</button>
+    <p class="hint">Gespeicherte Unterschrift wählen, dann an die richtige Stelle ziehen – oder auf die Seite klicken.</p>
+  </section>
+  <section data-for="field">
+    <h3>Formularfeld</h3>
+    <div class="segmented variants" data-group="field">
+      <button data-sub="text" class="on" title="Textfeld">Text</button>
+      <button data-sub="checkbox" title="Kontrollkästchen">Kästchen</button>
+      <button data-sub="dropdown" title="Auswahlliste">Liste</button>
+    </div>
+    <p class="hint">Rechteck auf der Seite aufziehen. Das Feld lässt sich danach direkt ausfüllen.</p>
+    <label class="field" data-sub-only="dropdown"><span>Einträge (einer pro Zeile)</span><textarea id="field-options" rows="3">Ja
+Nein</textarea></label>
+  </section>
+  <section data-for="redact">
+    <h3>Schwärzen</h3>
+    <p class="hint">Bereiche aufziehen oder Text auswählen. Erst „Anwenden“ entfernt Text und Bilder darunter endgültig.</p>
+    <p class="count" id="redact-count">Noch nichts markiert</p>
+    <button class="wide danger" id="redact-apply" disabled>Schwärzen anwenden</button>
+    <button class="wide" id="redact-clear" disabled>Markierungen verwerfen</button>
+  </section>
+  <!-- Statt der kleinen Leiste von PDF.js an jeder Anmerkung (editor.mjs) -->
+  <button class="wide" id="delete-selected" title="Ausgewählte Anmerkung löschen (Entf)" hidden><svg><use href="#i-trash"/></svg>Auswahl löschen</button>
+</div></div>
+
+<!-- Seiten organisieren: alle Seiten als Raster; Drehen, Löschen, Ziehen, Einfügen, Extrahieren (organize.mjs) -->
+<section id="organize" hidden aria-label="Seiten organisieren">
+  <div id="org-grid" tabindex="-1"></div>
+  <div class="well bar"><div class="glass capsule" data-lens data-button-group>
+    <span class="count" data-group-skip id="org-count"></span>
+    <button class="key" id="org-rotate-left" title="Nach links drehen" disabled><svg><use href="#i-rotate-left"/></svg></button>
+    <button class="key" id="org-rotate-right" title="Nach rechts drehen" disabled><svg><use href="#i-rotate-right"/></svg></button>
+    <button class="key" id="org-delete" title="Löschen (Entf)" disabled><svg><use href="#i-trash"/></svg></button>
+    <button class="key" id="org-extract" title="Auswahl als neues PDF speichern" disabled><svg><use href="#i-extract"/></svg></button>
+    <button class="key" id="org-blank" title="Leere Seite einfügen (nach der Auswahl, sonst am Ende)"><svg><use href="#i-blank"/></svg></button>
+    <button class="key" id="org-insert" title="PDF oder Bilder einfügen (nach der Auswahl, sonst am Ende)"><svg><use href="#i-insert"/></svg></button>
+    <button class="key" id="org-undo" title="Rückgängig (Strg Z)" disabled><svg><use href="#i-undo"/></svg></button>
+    <button class="key" id="org-redo" title="Wiederholen (Strg Y)" disabled><svg><use href="#i-redo"/></svg></button>
+    <button class="key text" id="org-done" title="Zurück zum Dokument (Esc)">Fertig</button>
+  </div></div>
+  <input type="file" id="org-file" accept="application/pdf,.pdf,image/*" multiple hidden>
+</section>
+
+<!-- Neue Unterschrift: zeichnen, tippen oder als Bild (editor.mjs) -->
+<div id="sign-dialog" class="dialog" hidden><div class="glass" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="sign-title">
+  <h2 id="sign-title">Unterschrift hinzufügen</h2>
+  <div class="segmented" id="sign-tabs">
+    <button data-tab="draw" class="on">Zeichnen</button>
+    <button data-tab="type">Tippen</button>
+    <button data-tab="image">Bild</button>
+  </div>
+  <div class="sign-pad" data-tab="draw">
+    <svg id="sign-draw" class="paper" aria-label="Hier unterschreiben"></svg>
+    <span class="placeholder">Hier unterschreiben</span>
+    <button class="clear" id="sign-clear" title="Neu beginnen"><svg><use href="#i-trash"/></svg></button>
+  </div>
+  <div class="sign-pad" data-tab="type" hidden>
+    <input id="sign-type" class="paper" placeholder="Ihr Name" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="sign-pad" data-tab="image" hidden>
+    <label class="paper drop" id="sign-drop">
+      <img id="sign-image" alt="" hidden>
+      <span class="placeholder">Bild hierher ziehen oder <u>auswählen</u></span>
+      <input type="file" id="sign-file" accept="image/*" hidden>
+    </label>
+  </div>
+  <label class="slider" id="sign-thickness"><span>Stärke</span><input type="range" min="1" max="5" value="2"></label>
+  <label class="field"><span>Beschreibung</span><input id="sign-description" placeholder="Unterschrift" autocomplete="off"></label>
+  <label class="check"><input type="checkbox" id="sign-save" checked> Für später speichern</label>
+  <div class="actions">
+    <button id="sign-cancel">Abbrechen</button>
+    <button id="sign-add" class="primary" disabled>Hinzufügen</button>
+  </div>
+</div></div>
+
+<!-- Unten über dem PDF schwebend, wie die Leiste oben in Glass: einzelne Glas-Kapseln statt einer langen Zeile -->
+<nav id="dock" aria-label="PDF-Werkzeuge">
+  <div class="well round"><button class="glass round" id="toggle-sidebar" title="Seitenleiste" data-lens><svg><use href="#i-sidebar"/></svg></button></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="prev-page" title="Vorherige Seite (←)"><svg><use href="#i-up"/></svg></button>
+    <label class="pages" data-group-skip><input id="page" inputmode="numeric" aria-label="Seite" value="1"><span id="page-count">/ –</span></label>
+    <button class="key" id="next-page" title="Nächste Seite (→)"><svg><use href="#i-down"/></svg></button>
+  </div></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="zoom-out" title="Verkleinern (Strg −)"><svg><use href="#i-minus"/></svg></button>
+    <button class="key zoom" id="zoom-value" title="Auf 100 %">100 %</button>
+    <button class="key" id="zoom-in" title="Vergrößern (Strg +)"><svg><use href="#i-plus"/></svg></button>
+    <button class="key" id="fit" title="An Breite anpassen"><svg><use href="#i-fit-width"/></svg></button>
+  </div></div>
+  <div class="well"><div class="glass capsule" data-lens data-button-group>
+    <button class="key" id="search" title="Suchen (Strg F)"><svg><use href="#i-search"/></svg></button>
+    <button class="key" id="theme" title="Dunkle Seiten"><svg><use href="#i-moon"/></svg></button>
+    <button class="key" id="print" title="Drucken (Strg P)"><svg><use href="#i-print"/></svg></button>
+    <button class="key" id="download" title="Speichern (Strg S)"><svg><use href="#i-save"/></svg></button>
+    <button class="key" id="more" title="Mehr"><svg><use href="#i-more"/></svg></button>
+  </div></div>
+</nav>
+
+<!-- Mehr: Dokument als Ganzes -->
+<div id="more-menu" class="well panel" hidden><div class="glass menu" role="menu">
+  <button data-action="open" role="menuitem"><svg><use href="#i-folder"/></svg>Öffnen …<kbd>Strg O</kbd></button>
+  <button data-action="save-as" role="menuitem"><svg><use href="#i-save"/></svg>Speichern unter …<kbd>Strg ⇧ S</kbd></button>
+  <button data-action="print" role="menuitem"><svg><use href="#i-print"/></svg>Drucken<kbd>Strg P</kbd></button>
+  <hr>
+  <button data-action="images" role="menuitem"><svg><use href="#i-images"/></svg>PDF aus Bildern …</button>
+  <hr>
+  <button data-action="design" role="menuitem"><svg><use href="#i-design"/></svg>Wasserzeichen, Kopf- und Fußzeile …</button>
+  <button data-action="compress" role="menuitem"><svg><use href="#i-compress"/></svg>Dateigröße verringern …</button>
+  <button data-action="protect" role="menuitem"><svg><use href="#i-lock"/></svg>Mit Passwort schützen …</button>
+</div></div>
+
+<!-- PDF aus Bildern (images.mjs) -->
+<div id="images-dialog" class="dialog" hidden><form class="glass" id="images-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="images-title">
+  <h2 id="images-title">PDF aus Bildern</h2>
+  <div id="images-list" aria-label="Bilder in Seitenreihenfolge"></div>
+  <p class="hint">Jedes Bild wird eine Seite. Ziehen ändert die Reihenfolge, weitere Bilder lassen sich hierher ziehen.</p>
+  <div class="row">
+    <label class="field"><span>Seitengröße</span><select id="images-size">
+      <option value="a4" selected>A4</option><option value="letter">US Letter</option><option value="fit">Wie das Bild</option>
+    </select></label>
+    <label class="field"><span>Rand</span><select id="images-margin">
+      <option value="0" selected>Kein Rand</option><option value="20">Schmal</option><option value="48">Breit</option>
+    </select></label>
+  </div>
+  <div class="actions">
+    <button type="button" id="images-append" class="left">An dieses PDF anhängen</button>
+    <button type="button" id="images-cancel">Abbrechen</button>
+    <button type="submit" class="primary" id="images-create">Neues PDF erstellen</button>
+  </div>
+  <input type="file" id="images-file" accept="image/*" multiple hidden>
+</form></div>
+
+<!-- Dateigröße verringern (compress.mjs) -->
+<div id="compress-dialog" class="dialog" hidden><form class="glass" id="compress-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="compress-title">
+  <h2 id="compress-title">Dateigröße verringern</h2>
+  <p class="hint" id="compress-size"></p>
+  <div class="segmented" id="compress-level">
+    <button type="button" data-level="high"><span>Hohe Qualität</span><span class="size"></span></button>
+    <button type="button" data-level="medium" class="on"><span>Ausgewogen</span><span class="size"></span></button>
+    <button type="button" data-level="low"><span>Kleinste Datei</span><span class="size"></span></button>
+  </div>
+  <p class="hint" id="compress-hint"></p>
+  <div class="actions">
+    <button type="button" id="compress-cancel">Abbrechen</button>
+    <button type="submit" class="primary" id="compress-save">Speichern unter …</button>
+  </div>
+</form></div>
+
+<!-- Mit Passwort schützen -->
+<div id="protect-dialog" class="dialog" hidden><form class="glass" id="protect-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="protect-title">
+  <h2 id="protect-title">Mit Passwort schützen</h2>
+  <p class="hint" id="protect-state"></p>
+  <label class="field"><span>Passwort</span><input type="password" id="protect-password" autocomplete="new-password"></label>
+  <label class="field"><span>Wiederholen</span><input type="password" id="protect-repeat" autocomplete="new-password"></label>
+  <p class="error" id="protect-error"></p>
+  <div class="actions">
+    <button type="button" id="protect-remove" class="left">Schutz entfernen</button>
+    <button type="button" id="protect-cancel">Abbrechen</button>
+    <button type="submit" class="primary">Schützen</button>
+  </div>
+</form></div>
+
+<!-- Wasserzeichen, Kopf- und Fußzeile, Seitenzahlen (design.mjs) -->
+<div id="design-dialog" class="dialog" hidden><form class="glass" id="design-form" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="design-title">
+  <h2 id="design-title">Seiten gestalten</h2>
+  <div class="segmented" id="design-tabs">
+    <button type="button" data-tab="watermark" class="on">Wasserzeichen</button>
+    <button type="button" data-tab="header">Kopf- und Fußzeile</button>
+    <button type="button" data-tab="numbers">Seitenzahlen</button>
+  </div>
+  <div class="design-pane" data-tab="watermark">
+    <label class="field"><span>Text</span><input id="wm-text" value="VERTRAULICH" autocomplete="off"></label>
+    <div class="row">
+      <label class="slider"><span>Größe <output>60</output></span><input type="range" id="wm-size" min="16" max="140" value="60"></label>
+      <label class="slider"><span>Deckkraft <output>20 %</output></span><input type="range" id="wm-opacity" min="5" max="80" value="20"></label>
+    </div>
+    <div class="row">
+      <label class="slider"><span>Drehung <output>45°</output></span><input type="range" id="wm-angle" min="-90" max="90" value="45"></label>
+      <div class="swatches" id="wm-colors"></div>
+    </div>
+  </div>
+  <div class="design-pane" data-tab="header" hidden>
+    <p class="hint">Platzhalter: {seite}, {seiten}, {datum}, {datei}</p>
+    <div class="grid3">
+      <input data-slot="header-left" placeholder="Kopf links"><input data-slot="header-center" placeholder="Kopf Mitte"><input data-slot="header-right" placeholder="Kopf rechts">
+      <input data-slot="footer-left" placeholder="Fuß links"><input data-slot="footer-center" placeholder="Fuß Mitte"><input data-slot="footer-right" placeholder="Fuß rechts">
+    </div>
+    <label class="slider"><span>Schriftgröße <output>9</output></span><input type="range" id="hf-size" min="6" max="20" value="9"></label>
+  </div>
+  <div class="design-pane" data-tab="numbers" hidden>
+    <label class="field"><span>Format</span><select id="num-format">
+      <option value="{seite}">1</option>
+      <option value="Seite {seite}">Seite 1</option>
+      <option value="Seite {seite} von {seiten}" selected>Seite 1 von 3</option>
+      <option value="{seite} / {seiten}">1 / 3</option>
+    </select></label>
+    <div class="row">
+      <label class="field"><span>Position</span><select id="num-position">
+        <option value="footer-center" selected>Unten Mitte</option><option value="footer-right">Unten rechts</option><option value="footer-left">Unten links</option>
+        <option value="header-center">Oben Mitte</option><option value="header-right">Oben rechts</option><option value="header-left">Oben links</option>
+      </select></label>
+      <label class="field"><span>Beginnt bei</span><input type="number" id="num-start" value="1" min="0"></label>
+    </div>
+  </div>
+  <label class="field"><span>Seiten</span><input id="design-pages" placeholder="Alle (oder z. B. 1-3, 5)" autocomplete="off"></label>
+  <div class="actions">
+    <button type="button" id="design-cancel">Abbrechen</button>
+    <button type="submit" class="primary">Hinzufügen</button>
+  </div>
+</form></div>
+
+<div id="status" class="glass" data-lens>
+  <div class="spinner"></div>
+  <p id="status-text">PDF wird geöffnet …</p>
+  <form id="password" hidden>
+    <input id="password-input" type="password" placeholder="Passwort" autocomplete="off">
+    <button type="submit">Öffnen</button>
+  </form>
+</div>
+
+<div id="print-pages" aria-hidden="true"></div>
+<div id="toast" class="glass" role="status" hidden></div>
+
+<!-- Dieselben Glas-Bausteine wie die Oberfläche: Glanzkante, Lichtbrechung, wandernde Hover-Fläche -->
+<script src="http://glass-pdf.localhost/glass-rim.js"></script>
+<script src="http://glass-pdf.localhost/glass-lens.js"></script>
+<script src="http://glass-pdf.localhost/group-hover.js"></script>
+</body>
+</html>

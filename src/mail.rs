@@ -552,7 +552,7 @@ impl Browser {
         self.mail.boxes[p].tab = Some(Tab {
             id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: start, loading: true, private: false,
             blocked: 0, webview: Some(webview), home: false, pending_prompt: None,
-            hidden_since: Cell::new(Some(Instant::now())), mail_view: false, popup: false,
+            hidden_since: Cell::new(Some(Instant::now())), mail_view: false, popup: false, pdf_viewer: false,
         });
         self.mail.boxes[p].heard = Some(Instant::now());
     }
