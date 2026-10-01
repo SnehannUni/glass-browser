@@ -62,7 +62,7 @@ enum Search {
     Typed(&'static str),
 }
 
-/// Suchanbieter im Adressfeld (Kennungen wie in ui.html).
+/// Suchanbieter im Adressfeld (Kennungen wie in ui.html; welche davon im Rad stehen, wählt man dort mit dem Stift).
 const SEARCH_ENGINES: &[(&str, Search)] = &[
     ("google", Search::Query("https://www.google.com/search?q=")),
     ("chatgpt", Search::Query("https://chatgpt.com/?q=")),
@@ -70,6 +70,9 @@ const SEARCH_ENGINES: &[(&str, Search)] = &[
     ("gemini", Search::Typed("https://gemini.google.com/app")),
     ("kimi", Search::Typed("https://www.kimi.ai/")), // internationale Seite (kimi.com ist die chinesische)
     ("zai", Search::Typed("https://chat.z.ai/")),
+    ("grok", Search::Typed("https://grok.com/")), // ?q= füllt nur das Feld, ohne abzuschicken
+    ("youtube", Search::Query("https://www.youtube.com/results?search_query=")),
+    ("amazon", Search::Query("https://www.amazon.de/s?k=")),
 ];
 
 fn search_engine(engine: &str) -> &'static Search {
