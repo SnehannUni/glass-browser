@@ -26,7 +26,7 @@
   <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.3 9.7A5.6 5.6 0 0 1 6.3 2.7a5.6 5.6 0 1 0 7 7Z"/></symbol>
   <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.4v1.4M8 13.2v1.4M1.4 8h1.4M13.2 8h1.4M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1"/></symbol>
   <symbol id="i-print" viewBox="0 0 16 16"><path d="M4.6 5.8V2h6.8v3.8M4.6 11.8H3a1.2 1.2 0 0 1-1.2-1.2V7a1.2 1.2 0 0 1 1.2-1.2h10A1.2 1.2 0 0 1 14.2 7v3.6a1.2 1.2 0 0 1-1.2 1.2h-1.6"/><path d="M4.6 9.4h6.8V14H4.6z"/></symbol>
-  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2v8.4M4.8 7.4 8 10.6l3.2-3.2M2.6 13.6h10.8"/></symbol>
+  <symbol id="i-save" viewBox="0 0 16 16"><path d="M3.4 2.2h7.4l2.8 2.8v7.6a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2V3.4a1.2 1.2 0 0 1 1.2-1.2Z"/><path d="M5 2.2v3.2h5V2.2M4.6 13.8V9.6h6.8v4.2"/></symbol>
   <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></symbol>
   <!-- Werkzeuge -->
   <symbol id="i-cursor" viewBox="0 0 16 16"><path d="M4 2.2v10.4l2.7-2.5 1.9 4.1 1.9-.9-1.9-4h3.6Z"/></symbol>
@@ -56,7 +56,6 @@
   <symbol id="i-arrow" viewBox="0 0 16 16"><path d="m3 13 10-10M7.2 3h5.8v5.8"/></symbol>
   <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.6" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.4" cy="8" r=".9" fill="currentColor"/></symbol>
   <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2a1.4 1.4 0 0 1 1.4-1.4h2.6l1.6 1.6h5.4a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4Z"/></symbol>
-  <symbol id="i-save-as" viewBox="0 0 16 16"><path d="M8 1.8v7.6M5 6.4l3 3 3-3"/><path d="M2.6 10.4v2.2a1.2 1.2 0 0 0 1.2 1.2h8.4a1.2 1.2 0 0 0 1.2-1.2v-2.2"/></symbol>
   <symbol id="i-design" viewBox="0 0 16 16"><rect x="3" y="1.8" width="10" height="12.4" rx="1.4"/><path d="M5.2 4.4h5.6M5.2 11.8h5.6M6 9.6l4-3.2"/></symbol>
   <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.6"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
   <symbol id="i-comments" viewBox="0 0 16 16"><path d="M2.2 3.4a1.2 1.2 0 0 1 1.2-1.2h7a1.2 1.2 0 0 1 1.2 1.2v4.4a1.2 1.2 0 0 1-1.2 1.2H6.4L4 11V9H3.4a1.2 1.2 0 0 1-1.2-1.2Z"/><path d="M13.8 6v4.6a1.2 1.2 0 0 1-1.2 1.2H12v2l-2.4-2H7.4"/></symbol>
@@ -256,7 +255,7 @@ Nein</textarea></label>
     <button class="key" id="search" title="Suchen (Strg F)"><svg><use href="#i-search"/></svg></button>
     <button class="key" id="theme" title="Dunkle Seiten"><svg><use href="#i-moon"/></svg></button>
     <button class="key" id="print" title="Drucken (Strg P)"><svg><use href="#i-print"/></svg></button>
-    <button class="key" id="download" title="Speichern (Strg S)"><svg><use href="#i-download"/></svg></button>
+    <button class="key" id="download" title="Speichern (Strg S)"><svg><use href="#i-save"/></svg></button>
     <button class="key" id="more" title="Mehr"><svg><use href="#i-more"/></svg></button>
   </div></div>
 </nav>
@@ -264,7 +263,7 @@ Nein</textarea></label>
 <!-- Mehr: Dokument als Ganzes -->
 <div id="more-menu" class="well panel" hidden><div class="glass menu" role="menu">
   <button data-action="open" role="menuitem"><svg><use href="#i-folder"/></svg>Öffnen …<kbd>Strg O</kbd></button>
-  <button data-action="save-as" role="menuitem"><svg><use href="#i-save-as"/></svg>Speichern unter …<kbd>Strg ⇧ S</kbd></button>
+  <button data-action="save-as" role="menuitem"><svg><use href="#i-save"/></svg>Speichern unter …<kbd>Strg ⇧ S</kbd></button>
   <button data-action="print" role="menuitem"><svg><use href="#i-print"/></svg>Drucken<kbd>Strg P</kbd></button>
   <hr>
   <button data-action="design" role="menuitem"><svg><use href="#i-design"/></svg>Wasserzeichen, Kopf- und Fußzeile …</button>
