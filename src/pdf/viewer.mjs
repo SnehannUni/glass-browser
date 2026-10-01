@@ -14,6 +14,10 @@ const { initRedact } = await import(BASE + 'redact.mjs');
 const { initTextEdit } = await import(BASE + 'textedit.mjs');
 const { initFields } = await import(BASE + 'fields.mjs');
 const { initDesign } = await import(BASE + 'design.mjs');
+const { initImages } = await import(BASE + 'images.mjs');
+const { initCompress } = await import(BASE + 'compress.mjs');
+const { initImageEdit } = await import(BASE + 'imageedit.mjs');
+const { readPage } = await import(BASE + 'content.mjs');
 // A data-URL module worker supports the viewer's opaque sandbox origin. PDF.js's URL-based
 // origin check uses location.href, which still displays the original PDF URL.
 const workerUrl = 'data:text/javascript,' + encodeURIComponent(`import "${BASE}pdf.worker.min.mjs";`);
@@ -177,6 +181,8 @@ function showStatus(text, kind = '') {
 
 // Passwort, mit dem das PDF geöffnet wurde – es schützt auch die gespeicherte Fassung wieder (siehe exportBytes)
 let openedWith = null;
+/** Schutz beim Speichern: `{ password, original }` – original: das Passwort, mit dem die Datei schon geschützt war. */
+let protection = null;
 // PDF.js übernimmt die Bytes (sie wandern in den Worker) – wer sie noch braucht, gibt eine Kopie.
 const openDocument = (data) => {
   const task = pdfjsLib.getDocument({
@@ -185,7 +191,12 @@ const openDocument = (data) => {
     standardFontDataUrl: BASE + 'standard_fonts/',
     wasmUrl: BASE + 'wasm/', iccUrl: BASE + 'iccs/',
   });
-  task.onPassword = (answer, reason) => askPassword((password) => { openedWith = password; answer(password); },
+  task.onPassword = (answer, reason) => askPassword((password) => {
+    openedWith = password;
+    // Mit Passwort geöffnet: gespeichert wird wieder geschützt
+    protection = { password, original: true };
+    answer(password);
+  },
     reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD);
   return task.promise;
 };
@@ -528,22 +539,27 @@ const exportHooks = [];
  * Seitenänderungen und das Speichern.
  */
 async function workingBytes() {
-  let bytes = encrypted ? await doc.extractPages([{ document: null }]) : await currentBytes();
+  let bytes = encrypted ? await decryptBytes(await currentBytes()) : await currentBytes();
   for (const hook of exportHooks) if (hook.active()) bytes = await hook.apply(bytes);
   return bytes;
 }
-/** Schutz beim Speichern: `{ password, original }` – original: das Passwort, mit dem die Datei schon geschützt war. */
-let protection = null;
-async function encryptBytes(bytes, password) {
+/** Passwort und PDF an pdf.rs: `encrypt` schützt, `decrypt` hebt den Schutz auf. */
+async function withPassword(call, bytes, password) {
   const pw = new TextEncoder().encode(password);
   const body = new Uint8Array(4 + pw.length + bytes.length);
   new DataView(body.buffer).setUint32(0, pw.length, true);
   body.set(pw, 4);
   body.set(bytes, 4 + pw.length);
-  const res = await fetch(API + 'encrypt', { method: 'POST', body });
-  if (!res.ok) throw new Error('Verschlüsseln fehlgeschlagen');
+  const res = await fetch(API + call, { method: 'POST', body });
+  if (!res.ok) throw new Error(call === 'encrypt' ? 'Verschlüsseln fehlgeschlagen' : 'Entschlüsseln fehlgeschlagen');
   return new Uint8Array(await res.arrayBuffer());
 }
+const encryptBytes = (bytes, password) => withPassword('encrypt', bytes, password);
+/**
+ * Geschütztes PDF ohne Schutz, mit dem Passwort vom Öffnen (pdf-lib und neue PDF.js-Dokumente brauchen das;
+ * extractPages von PDF.js behielte die Verschlüsselung). Beim Speichern schützt `protection` es wieder.
+ */
+const decryptBytes = (bytes) => withPassword('decrypt', bytes, openedWith ?? '');
 /** Die Fassung, die gespeichert wird: Arbeitsfassung, bei Bedarf mit Passwort. */
 async function exportBytes() {
   const hooks = exportHooks.some((h) => h.active());
@@ -577,7 +593,8 @@ async function applyChange(label, make, { toastUndo = true } = {}) {
     future.length = 0;
     setDirty(true);
     dispatchEvent(new CustomEvent('glass-history', { detail: 'new' }));
-    if (label) toast(label, toastUndo ? { label: 'Rückgängig', run: undoChange } : null);
+    // Die Meldung darf vom Ergebnis abhängen (etwa die neue Dateigröße)
+    if (label) toast(typeof label === 'function' ? label() : label, toastUndo ? { label: 'Rückgängig', run: undoChange } : null);
     return true;
   } catch (err) {
     console.error(err);
@@ -691,6 +708,52 @@ async function save(as = false) {
 }
 $('download').onclick = () => save();
 const openFile = () => window.ipc?.postMessage(JSON.stringify({ pdf: 'open' }));
+/** Ein neu gebautes PDF (etwa aus Bildern) in einem neuen Tab zeigen – ohne Glass als Download. */
+async function openNew(bytes, fileName) {
+  try {
+    const res = await fetch(API + 'open-new?name=' + encodeURIComponent(fileName), { method: 'POST', body: bytes });
+    if (!res.ok) throw new Error('open-new ' + res.status);
+    toast(`„${fileName}“ ist in einem neuen Tab geöffnet`);
+  } catch (err) {
+    console.warn(err);
+    download(bytes, fileName);
+  }
+}
+
+// ---------- Inhalt der Seiten (Text bearbeiten, Bilder bearbeiten): einmal pro Dokument gelesen ----------
+let contentCache = null;
+/** Operatoren, Glyphen und Bilder der Seite `n` (1-basiert) im angezeigten Dokument (content.mjs `readPage`). */
+function pageContent(n) {
+  const source = doc;
+  if (contentCache?.doc !== source) {
+    const pdf = (async () => {
+      const lib = await loadPdfLib();
+      // pdf-lib kann verschlüsselte PDFs nicht lesen – dann die entschlüsselte Fassung
+      const bytes = encrypted ? await decryptBytes(await source.getData()) : await source.getData();
+      return lib.PDFDocument.load(bytes, { updateMetadata: false });
+    })();
+    contentCache = { doc: source, pdf, pages: new Map() };
+  }
+  const cache = contentCache;
+  if (!cache.pages.has(n)) cache.pages.set(n, cache.pdf.then(async (pdf) => readPage(await loadPdfLib(), pdf, n - 1)));
+  return cache.pages.get(n);
+}
+
+// ---------- Installierte Schriften (pdf.rs liest sie aus der Registry) ----------
+let fontList = null, fontkitModule = null;
+const fonts = () => (fontList ||= fetch(API + 'fonts').then((r) => (r.ok ? r.json() : [])).catch(() => []));
+const fontFiles = new Map();
+const fontFile = (file) => {
+  if (!fontFiles.has(file)) {
+    fontFiles.set(file, fetch(API + 'font/' + encodeURIComponent(file)).then(async (r) => {
+      if (!r.ok) throw new Error('font ' + r.status);
+      return new Uint8Array(await r.arrayBuffer());
+    }));
+    fontFiles.get(file).catch(() => fontFiles.delete(file));
+  }
+  return fontFiles.get(file);
+};
+const loadFontkit = async () => (fontkitModule ||= (await import(BASE + 'fontkit/fontkit.mjs')).default);
 
 // ---------- Mehr: Öffnen, Speichern unter, Seiten gestalten, Schützen ----------
 const more = $('more-menu');
@@ -714,6 +777,8 @@ for (const item of more.querySelectorAll('[data-action]')) {
       open: openFile,
       'save-as': () => save(true),
       design: () => app.design.open(),
+      images: () => app.images.open(),
+      compress: () => app.compress.open(),
       protect: () => openProtect(),
       print: () => print(),
     })[item.dataset.action]?.();
@@ -807,7 +872,8 @@ const app = {
   get canRedoChange() { return future.length > 0; },
   get protection() { return protection; },
   get fileKey() { return fileKey; },
-  placeWells, scheduleInk, toast, setDirty, currentBytes, workingBytes, exportBytes, save, writeFile, download,
+  placeWells, scheduleInk, toast, setDirty, currentBytes, workingBytes, exportBytes, save, writeFile, download, openNew, encryptBytes,
+  pageContent, fonts, fontFile, loadFontkit,
   loadPdfLib, applyChange, undoChange, redoChange, replaceDocument, glassLayer, pageGeometry, refreshLayers, showSidebarView,
   exportHooks, importHooks, layerRenderers,
   onDocument: (fn) => documentListeners.push(fn),
@@ -825,8 +891,16 @@ app.organize = initOrganize(app);
 app.notes = initNotes(app);
 app.redact = initRedact(app);
 app.textEdit = initTextEdit(app);
+app.imageEdit = initImageEdit(app);
+// Ein Werkzeug für beides: Text anklicken bearbeitet die Zeile, ein Bild anklicken wählt das Bild
+app.contentEdit = {
+  enter() { app.textEdit.enter(); app.imageEdit.enter(); },
+  leave() { app.imageEdit.leave(); app.textEdit.leave(); },
+};
 app.fields = initFields(app);
 app.design = initDesign(app);
+app.images = initImages(app);
+app.compress = initCompress(app);
 
 // Erstes Dokument: Notizen übernehmen, dann anzeigen (so wie nach jeder Änderung)
 {

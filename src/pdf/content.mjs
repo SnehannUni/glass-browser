@@ -244,7 +244,7 @@ async function fontInfo(lib, pdf, dict) {
 // ---------- Seite auswerten ----------
 /**
  * Liest Seite `index` (0-basiert): Operatoren, jede Glyphe mit ihrem Viereck in PDF-Punkten (`quad`: 4 Ecken),
- * und alle Bilder/Formulare mit ihrer Lage. Eine Glyphe: `{ op, part, at, code, quad, origin, size, angle, fill, … }`
+ * und alle Bilder/Formulare mit ihrer Lage (`quad`: Bild-Ecken (0,0) (1,0) (1,1) (0,1), `ctm`, `name` der Ressource). Eine Glyphe: `{ op, part, at, code, quad, origin, size, angle, fill, … }`
  * – `op` Index des Text-Operators, `part` Index im TJ-Array, `at` Byte-Index im String.
  */
 export async function readPage(lib, pdf, index) {
@@ -336,10 +336,10 @@ export async function readPage(lib, pdf, index) {
           const [x0, y0, x1, y1] = bb instanceof PDFArray ? bb.asArray().map((o) => o.asNumber()) : [0, 0, 1, 1];
           quad = [apply(m, x0, y0), apply(m, x1, y0), apply(m, x1, y1), apply(m, x0, y1)];
         }
-        objects.push({ op: k, kind: kind === '/Form' ? 'form' : 'image', quad });
+        objects.push({ op: k, kind: kind === '/Form' ? 'form' : 'image', quad, ctm, name: args[0]?.v });
         break;
       }
-      case 'BI': objects.push({ op: k, kind: 'image', quad: unitSquare(ctm) }); break;
+      case 'BI': objects.push({ op: k, kind: 'image', quad: unitSquare(ctm), ctm, inline: true }); break;
       default: break;
     }
   }
@@ -419,13 +419,26 @@ export function removeGlyphs(content, remove) {
 export function saveContent(lib, pdf, content, extra = '') {
   const { PDFName } = lib;
   const body = writeContent(content.ops);
-  // Seite in q/Q, eigene Befehle dahinter – so wirkt ein offener Zustand der Seite nicht auf sie
-  const head = enc('q\n'), tail = enc(`Q\n${extra ? `q\n${extra}\nQ\n` : ''}`);
+  // Seite in q/Q, eigene Befehle dahinter – so wirkt ein offener Zustand der Seite nicht auf sie. Schon eingepackt
+  // (nach einer früheren Änderung): nicht noch einmal, sonst wüchse die Schachtelung mit jeder Änderung
+  const wrapped = isWrapped(content.ops);
+  const head = enc(wrapped ? '' : 'q\n'), tail = enc(`${wrapped ? '' : 'Q\n'}${extra ? `q\n${extra}\nQ\n` : ''}`);
   const bytes = new Uint8Array(head.length + body.length + tail.length);
   bytes.set(head, 0);
   bytes.set(body, head.length);
   bytes.set(tail, head.length + body.length);
   content.node.set(PDFName.of('Contents'), pdf.context.register(pdf.context.flateStream(bytes)));
+}
+
+/** Steht alles in einem einzigen q … Q (das erste q schließt erst mit dem letzten Q)? */
+function isWrapped(ops) {
+  if (ops[0]?.op !== 'q' || ops.at(-1)?.op !== 'Q') return false;
+  let depth = 0;
+  for (let k = 0; k < ops.length; k++) {
+    if (ops[k].op === 'q') depth++;
+    else if (ops[k].op === 'Q' && --depth === 0 && k < ops.length - 1) return false;
+  }
+  return depth === 0;
 }
 
 /** Füllfarbe eines Operators als pdf-lib-Farbe (Gerätefarben; anderes wird Schwarz). */

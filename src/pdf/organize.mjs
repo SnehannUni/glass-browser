@@ -1,15 +1,18 @@
 // Seiten organisieren wie in Acrobat: alle Seiten als Raster – auswählen (Klick, Strg, Umschalt, Strg+A), ziehen,
-// drehen, löschen, andere PDFs einfügen, Auswahl als eigenes PDF speichern.
+// drehen, löschen, leere Seiten, andere PDFs oder Bilder einfügen, Auswahl als eigenes PDF speichern.
 // Jede Änderung baut mit PDF.js (extractPages) ein neues PDF, Anmerkungen und Formularwerte inklusive, und lädt es
-// im Viewer neu. Nur das Drehen einzelner Seiten kann PDF.js nicht speichern – das übernimmt pdf-lib.
+// im Viewer neu. Drehen und leere Seiten kann PDF.js nicht – das übernimmt pdf-lib.
+import { prepareImage, pdfFromImages, isImageFile } from './images.mjs';
+
 const $ = (id) => document.getElementById(id);
 const THUMB = 150;
+const isPdf = (file) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 
 export function initOrganize(app) {
   const root = $('organize'), grid = $('org-grid'), count = $('org-count');
   const buttons = {
     left: $('org-rotate-left'), right: $('org-rotate-right'), del: $('org-delete'),
-    extract: $('org-extract'), insert: $('org-insert'), undo: $('org-undo'), redo: $('org-redo'),
+    extract: $('org-extract'), insert: $('org-insert'), blank: $('org-blank'), undo: $('org-undo'), redo: $('org-redo'),
   };
   let selected = new Set(), anchor = null, busy = false;
   let observer = null, rendered = new WeakSet(), drawToken = 0;
@@ -72,7 +75,7 @@ export function initOrganize(app) {
     for (const key of ['left', 'right', 'extract']) buttons[key].disabled = !n || busy;
     // Mindestens eine Seite muss bleiben
     buttons.del.disabled = !n || n >= total || busy;
-    buttons.insert.disabled = busy;
+    buttons.insert.disabled = buttons.blank.disabled = busy;
     buttons.undo.disabled = !app.canUndoChange || busy;
     buttons.redo.disabled = !app.canRedoChange || busy;
     app.placeWells();
@@ -168,8 +171,8 @@ export function initOrganize(app) {
       dragging = null;
       await move(moved, at);
     } else {
-      const pdfs = [...e.dataTransfer.files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-      if (pdfs.length) await insert(pdfs, at);
+      const files = [...e.dataTransfer.files].filter((f) => isPdf(f) || isImageFile(f));
+      if (files.length) await insert(files, at);
     }
   });
 
@@ -237,8 +240,30 @@ export function initOrganize(app) {
     }, pages);
   }
 
+  /** Format der Seite, neben der eingefügt wird (wie man sie sieht, also mit Drehung). */
+  async function neighbourSize(before) {
+    const view = (await app.doc.getPage(Math.max(1, Math.min(before, app.doc.numPages)))).getViewport({ scale: 1 });
+    return [view.width, view.height];
+  }
+
+  /** PDFs und Bilder vor Seite `before` (0-basiert) einfügen; Bilder werden Seiten im Format der Nachbarseite. */
   async function insert(files, before) {
-    const datas = await Promise.all(files.map(async (f) => new Uint8Array(await f.arrayBuffer())));
+    let datas;
+    try {
+      const size = files.some(isImageFile) ? await neighbourSize(before) : null;
+      const lib = await app.loadPdfLib();
+      datas = [];
+      // Aufeinanderfolgende Bilder werden zusammen ein PDF
+      for (let i = 0; i < files.length;) {
+        if (isPdf(files[i])) { datas.push(new Uint8Array(await files[i++].arrayBuffer())); continue; }
+        const images = [];
+        while (i < files.length && !isPdf(files[i])) images.push(await prepareImage(files[i++]));
+        datas.push(await pdfFromImages(lib, images, { size, margin: 0 }));
+      }
+    } catch (err) {
+      app.toast(err.userMessage || 'Diese Datei lässt sich nicht einfügen.');
+      return;
+    }
     const insertAfter = before - 1;
     // Seitenzahlen der neuen Seiten für die Auswahl danach
     let added = 0;
@@ -250,12 +275,24 @@ export function initOrganize(app) {
         return;
       }
     }
-    const label = files.length === 1 ? `„${files[0].name}“ eingefügt` : `${files.length} PDFs eingefügt`;
+    const kinds = files.every(isPdf) ? 'PDFs' : files.every(isImageFile) ? 'Bilder' : 'Dateien';
+    const label = files.length === 1 ? `„${files[0].name}“ eingefügt` : `${files.length} ${kinds} eingefügt`;
     return change(label, (bytes) => extractFrom(bytes, [
       { document: null },
       // Mehrere Dateien landen in ihrer Reihenfolge hintereinander an derselben Stelle
       ...datas.map((data) => ({ document: data, insertAfter })),
     ]), Array.from({ length: added }, (_, k) => before + k));
+  }
+
+  /** Leere Seite nach der Auswahl (sonst am Ende), im Format der Seite davor. */
+  async function blank() {
+    const at = selected.size ? Math.max(...selected) + 1 : app.doc.numPages;
+    const size = await neighbourSize(at);
+    return change('Leere Seite eingefügt', async (bytes, { PDFDocument }) => {
+      const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+      pdf.insertPage(at, size);
+      return pdf.save({ updateFieldAppearances: false });
+    }, [at]);
   }
 
   async function extract() {
@@ -304,6 +341,7 @@ export function initOrganize(app) {
   buttons.right.onclick = () => rotate(90);
   buttons.del.onclick = remove;
   buttons.extract.onclick = extract;
+  buttons.blank.onclick = blank;
   buttons.undo.onclick = undoLast;
   buttons.redo.onclick = () => travel(true);
   const fileInput = $('org-file');
@@ -373,5 +411,5 @@ export function initOrganize(app) {
   }
   $('organize-open').onclick = () => (root.hidden ? open() : close());
 
-  return { open, close, get isOpen() { return !root.hidden; } };
+  return { open, close, insert, blank, get isOpen() { return !root.hidden; }, get selected() { return [...selected]; } };
 }
