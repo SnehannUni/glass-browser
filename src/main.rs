@@ -83,7 +83,8 @@ enum UserEvent {
     AutofillRequest(u32, String, String),
     AutofillReply(Value),
     Ui(String),
-    Content(String),
+    /// Meldung einer Webseite (Tastenkürzel, Maus-Seitentasten, Scrollrichtung …) – mit der Kennung ihres Tabs.
+    Content(u32, String),
     Title(u32, String),
     Favicon(u32, String),
     PageFavicon(u32, String, String),
@@ -943,8 +944,8 @@ impl Browser {
                 let cmd = msg["cmd"].as_str().unwrap_or_default().to_owned();
                 return self.command(&cmd, &msg);
             }
-            // Webseiten dürfen nur Tastenkürzel und ihre Scrollrichtung melden, sonst nichts steuern.
-            UserEvent::Content(cmd) => {
+            // Webseiten dürfen nur Tastenkürzel, die Seitentasten der Maus und ihre Scrollrichtung melden, sonst nichts steuern.
+            UserEvent::Content(from, cmd) => {
                 // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
                 // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
                 if (self.chrome_left || self.chrome_hidden) && !self.fullscreen {
@@ -957,6 +958,17 @@ impl Browser {
                 // Scrollrichtung der Seite: Die Oberfläche blendet die Leiste oben danach aus bzw. ein
                 if matches!(cmd.as_str(), "scroll_down" | "scroll_up") && !self.chrome_left && !self.fullscreen {
                     let _ = self.ui.evaluate_script(&format!("window.pageScrolled?.({})", cmd == "scroll_down"));
+                }
+                // Seitentasten der Maus gelten der Seite, über der sie gedrückt wurden – in der geteilten Ansicht also
+                // vielleicht der anderen Hälfte. Von gerade nicht sichtbaren Seiten zählen sie nicht.
+                if matches!(cmd.as_str(), "back" | "forward") {
+                    match self.index_of(from) {
+                        Some(i) if i == self.active => {}
+                        Some(i) if self.panes().iter().any(|(p, _)| *p == i) => self.activate(i),
+                        None if self.mail_view_active() && self.mail.owns(from) => {} // Postfach in der Mail-Ansicht
+                        _ => return true,
+                    }
+                    return self.command(&cmd, &Value::Null);
                 }
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
@@ -1169,7 +1181,7 @@ fn build_content_webview(
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
                 } else { UserEvent::Cosmetic(id, body) }
-            } else { UserEvent::Content(body) };
+            } else { UserEvent::Content(id, body) };
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {

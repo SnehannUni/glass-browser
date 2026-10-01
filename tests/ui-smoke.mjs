@@ -315,6 +315,11 @@ try {
   assert.equal(await mailBadge(1102), '2', 'and later mails still count');
   await evaluate(`window.mailState({ boxes: [] })`);
   console.log('PASS: mail badge shows only new mails since the last visit.');
+  // Mouse side buttons over the interface act like the back and forward buttons
+  const sideButtons = await evaluate(`(() => { const from = messages.length; for (const button of [3, 4]) document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button }));
+    return messages.slice(from).map((m) => m.cmd); })()`);
+  assert.deepEqual(sideButtons, ['back', 'forward']);
+  console.log('PASS: mouse side buttons send back and forward.');
   // Arrival pulse must not relayout or move the settled glass circle by fractional pixels.
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   await delay(800);
