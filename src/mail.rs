@@ -6,7 +6,7 @@
 // Anmeldung, Passwörter und Cookies bleiben bei den Webseiten selbst. Glass merkt sich nur, welche Postfächer
 // verbunden sind (`GlassBrowser\mail.json`); Absender und Betreffzeilen liegen nur im Arbeitsspeicher.
 
-use crate::{build_content_webview, set_adblock_flag, to_rect, Area, Browser, ScriptSlot, Tab, UserEvent};
+use crate::{build_content_webview, to_rect, Area, Browser, Tab, UserEvent};
 use serde_json::{json, Value};
 use std::{cell::Cell, path::PathBuf, time::{Duration, Instant}};
 use tao::event_loop::EventLoopProxy;
@@ -548,11 +548,9 @@ impl Browser {
         let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &start, bounds, false) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
         deny_notifications(&webview);
-        let adblock_flag = ScriptSlot::default();
-        set_adblock_flag(&webview, &adblock_flag);
         self.mail.boxes[p].tab = Some(Tab {
             id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: start, loading: true, private: false,
-            blocked: 0, adblock_flag, webview: Some(webview), home: false, pending_prompt: None,
+            blocked: 0, webview: Some(webview), home: false, pending_prompt: None,
             hidden_since: Cell::new(Some(Instant::now())), mail_view: false,
         });
         self.mail.boxes[p].heard = Some(Instant::now());

@@ -124,9 +124,6 @@ enum UserEvent {
     ExitReady,
 }
 
-/// Id des Skripts, das den Webseiten die Seiten ohne Werbeblocker mitteilt (siehe `set_adblock_flag`).
-type ScriptSlot = Rc<RefCell<Option<String>>>;
-
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
 struct Split {
     left: u32,
@@ -169,7 +166,6 @@ struct Tab {
     private: bool,
     /// Vom Werbeblocker verhinderte Anfragen seit dem letzten Seitenaufruf.
     blocked: u32,
-    adblock_flag: ScriptSlot,
     /// Wird erst bei der ersten Navigation erzeugt – ein leerer neuer Tab kostet keinen Renderer.
     webview: Option<WebView>,
     /// Ganz an den Anfang zurückgegangen: der Tab zeigt den Startbildschirm, die Seite wartet
@@ -597,8 +593,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        let adblock_flag = ScriptSlot::default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, adblock_flag, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -695,9 +690,6 @@ impl Browser {
             None => {
                 let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds, true);
                 tab.webview = wv.ok();
-                if let Some(wv) = &tab.webview {
-                    set_adblock_flag(wv, &tab.adblock_flag);
-                }
                 self.layout();
             }
         }
@@ -802,11 +794,6 @@ impl Browser {
             "adblock_toggle" => {
                 let url = self.tabs[self.active].url.clone();
                 blocker::toggle(&url);
-                for tab in &self.tabs {
-                    if let Some(wv) = &tab.webview {
-                        set_adblock_flag(wv, &tab.adblock_flag);
-                    }
-                }
                 let tab = &mut self.tabs[self.active];
                 tab.blocked = 0;
                 if let Some(wv) = &tab.webview {
@@ -1361,28 +1348,6 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
     }));
     let mut token = 0;
     let _ = unsafe { wv.add_WebResourceRequested(&handler, &mut token) };
-}
-
-/// Teilt den Skripten in der Seite mit, wo der Werbeblocker aus ist (`window.__glassAdblockOff`).
-/// Läuft bei jedem neuen Dokument vor den Skripten der Seite; das alte Skript wird dabei ersetzt.
-fn set_adblock_flag(webview: &WebView, slot: &ScriptSlot) {
-    use windows::core::HSTRING;
-    let wv = webview.webview();
-    if let Some(old) = slot.borrow_mut().take() {
-        let _ = unsafe { wv.RemoveScriptToExecuteOnDocumentCreated(&HSTRING::from(old)) };
-    }
-    let js = format!(
-        "Object.defineProperty(window, '__glassAdblockOff', {{ value: Object.freeze({}), configurable: true }});",
-        json!(blocker::allowed_sites())
-    );
-    let slot = slot.clone();
-    let handler = webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(move |result, id| {
-        if result.is_ok() {
-            *slot.borrow_mut() = Some(id);
-        }
-        Ok(())
-    }));
-    let _ = unsafe { wv.AddScriptToExecuteOnDocumentCreated(&HSTRING::from(js), &handler) };
 }
 
 /// Adresse, Hostname oder Suchbegriff → URL.
