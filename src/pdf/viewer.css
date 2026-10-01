@@ -326,9 +326,23 @@ input[type=range] { width: 100%; accent-color: var(--blue); }
   --editor-toolbar-height: 30px;
   border-radius: 15px; backdrop-filter: blur(14px) saturate(1.6); text-shadow: none;
 }
-/* Kein zweiter Farbwähler am Editor: die Farben in den Einstellungen rechts färben die Auswahl schon um */
-#viewer .editToolbar :is(.colorPicker, .basicColorPicker),
-#viewer .editToolbar :is(.colorPicker, .basicColorPicker) + .divider { display: none; }
+/* Keine kleine Leiste an Anmerkungen: Farben, Stärke und Löschen stehen in den Einstellungen rechts
+   (sie wirken auf die Auswahl), Löschen geht auch mit Entf */
+#viewer .editToolbar { display: none !important; }
+#delete-selected { margin-top: 12px; width: 100%; }
+#delete-selected:hover { background: rgba(255, 69, 58, .25); color: #ff6961; }
+
+/* Drehgriff über einem ausgewählten Bild oder Stempel (editor.mjs) */
+.rotate-handle {
+  position: absolute; left: 50%; top: -34px; width: 24px; height: 24px; margin-left: -12px; border-radius: 50%;
+  display: grid; place-items: center; cursor: grab; pointer-events: auto; z-index: 2;
+  background: var(--blue); color: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .35), 0 0 0 2px #fff;
+}
+.rotate-handle::after { content: ''; position: absolute; top: 24px; left: 11px; width: 2px; height: 10px; background: var(--blue); }
+.rotate-handle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#viewer .stampEditor:has(> .rotate-handle) { overflow: visible; }
+.rotate-handle:active { cursor: grabbing; }
+.stampEditor.rotating { transition: none; }
 .glass-edit-signature { width: 28px; height: 26px; display: grid; place-items: center; border-radius: 13px; color: var(--editor-toolbar-fg-color); }
 .glass-edit-signature:hover { background: var(--editor-toolbar-hover-bg-color); }
 .glass-edit-signature svg { width: 14px; height: 14px; filter: none; }

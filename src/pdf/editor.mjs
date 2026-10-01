@@ -339,14 +339,19 @@ export function initTools(app) {
   for (const b of panel.querySelectorAll('.variants button')) b.onclick = () => setTool(b.closest('.variants').dataset.group, b.dataset.sub);
 
   // ---------- Editoren aus Daten (Formen, Linien, Stempel): wie Einfügen in PDF.js, mit Rückgängig ----------
-  async function addEditor(pageNumber, data) {
+  /** Neuer Editor aus `data` auf Seite `pageNumber`; `replace`: ersetzt diesen Editor (ein Schritt fürs Rückgängig). */
+  async function addEditor(pageNumber, data, { replace = null } = {}) {
     const view = viewer.getPageView(pageNumber - 1);
     const layer = view?.annotationEditorLayer?.annotationEditorLayer;
     if (!layer) return null;
     // Drehung der Seite (/Rotate): PDF.js rechnet die Punkte damit in die Ansicht um
     const editor = await layer.deserialize({ pageIndex: pageNumber - 1, rotation: view.viewport.rotation, structTreeParentId: null, ...data });
     if (!editor) return null;
-    editor._uiManager.addCommands({ cmd: () => layer.addOrRebuild(editor), undo: () => editor.remove(), mustExec: true });
+    editor._uiManager.addCommands({
+      cmd: () => { replace?.remove(); layer.addOrRebuild(editor); },
+      undo: () => { editor.remove(); if (replace) layer.addOrRebuild(replace); },
+      mustExec: true,
+    });
     return editor;
   }
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -497,22 +502,15 @@ export function initTools(app) {
     };
   }
 
-  // ---------- Bild und Stempel ----------
-  const imageInput = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', hidden: true });
-  document.body.append(imageInput);
-  $('pick-image').onclick = () => { imageInput.value = ''; imageInput.click(); };
-  imageInput.addEventListener('change', async () => {
-    const file = imageInput.files[0];
-    if (!file) return;
-    await setMode(T.STAMP);
-    param(P.CREATE, { bitmapFile: file });
-  });
+  // ---------- Bild und Stempel: Glass setzt sie selbst, damit sie sich drehen lassen ----------
+  // PDF.js kann Bilder nicht frei drehen. Glass merkt sich darum die Quelle (Stempeltext oder Bild) und zeichnet beim
+  // Drehen das Bild gedreht neu; ein neuer Bild-Editor ersetzt den alten (ein Schritt fürs Rückgängig).
+  const rotatable = new Map(); // Editor-ID → { editor, n, source, w0, h0, angle } – w0/h0: ungedrehte Größe in PDF-Punkten
   const author = () => $('note-author').value.trim();
   const today = () => new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
   /** Stempel als Bild (dreifache Auflösung, damit er beim Zoomen scharf bleibt); Größe in PDF-Punkten. */
-  function stampImage(text, color, withDate) {
-    const scale = 3, lines = [text.toUpperCase()];
-    if (withDate) lines.push([author(), today()].filter(Boolean).join(' · '));
+  function stampImage(text, color, second) {
+    const scale = 3, lines = [text.toUpperCase(), ...(second ? [second] : [])];
     const ctx = document.createElement('canvas').getContext('2d');
     ctx.font = `700 ${20 * scale}px "Segoe UI", system-ui, sans-serif`;
     const w1 = ctx.measureText(lines[0]).width;
@@ -536,23 +534,75 @@ export function initTools(app) {
     }
     return { canvas, width: width / scale, height: height / scale };
   }
-  async function placeStamp(text, color, withDate) {
-    const { canvas, width, height } = stampImage(text, color, withDate);
-    const blob = await new Promise((done) => canvas.toBlob(done));
-    const n = viewer.currentPageNumber;
-    const view = viewer.getPageView(n - 1);
+  /** Die ungedrehte Vorlage als Canvas: Stempel neu zeichnen, Bild (Datei oder Kopie) laden. */
+  async function sourceCanvas(source) {
+    if (source.kind === 'stamp') return stampImage(source.text, source.color, source.second).canvas;
+    const bitmap = await createImageBitmap(source.blob);
+    // Sehr große Fotos auf eine handliche Auflösung begrenzen
+    const k = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bitmap.width * k), height: Math.round(bitmap.height * k) });
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+  /** Canvas um `angle` Grad (im Uhrzeigersinn, wie auf dem Bildschirm) gedreht, mit passendem Rahmen. */
+  function rotateCanvas(canvas, angle) {
+    const a = angle * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+    const out = Object.assign(document.createElement('canvas'), {
+      width: Math.ceil(canvas.width * c + canvas.height * s), height: Math.ceil(canvas.width * s + canvas.height * c),
+    });
+    const ctx = out.getContext('2d');
+    ctx.translate(out.width / 2, out.height / 2);
+    ctx.rotate(a);
+    ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+    return out;
+  }
+  /** Setzt Bild oder Stempel `source` mit Mitte `[x, y]` (PDF-Punkte), Größe w0×h0 und Drehung auf Seite `n`. */
+  async function placeImage(n, [x, y], source, w0, h0, angle = 0, replace = null) {
+    const base = await sourceCanvas(source);
+    const image = angle ? rotateCanvas(base, angle) : base;
+    const a = angle * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+    const w = w0 * c + h0 * s, h = w0 * s + h0 * c;
+    const blob = await new Promise((done) => image.toBlob(done));
     await setMode(T.STAMP);
-    // Mitte des sichtbaren Teils der Seite
-    const r = view.div.getBoundingClientRect(), box = app.container.getBoundingClientRect();
-    const cx = (Math.max(r.left, box.left) + Math.min(r.right, box.right)) / 2, cy = (Math.max(r.top, box.top) + Math.min(r.bottom, box.bottom)) / 2;
-    const [x, y] = app.pageGeometry(n).eventToPdf({ clientX: cx, clientY: cy });
     const editor = await addEditor(n, {
       annotationType: T.STAMP, bitmapUrl: URL.createObjectURL(blob), isSvg: false,
-      rect: [x - width / 2, y - height / 2, x + width / 2, y + height / 2],
-      accessibilityData: { decorative: false, altText: `Stempel: ${text}` },
-    });
-    if (!editor) app.toast('Die Seite ist noch nicht bereit – bitte noch einmal.');
+      rect: [x - w / 2, y - h / 2, x + w / 2, y + h / 2],
+      accessibilityData: { decorative: false, altText: source.kind === 'stamp' ? `Stempel: ${source.text}` : 'Bild' },
+    }, { replace });
+    if (!editor) { app.toast('Die Seite ist noch nicht bereit – bitte noch einmal.'); return null; }
+    rotatable.set(editor.id, { editor, n, source, w0, h0, angle });
+    // Gleich ausgewählt, damit Verschieben, Größe und Drehgriff bereitstehen
+    requestAnimationFrame(() => { editor._uiManager.setSelected?.(editor); syncHandles(); });
+    return editor;
   }
+  /** Mitte des sichtbaren Teils der aktuellen Seite in PDF-Punkten. */
+  function visibleCenter(n) {
+    const r = viewer.getPageView(n - 1).div.getBoundingClientRect(), box = app.container.getBoundingClientRect();
+    const cx = (Math.max(r.left, box.left) + Math.min(r.right, box.right)) / 2, cy = (Math.max(r.top, box.top) + Math.min(r.bottom, box.bottom)) / 2;
+    return app.pageGeometry(n).eventToPdf({ clientX: cx, clientY: cy });
+  }
+  async function placeStamp(text, color, withDate) {
+    const source = { kind: 'stamp', text, color, second: withDate ? [author(), today()].filter(Boolean).join(' · ') : '' };
+    const { width, height } = stampImage(text, color, source.second);
+    const n = viewer.currentPageNumber;
+    return placeImage(n, visibleCenter(n), source, width, height);
+  }
+  async function placePicture(file) {
+    const bitmap = await createImageBitmap(file).catch(() => null);
+    if (!bitmap) { app.toast('Dieses Bild lässt sich nicht lesen.'); return null; }
+    const n = viewer.currentPageNumber;
+    const [pw, ph] = viewer.getPageView(n - 1).viewport.rawDims ? [viewer.getPageView(n - 1).viewport.rawDims.pageWidth, viewer.getPageView(n - 1).viewport.rawDims.pageHeight] : [612, 792];
+    // 96 dpi → Punkte, höchstens knapp die halbe Seite
+    let w = bitmap.width * .75, h = bitmap.height * .75;
+    const k = Math.min(1, pw * .45 / w, ph * .45 / h);
+    w *= k; h *= k;
+    return placeImage(n, visibleCenter(n), { kind: 'image', blob: file }, w, h);
+  }
+
+  const imageInput = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', hidden: true });
+  document.body.append(imageInput);
+  $('pick-image').onclick = () => { imageInput.value = ''; imageInput.click(); };
+  imageInput.addEventListener('change', () => { if (imageInput.files[0]) placePicture(imageInput.files[0]); });
   const STAMPS = [
     ['Genehmigt', '#1e8a4c'], ['Geprüft', '#1f5fd6'], ['Erledigt', '#1e8a4c'],
     ['Entwurf', '#5e5ce6'], ['Vertraulich', '#d62f2f'], ['Abgelehnt', '#d62f2f'],
@@ -566,13 +616,99 @@ export function initTools(app) {
   $('stamp-custom').onclick = () => {
     const text = $('stamp-text').value.trim();
     if (!text) { $('stamp-text').focus(); return; }
-    placeStamp(text, inkColor === '#ffffff' ? '#d62f2f' : inkColor === '#000000' ? '#d62f2f' : inkColor, $('stamp-date').checked);
+    placeStamp(text, inkColor === '#ffffff' || inkColor === '#000000' ? '#d62f2f' : inkColor, $('stamp-date').checked);
   };
   app.placeStamp = placeStamp;
-  // Stempel oder Bild abgewählt: zurück in den Auswahlmodus, sonst öffnete ein Klick auf die Seite den Bildauswahldialog
-  eventBus.on('annotationeditorstateschanged', ({ details }) => {
+  app.placePicture = placePicture;
+
+  // ---------- Drehgriff über dem ausgewählten Bild oder Stempel ----------
+  const snap = (deg, coarse) => {
+    if (coarse) return Math.round(deg / 15) * 15;
+    // in die Waagerechte/Senkrechte einrasten
+    const right = Math.round(deg / 90) * 90;
+    return Math.abs(deg - right) < 4 ? right : deg;
+  };
+  function syncHandles() {
+    // „Auswahl löschen“ nach der tatsächlichen Auswahl – PDF.js meldet sie nicht in jedem Fall per Ereignis
+    $('delete-selected').hidden = !document.querySelector('#viewer .selectedEditor');
+    for (const h of document.querySelectorAll('#viewer .rotate-handle')) if (!h.parentElement?.classList.contains('selectedEditor')) h.remove();
+    const el = document.querySelector('#viewer .stampEditor.selectedEditor');
+    if (!el || el.querySelector(':scope > .rotate-handle')) return;
+    const handle = document.createElement('div');
+    handle.className = 'rotate-handle';
+    handle.title = 'Drehen (Umschalt: in 15°-Schritten)';
+    handle.innerHTML = '<svg viewBox="0 0 16 16"><use href="#i-rotate-right"/></svg>';
+    handle.addEventListener('pointerdown', (e) => rotate(e, el, handle));
+    el.append(handle);
+  }
+  /** Ein Bild-Editor, den Glass nicht selbst gesetzt hat (etwa nach dem Speichern neu geladen): sein Bild als Vorlage. */
+  async function adopt(el) {
+    const canvas = el.querySelector('canvas');
+    const editor = [...rotatable.values()].find((i) => i.editor.div === el)?.editor;
+    if (editor) return rotatable.get(editor.id);
+    if (!canvas) return null;
+    const n = +el.closest('.page').dataset.pageNumber, g = app.pageGeometry(n), r = el.getBoundingClientRect();
+    const [x1, y1] = g.eventToPdf({ clientX: r.left, clientY: r.top }), [x2, y2] = g.eventToPdf({ clientX: r.right, clientY: r.bottom });
+    const blob = await new Promise((done) => canvas.toBlob(done));
+    // Den Editor selbst führt der uiManager von PDF.js nach seiner ID (= ID des Elements)
+    const found = uiManager?.getEditor(el.id);
+    if (!found) return null;
+    const info = { editor: found, n, source: { kind: 'image', blob }, w0: Math.abs(x2 - x1), h0: Math.abs(y2 - y1), angle: 0 };
+    rotatable.set(found.id, info);
+    return info;
+  }
+  function rotate(e, el, handle) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const start = Math.atan2(e.clientY - cy, e.clientX - cx);
+    const info = rotatable.get(el.id) || null;
+    const from = info?.angle || 0;
+    let delta = 0;
+    handle.setPointerCapture(e.pointerId);
+    el.classList.add('rotating');
+    handle.onpointermove = (ev) => {
+      ev.stopPropagation();
+      const raw = from + (Math.atan2(ev.clientY - cy, ev.clientX - cx) - start) * 180 / Math.PI;
+      delta = snap(raw, ev.shiftKey) - from;
+      el.style.rotate = `${delta}deg`;
+    };
+    handle.onpointerup = async (ev) => {
+      ev.stopPropagation();
+      handle.onpointermove = handle.onpointerup = null;
+      el.classList.remove('rotating');
+      el.style.rotate = '';
+      if (Math.abs(delta) < .5) return;
+      const current = rotatable.get(el.id) || (await adopt(el));
+      if (!current) { app.toast('Dieses Bild lässt sich nicht drehen.'); return; }
+      // Mitte und Maßstab aus der jetzigen Lage – das Bild kann inzwischen verschoben oder skaliert sein
+      const g = app.pageGeometry(current.n);
+      const [x, y] = g.eventToPdf({ clientX: cx, clientY: cy });
+      const [ax, ay] = g.eventToPdf({ clientX: r.left, clientY: cy }), [bx, by] = g.eventToPdf({ clientX: r.right, clientY: cy });
+      const a = current.angle * Math.PI / 180;
+      const expected = current.w0 * Math.abs(Math.cos(a)) + current.h0 * Math.abs(Math.sin(a));
+      const scale = Math.hypot(bx - ax, by - ay) / expected || 1;
+      const angle = ((current.angle + delta) % 360 + 360) % 360;
+      await placeImage(current.n, [x, y], current.source, current.w0 * scale, current.h0 * scale, angle, current.editor);
+    };
+  }
+  // Absender der Zustandsmeldung ist der uiManager von PDF.js (für getEditor in adopt)
+  let uiManager = null;
+  eventBus.on('annotationeditorstateschanged', ({ source, details }) => {
+    uiManager = source || uiManager;
+    requestAnimationFrame(syncHandles);
+    // Stempel oder Bild abgewählt: zurück in den Auswahlmodus, sonst öffnete ein Klick auf die Seite den Bildauswahldialog
     if (tool === 'stamp' && details.hasSelectedEditor === false && viewer.annotationEditorMode === T.STAMP) setMode(T.NONE);
   });
+  document.addEventListener('pointerup', () => requestAnimationFrame(syncHandles));
+
+  // Löschen ohne die kleine Leiste von PDF.js: Knopf in den Einstellungen, sobald etwas ausgewählt ist (syncHandles)
+  $('delete-selected').onclick = () => {
+    eventBus.dispatch('editingaction', { source: null, name: 'delete' });
+    requestAnimationFrame(syncHandles);
+  };
+  document.addEventListener('keyup', () => requestAnimationFrame(syncHandles));
 
   // ---------- Farben und Stärken ----------
   function swatches(name, colors, apply, initial) {
