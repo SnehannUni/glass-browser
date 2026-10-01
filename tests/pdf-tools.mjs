@@ -236,14 +236,24 @@ try {
   await page(`document.querySelector('#viewer .page[data-page-number="2"]').scrollIntoView()`);
   await delay(300);
   r = await H.pageRect(2);
+  // Mitten in die Seite gescrollt – nach dem Anlegen soll die Ansicht genau dort bleiben
+  await page(`glassPdf.container.scrollTop += 137`);
+  await delay(300);
+  r = await H.pageRect(2);
+  const scrolled = await page(`glassPdf.container.scrollTop`);
   await H.drag([[r.x + 100, r.y + 300], [r.x + 250, r.y + 315], [r.x + 400, r.y + 330]]);
   await H.idle();
   await waitFor(() => page(`glassPdf.doc.getPage(2).then(p => p.getAnnotations()).then(a => a.some(x => x.fieldName === 'Textfeld 1'))`), 'text field created');
+  await delay(300);
+  const after = await page(`glassPdf.container.scrollTop`);
+  assert.ok(Math.abs(after - scrolled) < 3, `view stays where it was: ${scrolled} → ${after}`);
   await waitFor(() => page(`!!document.querySelector('.page[data-page-number="2"] .annotationLayer input')`), 'field fillable');
   console.log('PASS: dragging with the form field tool creates a fillable text field.');
 
   // 10: Text bearbeiten – „Seite 2“ wird „Kapitel 2“
   await H.tool('textedit');
+  await page(`document.querySelector('#viewer .page[data-page-number="2"]').scrollIntoView()`);
+  await delay(300);
   await waitFor(async () => !!(await H.span(2, 'Seite 2')), 'span page 2');
   s = await H.span(2, 'Seite 2');
   await H.click(s.x + s.w / 2, s.y + s.h / 2);

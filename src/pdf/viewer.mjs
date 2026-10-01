@@ -236,9 +236,19 @@ addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
 let restore = null;
 let encrypted = false;
 const documentListeners = [];
+/** Wo die Ansicht gerade steht: Seite und der Punkt oben links im Fenster in PDF-Koordinaten (bleibt beim Neuladen gültig). */
+function viewPosition() {
+  const page = viewer.currentPageNumber, view = viewer.getPageView(page - 1);
+  const position = { page, scale: viewer.currentScaleValue, x: null, y: null };
+  if (view?.div) {
+    const r = view.div.getBoundingClientRect(), box = container.getBoundingClientRect();
+    [position.x, position.y] = view.viewport.convertToPdfPoint(box.left - r.left, box.top - r.top);
+  }
+  return position;
+}
 function useDocument(next) {
   const old = doc;
-  if (old && old !== next) restore = { page: viewer.currentPageNumber, scale: viewer.currentScaleValue, top: container.scrollTop };
+  if (old && old !== next) restore = viewPosition();
   doc = next;
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
@@ -264,10 +274,13 @@ doc.getMetadata().then(({ info }) => {
 
 eventBus.on('pagesinit', () => {
   if (restore) {
-    const { page, scale } = restore;
+    // Nach einer Änderung (Formularfeld, Text bearbeiten, Wasserzeichen …) genau dort weiter, wo man war
+    const { page, scale, x, y } = restore;
     restore = null;
     viewer.currentScaleValue = scale;
-    viewer.currentPageNumber = Math.min(page, doc.numPages);
+    const pageNumber = Math.min(page, doc.numPages);
+    if (x === null || page > doc.numPages) viewer.currentPageNumber = pageNumber;
+    else viewer.scrollPageIntoView({ pageNumber, destArray: [null, { name: 'XYZ' }, x, y, null], allowNegativeOffset: true });
   } else {
     viewer.currentScaleValue = '1'; // Originalgröße
     container.focus();
