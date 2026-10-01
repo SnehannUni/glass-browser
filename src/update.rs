@@ -80,9 +80,11 @@ pub fn install(url: &str) -> Result<(), String> {
 /// Gibt die übrigen Argumente zurück (Adressen zum Öffnen).
 pub fn startup(args: Vec<String>) -> Vec<String> {
     let mut rest = Vec::new();
+    let mut updated = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         if arg == "--wait-pid" {
+            updated = true;
             if let Some(pid) = it.next().and_then(|p| p.parse().ok()) {
                 wait_for(pid);
             }
@@ -90,10 +92,71 @@ pub fn startup(args: Vec<String>) -> Vec<String> {
             rest.push(arg);
         }
     }
-    if let Ok((_, old, _)) = paths() {
+    if let Ok((exe, old, _)) = paths() {
         let _ = std::fs::remove_file(old);
+        if updated { std::thread::spawn(move || refresh_shell_icons(&exe)); }
     }
     rest
+}
+
+/// Die Exe wurde am selben Pfad ausgetauscht. Windows merkt sich Icons pro Pfad und Icon-Index und liest
+/// sie dann nicht neu – Desktop, Startmenü und Taskleiste zeigen sonst weiter das alte Icon, auch nach
+/// `SHChangeNotify`. Darum bekommen die Glass-Verknüpfungen einen anderen, gleichwertigen Icon-Verweis:
+/// Index 0 und Ressource 1 (`-1`) sind dasselbe Icon (die Exe hat nur eins), für den Cache aber ein neuer
+/// Eintrag. Bei jedem Update wird gewechselt.
+fn refresh_shell_icons(exe: &std::path::Path) {
+    use windows::core::{Interface, HSTRING, PCWSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READWRITE,
+    };
+    use windows::Win32::UI::Shell::{
+        FOLDERID_Desktop, FOLDERID_Programs, FOLDERID_RoamingAppData, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT,
+    };
+    use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNE_UPDATEITEM, SHCNF_IDLIST, SHCNF_PATHW};
+    let notify = |path: &std::path::Path| {
+        let wide: Vec<u16> = path.to_string_lossy().encode_utf16().chain([0]).collect();
+        unsafe { SHChangeNotify(SHCNE_UPDATEITEM as i32, SHCNF_PATHW, wide.as_ptr().cast(), std::ptr::null()) };
+    };
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let known = |id| {
+            let raw = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
+            let path = raw.to_string().ok();
+            CoTaskMemFree(Some(raw.0 as _));
+            path.map(std::path::PathBuf::from)
+        };
+        // Desktop, Startmenü und an die Taskleiste angeheftete Verknüpfungen
+        let dirs = [
+            known(&FOLDERID_Desktop),
+            known(&FOLDERID_Programs),
+            known(&FOLDERID_RoamingAppData).map(|d| d.join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")),
+        ];
+        let exe_name = exe.to_string_lossy().to_lowercase();
+        for dir in dirs.into_iter().flatten() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for lnk in entries.flatten().map(|e| e.path()) {
+                if !lnk.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")) { continue; }
+                let Ok(link) = CoCreateInstance::<_, IShellLinkW>(&ShellLink, None, CLSCTX_INPROC_SERVER) else { continue };
+                let Ok(file) = link.cast::<IPersistFile>() else { continue };
+                if file.Load(&HSTRING::from(lnk.as_path()), STGM_READWRITE).is_err() { continue; }
+                let mut target = [0u16; 1024];
+                if link.GetPath(&mut target, std::ptr::null_mut(), 0).is_err() { continue; }
+                let target = String::from_utf16_lossy(&target[..target.iter().position(|&c| c == 0).unwrap_or(0)]);
+                if target.to_lowercase() != exe_name { continue; }
+                let mut icon = [0u16; 1024];
+                let mut index = 0;
+                let _ = link.GetIconLocation(&mut icon, &mut index);
+                if link.SetIconLocation(&HSTRING::from(exe), if index == 0 { -1 } else { 0 }).is_ok()
+                    && file.Save(PCWSTR::null(), true).is_ok()
+                {
+                    notify(&lnk);
+                }
+            }
+        }
+        notify(exe);
+        // Icon-Liste des Explorers verwerfen, damit alle Ansichten neu laden
+        SHChangeNotify(SHCNE_ASSOCCHANGED as i32, SHCNF_IDLIST, std::ptr::null(), std::ptr::null());
+    }
 }
 
 fn wait_for(pid: u32) {
