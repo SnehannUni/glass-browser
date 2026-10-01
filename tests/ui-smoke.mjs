@@ -264,11 +264,15 @@ try {
   await key('Escape','Escape');
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
   // Pencil in the wheel: the providers not in it unroll above the upper-left circle; a click swaps that circle,
-  // the arrow keys turn the next one under the column. Google and the pencil are never swapped.
+  // the arrow keys turn the next one under the column. Google is never swapped; the pencil never moves.
   const down = (sel) => `document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`;
   const front = `document.querySelector('#wheel .slot.on').title`, target = `document.querySelector('#wheel .slot.target').title`;
   await evaluate(down('#btn-engine'));
-  await evaluate(down('#wheel .slot.edit'));
+  const pencilSpot = `(() => { const w = document.getElementById('wheel').getBoundingClientRect(), p = document.querySelector('#wheel .wheel-edit').getBoundingClientRect(); return { dx: p.x + p.width / 2 - (w.x + w.width / 2), dy: p.y + p.height / 2 - (w.y + w.height / 2), size: p.width === document.querySelector('#wheel .slot').offsetWidth }; })()`;
+  const pencilAt = async (x, y, why) => { const p = await evaluate(pencilSpot); assert.ok(Math.abs(p.dx - x) < .5 && Math.abs(p.dy - y) < .5 && p.size, `pencil ${why}: ${JSON.stringify(p)}`); };
+  await delay(800); // let it fan out first: the pencil turns out with the others
+  await pencilAt(-39, 67.55, 'sits lower left');
+  await evaluate(down('#wheel .wheel-edit'));
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('editing')`), true, 'pencil starts editing');
   assert.equal(await evaluate(front), 'Google', 'editing keeps the selection');
   assert.equal(await evaluate(target), 'ChatGPT', 'the circle after the selected one gets swapped');
@@ -278,7 +282,7 @@ try {
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('#wheel .pick')].map(p=>p.title)`), ['Z.ai','Grok','ChatGPT','Amazon']);
   assert.deepEqual(JSON.parse(await evaluate(`localStorage.getItem('glass.wheel')`)), ['youtube','claude','gemini','kimi']);
   assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'editing the wheel keeps the field focused');
-  await key('ArrowRight', 'ArrowRight'); assert.equal(await evaluate(target), 'Kimi', 'right arrow turns clockwise, never the pencil');
+  await key('ArrowRight', 'ArrowRight'); assert.equal(await evaluate(target), 'Kimi', 'right arrow turns clockwise, never Google under the column');
   await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'YouTube');
   await key('ArrowLeft', 'ArrowLeft'); assert.equal(await evaluate(target), 'Claude', 'left arrow turns back');
   await evaluate(down('#wheel .turn.next')); assert.equal(await evaluate(target), 'YouTube', 'curved arrow on the right turns clockwise');
@@ -289,9 +293,11 @@ try {
     return Math.min(...picks.flatMap((p) => slots.map((s) => Math.hypot(p.x - s.x, p.y - s.y) - p.r - s.r)));
   })()`);
   assert.ok(pickGap > 1, `picks clear the wheel (${pickGap.toFixed(1)} px)`);
+  await pencilAt(0, 0, 'moves to the middle while editing');
   await key('Escape', 'Escape');
   assert.equal(await evaluate(`document.querySelectorAll('#wheel .pick').length`), 0, 'Escape ends editing first');
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`), true);
+  await delay(800); await pencilAt(-39, 67.55, 'returns to its place after turning');
   await evaluate(down('#wheel .slot[title="Google"]'));
   await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
   console.log(`PASS: pencil swaps wheel providers (picks clear the wheel by ${pickGap.toFixed(1)} px).`);
@@ -300,7 +306,7 @@ try {
   await delay(800);
   const pulseGeometry = await evaluate(`(() => {
     const wheel = document.getElementById('wheel');
-    const slots = [...wheel.querySelectorAll('.slot:not(.edit)')];
+    const slots = [...wheel.querySelectorAll('.slot')];
     const selected = slots.findIndex(s => s.classList.contains('on'));
     const incoming = slots[(selected + slots.length - 1) % slots.length];
     incoming.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true }));
