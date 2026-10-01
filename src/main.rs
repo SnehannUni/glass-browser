@@ -9,6 +9,7 @@ mod favicon;
 mod resize_preview;
 mod clipboard;
 mod mail;
+mod downloads;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -111,6 +112,8 @@ enum UserEvent {
     ClipboardPage(u32, String),
     /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
     ClipboardBackdrop(u64, String),
+    /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
+    Download(u32, downloads::Change),
     /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
     PageShot(u64, u32, String),
     /// Ein Web-Postfach meldet Ungelesene und neueste Mails: Tab, Adresse des Dokuments, JSON aus mail-content.js.
@@ -180,6 +183,8 @@ struct Tab {
     hidden_since: Cell<Option<Instant>>,
     /// Der Tab ist die Mail-Ansicht (mail.rs): keine eigene Webseite, links die Liste, rechts ein Postfach.
     mail_view: bool,
+    /// Von einer Webseite geöffnet (Link in neuem Tab): War darin nur ein Download, schließt Glass ihn wieder.
+    popup: bool,
 }
 
 impl Tab {
@@ -226,6 +231,10 @@ struct Browser {
     clips: clipboard::History,
     /// Gerade offene Liste nach Strg+V.
     clip: Option<clipboard::Session>,
+    /// Laufende und letzte Downloads (Knopf rechts oben).
+    downloads: downloads::Shared,
+    /// WebViews geschlossener Tabs, deren Downloads noch laufen – mit der WebView endete sonst auch der Download.
+    parked: Vec<(u32, WebView)>,
     /// Web-Postfächer hinter dem Mail-Knopf.
     mail: mail::Mail,
 }
@@ -584,7 +593,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -605,7 +614,8 @@ impl Browser {
         if self.split_of(id).is_some() {
             self.split = None;
         }
-        self.tabs.remove(idx);
+        let tab = self.tabs.remove(idx);
+        self.park(tab.id, tab.webview);
         if idx < self.active || self.active >= self.tabs.len() {
             self.active = self.active.saturating_sub(1);
         }
@@ -681,6 +691,10 @@ impl Browser {
             None => {
                 let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds, true);
                 tab.webview = wv.ok();
+                let (id, private) = (tab.id, tab.private);
+                if let Some(wv) = &self.tabs[self.active].webview {
+                    self.watch_downloads(wv, id, private);
+                }
                 self.layout();
             }
         }
@@ -733,6 +747,72 @@ impl Browser {
         self.sync_ui();
     }
 
+    /// Downloads dieser WebView übernehmen (Tab oder Postfach): WebView2 zeigt dafür kein eigenes Fenster mehr.
+    fn watch_downloads(&self, webview: &WebView, id: u32, private: bool) {
+        let proxy = self.proxy.clone();
+        let notify: downloads::Notify = Rc::new(move |change| { let _ = proxy.send_event(UserEvent::Download(id, change)); });
+        downloads::watch(&webview.webview(), id, private, &self.downloads, notify);
+    }
+
+    /// Die WebView eines Tabs, der verschwindet: Laufen darin noch Downloads, bleibt sie unsichtbar bestehen, bis sie fertig sind.
+    fn park(&mut self, tab: u32, webview: Option<WebView>) {
+        if let Some(wv) = webview.filter(|_| self.downloads.borrow().busy(tab)) {
+            let _ = wv.set_visible(false);
+            self.parked.push((tab, wv));
+        }
+    }
+
+    /// Stand der Downloads an die Oberfläche (`started`: gerade kam einer dazu).
+    fn sync_downloads(&self, started: bool) {
+        let list = self.downloads.borrow().to_json();
+        let _ = self.ui.evaluate_script(&format!("window.setDownloads?.({list}, {started})"));
+    }
+
+    /// Ein Download begann in einem Tab ohne eigene Seite: Von einer Webseite geöffnet, schließt der Tab wieder;
+    /// sonst (Adresse eingetippt) wird er wieder leer. Die WebView lädt unsichtbar zu Ende (`park`).
+    fn drop_download_tab(&mut self, id: u32) {
+        let Some(i) = self.index_of(id) else { return };
+        if self.tabs[i].popup {
+            self.close_tab(id);
+            return;
+        }
+        let webview = self.tabs[i].webview.take();
+        self.park(id, webview);
+        // Neue Nummer: Späte Meldungen der alten WebView (Titel, Laden fertig) dürfen den leeren Tab nicht füllen
+        let tab = &mut self.tabs[i];
+        tab.id = self.next_id;
+        self.next_id += 1;
+        tab.url.clear();
+        tab.title.clear();
+        tab.favicon.clear();
+        tab.page_favicon.clear();
+        tab.loading = false;
+        tab.home = false;
+        tab.pending_prompt = None;
+        self.layout();
+        self.sync_ui();
+        if i == self.active {
+            self.focus_address();
+        }
+    }
+
+    /// Bedienung der Download-Liste; die Oberfläche nennt nur die Nummer, Pfade kennt allein Rust.
+    fn download_command(&mut self, what: &str, id: Option<u32>) {
+        // Erst die Liste loslassen, dann WebView2 aufrufen: Abbrechen meldet sich sofort über `refresh` zurück
+        let op = id.and_then(|id| self.downloads.borrow().operation(id));
+        let path = id.and_then(|id| self.downloads.borrow().file(id));
+        match what {
+            "cancel" => { let _ = op.map(|o| unsafe { o.Cancel() }); }
+            "resume" => { let _ = op.map(|o| unsafe { o.Resume() }); }
+            "open" => { if let Some(p) = path { downloads::open(&p) } }
+            "show" => { if let Some(p) = path { downloads::reveal(&p) } }
+            "remove" if id.is_some() => self.downloads.borrow_mut().remove(id),
+            "clear" => self.downloads.borrow_mut().remove(None),
+            _ => return,
+        }
+        self.sync_downloads(false);
+    }
+
     /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
     fn show_update(&self) {
         if let Some((build, notes, _)) = &self.update {
@@ -758,6 +838,10 @@ impl Browser {
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
         if cmd == "clip_pick" { self.clip_pick(msg); return true; }
+        if let Some(what) = cmd.strip_prefix("download_") {
+            self.download_command(what, msg["id"].as_u64().map(|v| v as u32));
+            return true;
+        }
         let id = msg["id"].as_u64().map(|v| v as u32);
         let value = msg["value"].as_str().unwrap_or_default();
         match cmd {
@@ -767,6 +851,7 @@ impl Browser {
                 self.sync_geometry();
                 self.show_update();
                 self.sync_mail();
+                self.sync_downloads(false);
             }
             // Mail-Knopf und Mail-Ansicht: Postfach (oder eine Mail darin) rechts zeigen, Postfach trennen
             "mail_view" => self.mail_view(),
@@ -992,6 +1077,16 @@ impl Browser {
             }
             UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
             UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
+            UserEvent::Download(id, change) => {
+                let started = matches!(change, downloads::Change::Started { .. });
+                if let downloads::Change::Started { fresh: true } = change {
+                    self.drop_download_tab(id);
+                }
+                // Fertig: WebViews geschlossener Tabs gehen jetzt wirklich zu
+                let downloads = self.downloads.clone();
+                self.parked.retain(|(tab, _)| downloads.borrow().busy(*tab));
+                self.sync_downloads(started);
+            }
             UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
             UserEvent::MailTick => self.mail_tick(),
             UserEvent::MailSleep(round) => self.mail_sleep(round),
@@ -1083,6 +1178,7 @@ impl Browser {
                 }
                 let private = self.index_of(from).is_some_and(|i| self.tabs[i].private);
                 self.new_tab(Some(url), private);
+                self.tabs[self.active].popup = true;
             }
             UserEvent::Fullscreen(id, on) => self.set_fullscreen(id, on),
             // Geteilte Ansicht: Adresszeile & Co. gehören zu der Seite, in die zuletzt geklickt wurde.
@@ -1482,6 +1578,7 @@ fn main() -> wry::Result<()> {
         .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"));
     blocker::init(data_dir.clone());
     let mail = mail::Mail::new(&data_dir);
+    let downloads = downloads::Downloads::load(&data_dir);
     let mut web_context = WebContext::new(Some(data_dir));
 
     let p_ui = proxy.clone();
@@ -1565,7 +1662,7 @@ fn main() -> wry::Result<()> {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
-        clips: clipboard::History::default(), clip: None, mail,
+        clips: clipboard::History::default(), clip: None, mail, downloads, parked: Vec::new(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
