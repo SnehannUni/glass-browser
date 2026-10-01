@@ -342,7 +342,8 @@ input[type=range] { width: 100%; accent-color: var(--blue); }
 .rotate-handle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #viewer .stampEditor:has(> .rotate-handle) { overflow: visible; }
 .rotate-handle:active { cursor: grabbing; }
-.stampEditor.rotating { transition: none; }
+/* Beim Ziehen um die Mitte drehen – PDF.js setzt bei Editoren transform-origin: 0 0 */
+.stampEditor.rotating { transform-origin: 50% 50% !important; transition: none; }
 .glass-edit-signature { width: 28px; height: 26px; display: grid; place-items: center; border-radius: 13px; color: var(--editor-toolbar-fg-color); }
 .glass-edit-signature:hover { background: var(--editor-toolbar-hover-bg-color); }
 .glass-edit-signature svg { width: 14px; height: 14px; filter: none; }
