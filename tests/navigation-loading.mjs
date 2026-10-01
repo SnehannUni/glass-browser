@@ -78,6 +78,13 @@ try {
   await page(`document.querySelector('link[rel=icon]').href='/assets/second.svg'`);
   await waitFor(async () => { const current=await icon(); return current.startsWith('data:image/png;base64,') && current!==initialIcon; }, 'dynamic favicon update');
   console.log('PASS: declared SVG icon works without /favicon.ico; dynamic icon changes update the tab.');
+  // Mouse side buttons on a website: at the start of its history, back leads to the start screen, forward returns
+  const sideButton = async (button) => { for (const type of ['mousePressed', 'mouseReleased']) await page.call('Input.dispatchMouseEvent', { type, x: 20, y: 60, button, buttons: type === 'mousePressed' ? (button === 'back' ? 8 : 16) : 0, clickCount: 1 }); };
+  await sideButton('back');
+  await waitFor(() => ui(`document.body.classList.contains('start')`), 'mouse back button shows the start screen');
+  await ui(`document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 4 }))`);
+  await waitFor(() => ui(`!document.body.classList.contains('start')`), 'mouse forward button returns to the website');
+  console.log('PASS: mouse side buttons go back to the start screen and forward to the website.');
   await page(`document.getElementById('next').click()`);
   await waitFor(() => !!held, 'link request received');
   await waitFor(loading, 'spinner while response headers are pending');

@@ -18,6 +18,14 @@
     e.stopImmediatePropagation();
     window.ipc.postMessage(cmd);
   }, true);
+  // Seitentasten der Maus (WebView2 navigiert damit nicht von selbst): zurück bzw. vor wie die Knöpfe in der Leiste –
+  // am Anfang des Verlaufs also weiter zum Startbildschirm
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    window.ipc.postMessage(e.button === 3 ? 'back' : 'forward');
+  }, true);
 
   // ---------- Fenster am oberen Seitenrand anfassen ----------
   // Steht die Leiste links oder ist sie oben ausgeblendet, fehlt oben die Titelleiste. Leere Stellen im oberen
