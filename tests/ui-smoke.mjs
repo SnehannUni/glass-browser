@@ -245,19 +245,25 @@ try {
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
   await key('ArrowDown', 'ArrowDown'); assert.equal(await value(), 'alpha one');
   await key('Escape', 'Escape'); assert.equal(await value(), 'alpha');
-  // Start screen: Tab switches the search provider like turning the wheel clockwise, Shift+Tab goes back
+  // Start screen: Tab opens the wheel and turns it clockwise, Shift+Tab goes back; after a pause it closes again
   const engineName = `document.getElementById('btn-engine').title`;
-  await key('Tab', 'Tab'); assert.match(await evaluate(engineName), /YouTube/, 'Tab turns to the provider coming up from below');
+  const wheelOpen = `document.getElementById('wheel').classList.contains('open') && !document.getElementById('wheel').dataset.closing`;
+  await key('Tab', 'Tab'); await waitFor(`/YouTube/.test(${engineName})`); // turns once the wheel is open (two frames later)
+  assert.ok(await evaluate(`document.querySelector('#wheel .slot.on').getAnimations().some((a) => a.transitionProperty)`), 'the first turn is animated');
+  assert.equal(await evaluate(wheelOpen), true, 'Tab shows the wheel');
+  assert.equal(await evaluate(`document.querySelector('#wheel .slot.on').title`), 'YouTube', 'the wheel turned to it');
   assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'Tab keeps the focus in the field');
   await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/, 'Shift+Tab switches back');
+  await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  assert.match(await evaluate(engineName), /Google/, 'after a pause the wheel closes on the chosen provider');
   // Without focus in the field, Tab does not go to the search icon: it focuses the field and switches
   await evaluate(`document.getElementById('addr-input').blur()`);
   await key('Tab', 'Tab'); assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'first Tab focuses the field');
-  assert.match(await evaluate(engineName), /YouTube/);
+  await waitFor(`/YouTube/.test(${engineName})`);
   await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/);
   await evaluate(`(() => { const i = document.getElementById('addr-input'); i.value = 'alpha'; i.dispatchEvent(new Event('input')); })()`);
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
-  console.log('PASS: Tab on the start screen switches the search provider.');
+  console.log('PASS: Tab on the start screen turns the visible provider wheel.');
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');

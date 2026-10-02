@@ -1734,7 +1734,7 @@
     if (document.body.classList.contains('modal') || !toolbarMenu.hidden || !$('mail-menu').hidden) return;
     e.preventDefault();
     window.focusAddress();
-    switchEngine(e.shiftKey ? 1 : -1);
+    tabWheel(e.shiftKey ? 1 : -1);
   }, true);
   input.addEventListener('keydown', (e) => {
     if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -1745,14 +1745,14 @@
       // Pfeile drehen das offene Rad wie die gebogenen Pfeile darin: rechts/hoch im Uhrzeigersinn, links/runter zurück
       e.preventDefault();
       rotateWheel(e.key === 'ArrowRight' || e.key === 'ArrowUp' ? -1 : 1);
+      closeWheelSoon(); // von Tab geöffnet: Pause beginnt neu
     } else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
     } else if (e.key === 'Tab' && document.body.classList.contains('start')) {
-      // Startbildschirm: Tab wechselt den Suchanbieter – wie das Mausrad im Uhrzeigersinn ums Rad (ist es offen, dreht es
-      // sich mit), Umschalt+Tab zurück. Die Vorschläge wählt man hier mit den Pfeilen.
+      // Startbildschirm: Tab dreht das Rad der Suchanbieter – wie das Mausrad im Uhrzeigersinn, Umschalt+Tab zurück.
+      // Die Vorschläge wählt man hier mit den Pfeilen.
       e.preventDefault();
-      if (wheelOpen) rotateWheel(e.shiftKey ? 1 : -1);
-      else switchEngine(e.shiftKey ? 1 : -1);
+      tabWheel(e.shiftKey ? 1 : -1);
     } else if (['ArrowDown', 'ArrowUp', 'Tab'].includes(e.key) && suggestions.length && suggestBox.classList.contains('open')) {
       e.preventDefault();
       moveSuggestion(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
@@ -2021,16 +2021,28 @@
   }
   // Einen Platz weiterdrehen: -1 im Uhrzeigersinn (von unten rückt der nächste nach), +1 zurück.
   // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google).
-  // Tab auf dem Startbildschirm (Rad zu): Anbieter wechseln wie beim Drehen des Rads (step wie rotateWheel). Das Logo
-  // im Feld springt kurz, Vorschläge und Verbindung richten sich gleich nach dem neuen Anbieter.
-  function switchEngine(step) {
-    const n = shown.length;
-    setEngine(shown[(((shown.indexOf(engine) + step) % n) + n) % n]);
-    engineBtn.querySelector('img')?.animate([{ transform: 'scale(.4)' }, { transform: 'scale(1.15)', offset: .6 }, { transform: 'scale(1)' }],
-      { duration: 280, easing: 'ease-out' });
-    refreshSuggest(input.value);
-    warmUp(input.value);
+  // Tab auf dem Startbildschirm: Das Rad klappt auf und dreht einen Platz weiter (step wie rotateWheel) – man sieht,
+  // wohin man wechselt. Hat Tab es geöffnet, dreht es sich nach einer kurzen Pause wieder ein (nicht, solange die Maus
+  // darauf liegt); per Klick geöffnet bleibt es offen. Die Vorschläge richten sich beim Eindrehen nach dem neuen Anbieter.
+  const TAB_WHEEL_IDLE = 1400;
+  let wheelByTab = false, wheelHovered = false;
+  let tabTurn = null; // erster Schritt, der noch auf das Aufklappen wartet
+  function tabWheel(step) {
+    const turn = () => { rotateWheel(step); warmUp(input.value); closeWheelSoon(); };
+    if (tabTurn) { tabTurn(); tabTurn = null; } // schnell hintereinander: den wartenden Schritt nicht verlieren
+    if (wheel.classList.contains('open') && !wheel.dataset.closing) { turn(); return; }
+    openWheel();
+    wheelByTab = true;
+    // openWheel schaltet die Übergänge für zwei Bilder ab (.instant) – erst danach drehen, sonst springt der Kreis
+    tabTurn = turn;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (tabTurn === turn) { tabTurn = null; turn(); } }));
   }
+  function closeWheelSoon() {
+    clearTimeout(wheelTimer);
+    if (wheelByTab && !wheelHovered) wheelTimer = setTimeout(() => closeWheel(), TAB_WHEEL_IDLE);
+  }
+  wheel.addEventListener('pointerenter', () => { wheelHovered = true; clearTimeout(wheelTimer); });
+  wheel.addEventListener('pointerleave', () => { wheelHovered = false; closeWheelSoon(); });
   function rotateWheel(step) {
     const list = wheelEditing ? shown.slice(0, -1) : shown, n = list.length;
     setEngine(list[(((list.indexOf(engine) + step) % n) + n) % n]);
@@ -2058,6 +2070,7 @@
   function openWheel() {
     closeSuggest();
     clearTimeout(wheelTimer);
+    wheelByTab = false;
     slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
     delete wheel.dataset.closing;
     wheel.classList.add('open', 'instant');
