@@ -31,7 +31,7 @@ Winter Browser nutzt Microsoft Edge WebView2 (Chromium) zur Darstellung von Webs
 
 **Suchbegriffe:** Browser, Webbrowser, Werbeblocker, PDF, Datenschutz, Mail, Chromium
 
-**Copyright:** © 2026 SnehannUni
+**Copyright:** © 2026 Bösendorff
 
 ## English (en-US)
 
@@ -62,7 +62,7 @@ Winter Browser uses Microsoft Edge WebView2 (Chromium) to render web pages.
 
 **Search terms:** browser, web browser, ad blocker, PDF, privacy, mail, Chromium
 
-**Copyright:** © 2026 SnehannUni
+**Copyright:** © 2026 Bösendorff
 
 ## Hinweise für die Zertifizierung (Notes for certification)
 
