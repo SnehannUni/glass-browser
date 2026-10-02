@@ -7,12 +7,12 @@ mod window_frame;
 mod autofill;
 mod favicon;
 mod resize_preview;
-mod clipboard;
 mod mail;
 mod downloads;
 mod pdf;
 mod default_browser;
 mod single_instance;
+mod popup;
 
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, rc::Rc, time::Instant};
@@ -24,7 +24,7 @@ use tao::{
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
-    MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
+    MemoryUsageLevel, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
     WebViewBuilderExtWindows, WebViewExtWindows,
 };
 
@@ -111,12 +111,6 @@ enum UserEvent {
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
     SleepTabs,
-    /// Neuer Text in der Zwischenablage (aus Glass oder einem anderen Programm).
-    Clipboard(String),
-    /// Eine Webseite meldet Einfügen, Pfeiltaste oder Ende beim Blättern im Verlauf (JSON aus clipboard-content.js).
-    ClipboardPage(u32, String),
-    /// Bild der Seite hinter der Liste (Nummer der Liste, JPEG als data:-URL), siehe `clipboard::Session`.
-    ClipboardBackdrop(u64, String),
     /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
     Download(u32, downloads::Change),
     /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
@@ -145,6 +139,15 @@ enum UserEvent {
     PdfNewTab(String),
     /// Eine weitere Instanz wurde mit diesen Adressen gestartet (z. B. ein Link aus einer anderen App).
     OpenUrls(Vec<String>),
+    /// Eine Seite hat ein Popup mit Größe geöffnet: Es wartet auf sein Fenster (popup.rs).
+    PopupOpen,
+    /// Titel bzw. Adresse eines Popups (Nummer aus popup.rs).
+    PopupTitle(u32, String),
+    PopupUrl(u32, String),
+    /// Die Seite im Popup hat window.close() aufgerufen.
+    PopupClose(u32),
+    /// Befehl aus der Leiste eines Popups (JSON aus popup.html).
+    PopupUi(u32, String),
 }
 
 /// Zwei Tabs nebeneinander. Sichtbar, solange einer der beiden der aktive Tab ist.
@@ -246,14 +249,13 @@ struct Browser {
     /// Tempo der Animationen: 1, in der Zeitlupe der Oberfläche (Strg+Umschalt+F8) 0,05 – sonst glitte die Seite
     /// in normalem Tempo, während die Leiste in Zeitlupe hinterherkriecht.
     animation_rate: f64,
-    /// Die letzten kopierten Texte, neuester zuerst.
-    clips: clipboard::History,
-    /// Gerade offene Liste nach Strg+V.
-    clip: Option<clipboard::Session>,
     /// Laufende und letzte Downloads (Knopf rechts oben).
     downloads: downloads::Shared,
     /// WebViews geschlossener Tabs, deren Downloads noch laufen – mit der WebView endete sonst auch der Download.
     parked: Vec<(u32, WebView)>,
+    /// Öffnet Popups mit Größe als eigene Fenster (popup.rs) – und die offenen Popups.
+    opener: popup::Opener,
+    popups: Vec<popup::Popup>,
     /// Web-Postfächer hinter dem Mail-Knopf.
     mail: mail::Mail,
 }
@@ -496,15 +498,15 @@ impl Browser {
         let px = |v: f64| (v * scale).round() as i32;
         let radius = px(CONTENT_RADIUS);
         // Sichtbare Seiten: die Tabs der aktuellen Ansicht bzw. das Postfach rechts in der Mail-Ansicht
-        let mut views: Vec<(&WebView, Area, u32)> = self
+        let mut views: Vec<(&WebView, Area)> = self
             .panes()
             .into_iter()
-            .filter_map(|(i, area)| Some((self.tabs[i].webview.as_ref()?, area, self.tabs[i].id)))
+            .filter_map(|(i, area)| Some((self.tabs[i].webview.as_ref()?, area)))
             .collect();
         if let (true, Some(tab)) = (self.mail_view_active(), self.mail.shown_tab()) {
-            views.extend(tab.webview.as_ref().map(|wv| (wv, self.mail_pane(self.content_area()), tab.id)));
+            views.extend(tab.webview.as_ref().map(|wv| (wv, self.mail_pane(self.content_area()))));
         }
-        for (wv, [left, top, ..], id) in views {
+        for (wv, [left, top, ..]) in views {
             let mut hwnd = windows::Win32::Foundation::HWND::default();
             if unsafe { wv.controller().ParentWindow(&mut hwnd) }.is_err() {
                 continue;
@@ -521,12 +523,6 @@ impl Browser {
                 for &(_, [x, y, w, h, r]) in &self.overlay {
                     // Overlay-Koordinaten sind Fensterkoordinaten, die Region zählt ab der Webseiten-Ecke.
                     let (x, y) = (x - left, y - top);
-                    let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
-                    CombineRgn(region, region, hole, RGN_DIFF);
-                    DeleteObject(hole);
-                }
-                // Die Zwischenablage-Liste gleitet mit ihrer Seite mit – ihre Aussparung zählt deshalb ab der Seite
-                if let Some([x, y, w, h, r]) = self.clip.as_ref().filter(|s| s.tab == id).and_then(|s| s.hole) {
                     let hole = CreateRoundRectRgn(px(x), px(y), px(x + w) + 1, px(y + h) + 1, px(2.0 * r), px(2.0 * r));
                     CombineRgn(region, region, hole, RGN_DIFF);
                     DeleteObject(hole);
@@ -771,7 +767,7 @@ impl Browser {
                 let _ = self.tabs[self.active].webview.as_ref().map(|wv| wv.focus());
             }
             None => {
-                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, tab.id, tab.private, &url, bounds, true);
+                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, tab.id, tab.private, &url, bounds, true);
                 tab.webview = wv.ok();
                 let (id, private) = (tab.id, tab.private);
                 if let Some(wv) = &self.tabs[self.active].webview {
@@ -923,7 +919,6 @@ impl Browser {
         if cmd == "autofill_pick" { self.autofill_pick(msg); return true; }
         if cmd == "autofill_retry" { self.autofill_retry(msg); return true; }
         if cmd == "autofill_dismiss" { self.dismiss_autofill(); return true; }
-        if cmd == "clip_pick" { self.clip_pick(msg); return true; }
         if let Some(what) = cmd.strip_prefix("download_") {
             self.download_command(what, msg["id"].as_u64().map(|v| v as u32));
             return true;
@@ -1098,9 +1093,7 @@ impl Browser {
                 let r = &msg["rect"];
                 let key = msg["key"].as_str().unwrap_or("main");
                 self.overlay.retain(|(k, _)| k != key);
-                if key == "clipboard" {
-                    self.clip_hole(r);
-                } else if r.is_object() {
+                if r.is_object() {
                     self.overlay.push((key.to_owned(), ["x", "y", "w", "h", "r"].map(|k| r[k].as_f64().unwrap_or_default())));
                 }
                 self.round_content_views();
@@ -1122,7 +1115,7 @@ impl Browser {
                 let cmd = msg["cmd"].as_str().unwrap_or_default().to_owned();
                 return self.command(&cmd, &msg);
             }
-            // Webseiten dürfen nur Tastenkürzel, die Seitentasten der Maus und ihre Scrollrichtung melden, sonst nichts steuern.
+            // Webseiten dürfen nur Tastenkürzel und die Seitentasten der Maus melden, sonst nichts steuern.
             UserEvent::Content(from, cmd) => {
                 // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
                 // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
@@ -1132,10 +1125,6 @@ impl Browser {
                         "window_maximize" => self.window.set_maximized(!self.window.is_maximized()),
                         _ => {}
                     }
-                }
-                // Scrollrichtung der Seite: Die Oberfläche blendet die Leiste oben danach aus bzw. ein
-                if matches!(cmd.as_str(), "scroll_down" | "scroll_up") && !self.chrome_left && !self.fullscreen {
-                    let _ = self.ui.evaluate_script(&format!("window.pageScrolled?.({})", cmd == "scroll_down"));
                 }
                 // Seitentasten der Maus gelten der Seite, über der sie gedrückt wurden – in der geteilten Ansicht also
                 // vielleicht der anderen Hälfte. Von gerade nicht sichtbaren Seiten zählen sie nicht.
@@ -1162,14 +1151,6 @@ impl Browser {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             UserEvent::SleepTabs => self.sleep_idle_tabs(),
-            UserEvent::Clipboard(text) => {
-                // Kopien aus einem privaten Tab bleiben aus dem Verlauf
-                if !(self.foreground() && self.tabs.get(self.active).is_some_and(|t| t.private)) {
-                    self.clips.push(text);
-                }
-            }
-            UserEvent::ClipboardPage(id, raw) => self.clip_page(id, &raw),
-            UserEvent::ClipboardBackdrop(seq, image) => self.clip_backdrop(seq, image),
             UserEvent::Download(id, change) => {
                 let started = matches!(change, downloads::Change::Started { .. });
                 if let downloads::Change::Started { fresh: true } = change {
@@ -1213,6 +1194,19 @@ impl Browser {
                 }
             }
             UserEvent::PdfNewTab(url) => self.new_tab(Some(url), false),
+            UserEvent::PopupOpen => {} // in der Ereignisschleife (braucht sie für das Fenster)
+            UserEvent::PopupTitle(key, title) => {
+                if let Some(p) = self.popups.iter_mut().find(|p| p.key() == key) { p.set_title(title); }
+            }
+            UserEvent::PopupUrl(key, url) => {
+                if let Some(p) = self.popups.iter_mut().find(|p| p.key() == key) { p.set_url(url); }
+            }
+            UserEvent::PopupClose(key) => self.popups.retain(|p| p.key() != key),
+            UserEvent::PopupUi(key, raw) => {
+                if let Some(i) = self.popups.iter().position(|p| p.key() == key) {
+                    if !self.popups[i].command(&raw) { self.popups.remove(i); }
+                }
+            }
             UserEvent::OpenUrls(urls) => {
                 for url in urls {
                     self.new_tab(Some(resolve_input(&url)), false);
@@ -1279,7 +1273,6 @@ impl Browser {
                     }
                 }
                 if loading && self.autofill.as_ref().is_some() { self.dismiss_autofill(); }
-                if loading && self.clip.as_ref().is_some_and(|s| s.tab == id) { self.clip_end(true); }
                 if let Some(tab) = self.tab_mut(id) {
                     if loading {
                         tab.blocked = 0;
@@ -1354,6 +1347,19 @@ unsafe fn rounded_region(w: i32, h: i32, r: i32) -> windows_sys::Win32::Graphics
     region
 }
 
+impl Browser {
+    /// Fenster-Ereignis eines Popups: schließen, neu anordnen, Fokus in der Leiste zeigen.
+    fn popup_window_event(&mut self, id: tao::window::WindowId, event: WindowEvent) {
+        let Some(i) = self.popups.iter().position(|p| p.id() == id) else { return };
+        match event {
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => { self.popups.remove(i); }
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.popups[i].layout(),
+            WindowEvent::Focused(_) => self.popups[i].sync(),
+            _ => {}
+        }
+    }
+}
+
 fn full_bounds(window: &Window) -> Rect {
     let size = window.inner_size().to_logical::<f64>(window.scale_factor());
     Rect {
@@ -1366,13 +1372,15 @@ fn build_content_webview(
     window: &Window,
     ui: &WebView,
     proxy: &EventLoopProxy<UserEvent>,
+    opener: &popup::Opener,
     id: u32,
     private: bool,
     url: &str,
     bounds: Rect,
     visible: bool,
 ) -> wry::Result<WebView> {
-    let (p_ipc, p_title, p_load, p_new, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
+    let (p_ipc, p_title, p_load, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
+    let opener = opener.clone();
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
     let main_nav = Rc::new(RefCell::new(url.to_owned()));
     let nav = main_nav.clone();
@@ -1390,7 +1398,6 @@ fn build_content_webview(
         .with_initialization_script(CONTENT_JS)
         .with_initialization_script(include_str!("passkey-policy.js"))
         .with_initialization_script(include_str!("autofill-content.js"))
-        .with_initialization_script(include_str!("clipboard-content.js"))
         .with_initialization_script(include_str!("mail-content.js"))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
@@ -1401,8 +1408,6 @@ fn build_content_webview(
                     UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
                 } else if msg.get("mail").is_some() {
                     UserEvent::MailReport(id, req.uri().to_string(), body)
-                } else if msg.get("clip").is_some() {
-                    UserEvent::ClipboardPage(id, body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
                 } else if msg["pdf"] == "open" {
@@ -1434,10 +1439,8 @@ fn build_content_webview(
                 let _ = p_load.send_event(UserEvent::Load(id, false, url));
             }
         })
-        .with_new_window_req_handler(move |url, _| {
-            let _ = p_new.send_event(UserEvent::NewWindow(id, url));
-            NewWindowResponse::Deny
-        })
+        // Popups mit Größe (z. B. „Mit Google anmelden“) als eigenes Glass-Fenster, alles andere als neuer Tab
+        .with_new_window_req_handler(move |url, features| opener.request(id, private, url, features))
         .build_as_child(window)?;
 
     if !private {
@@ -1733,7 +1736,6 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
     use std::borrow::Cow;
     let (mime, body): (&str, Cow<'static, [u8]>) = match request.uri().path() {
         "/autofill-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("autofill-ui.js"))),
-        "/clipboard-ui.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("clipboard-ui.js"))),
         "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
         "/group-hover.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("group-hover.js"))),
         "/animation-debug.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("animation-debug.js"))),
@@ -1907,9 +1909,7 @@ fn main() -> wry::Result<()> {
         }
     });
 
-    let p_clip = proxy.clone();
-    clipboard::watch(move |text| p_clip.send_event(UserEvent::Clipboard(text)).is_ok());
-
+    let opener = popup::Opener::new(&window, proxy.clone());
     let icloud = autofill::start(proxy.clone());
     let _ = icloud.send(json!({"id": 0, "op": "probe"}));
     let mut browser = Browser {
@@ -1917,7 +1917,7 @@ fn main() -> wry::Result<()> {
         window, ui, tabs: Vec::new(), active: 0, next_id: 1, proxy,
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
-        clips: clipboard::History::default(), clip: None, mail, downloads, parked: Vec::new(),
+        mail, downloads, parked: Vec::new(), opener, popups: Vec::new(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
@@ -1930,7 +1930,7 @@ fn main() -> wry::Result<()> {
 
     // Beenden angefragt, aber die Postfächer sichern noch ihre Anmeldung: spätestens dann wirklich zu
     let mut exit_at: Option<Instant> = None;
-    event_loop.run(move |event, _, control_flow| {
+    event_loop.run(move |event, target, control_flow| {
         if let Some(deadline) = exit_at {
             let done = matches!(event, Event::UserEvent(UserEvent::ExitReady)) || Instant::now() >= deadline;
             *control_flow = if done { ControlFlow::Exit } else { ControlFlow::WaitUntil(deadline) };
@@ -1963,11 +1963,14 @@ fn main() -> wry::Result<()> {
                 browser.slide_chrome();
                 browser.poll_hover();
             }
+            // Fenster eines Popups (popup.rs)
+            Event::WindowEvent { window_id, event, .. } if window_id != browser.window.id() => {
+                browser.popup_window_event(window_id, event);
+            }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => exit(&mut browser, control_flow),
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     browser.dismiss_autofill();
-                    browser.clip_end(true);
                     browser.layout();
                     browser.sync_ui();
                     browser.sync_geometry();
@@ -1982,6 +1985,10 @@ fn main() -> wry::Result<()> {
                 }
                 _ => {}
             },
+            Event::UserEvent(UserEvent::PopupOpen) => {
+                let opened = browser.opener.open_pending(target, &browser.window, &browser.ui);
+                browser.popups.extend(opened);
+            }
             Event::UserEvent(event) => {
                 if !browser.handle(event) {
                     exit(&mut browser, control_flow);
