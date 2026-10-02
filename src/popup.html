@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<!-- Rahmen eines Popups (z. B. „Mit Google anmelden“): Glas wie das Hauptfenster, oben Schloss, Adresse und Titel,
+     rechts Schließen. Die Seite selbst liegt als eigene WebView darunter (popup.rs, BAR/MARGIN). -->
+<style>
+  :root {
+    --bar: 36px;      /* = BAR in popup.rs */
+    --margin: 4px;    /* = MARGIN in main.rs */
+    --label: rgba(255, 255, 255, .97);
+    --label-2: rgba(255, 255, 255, .82);
+    --label-3: rgba(255, 255, 255, .6);
+    --control-hover: rgba(255, 255, 255, .12);
+    --control-pressed: rgba(255, 255, 255, .2);
+    --ease: cubic-bezier(.25, .8, .25, 1);
+    --font: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  /* Ecken wie Windows 11 (8 px), maximiert eckig – wie im Hauptfenster */
+  html { --radius: 8px; clip-path: inset(0 round var(--radius)); }
+  html.maximized { --radius: 0px; }
+  html, body {
+    height: 100%; overflow: hidden; color: var(--label);
+    font: 13px/1.25 var(--font); letter-spacing: -.01em;
+    user-select: none; -webkit-user-select: none; -webkit-font-smoothing: antialiased;
+  }
+  /* Getöntes Glas über dem Acrylic des Fensters, oben etwas heller wie eine Glasleiste */
+  body {
+    background: linear-gradient(rgba(255, 255, 255, .07), rgba(255, 255, 255, .02) var(--bar), rgba(20, 20, 26, .35) var(--bar));
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    border-radius: var(--radius); border: 1px solid rgba(255, 255, 255, .38);
+  }
+  body.inactive::after { border-color: rgba(255, 255, 255, .22); }
+  html.maximized body::after { display: none; }
+  #bar {
+    height: var(--bar); display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  }
+  #lock { flex: none; width: 13px; height: 13px; color: var(--label-2); }
+  #lock.open { color: #ff9f0a; }
+  #where { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
+  #host { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  #title { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--label-3); }
+  body.inactive #host { color: var(--label-2); }
+  /* Fensterknopf wie im Hauptfenster: beim Überfahren eine Fläche, Schließen wird rot */
+  #close {
+    flex: none; width: 36px; height: 28px; border: 0; border-radius: 8px; display: grid; place-items: center;
+    background: transparent; color: var(--label); transition: background-color .18s var(--ease), color .18s var(--ease);
+  }
+  #close svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 1; fill: none; }
+  #close:hover { background-color: #c42b1c; color: #fff; }
+  #close:active { background-color: #b22a1c; color: rgba(255, 255, 255, .8); }
+  #close:focus-visible { outline: 2px solid var(--label); outline-offset: -2px; }
+  body.inactive #close:not(:hover) { color: var(--label-3); }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <svg id="lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+      <rect x="3" y="7" width="10" height="7.5" rx="2"/><path class="shackle" d="M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7"/>
+    </svg>
+    <div id="where"><span id="host"></span><span id="title"></span></div>
+    <button id="close" type="button" title="Schließen"><svg viewBox="0 0 10 10"><path d="m.5.5 9 9m0-9-9 9"/></svg></button>
+  </div>
+<script>
+(() => {
+  const send = (cmd, value = '') => window.ipc.postMessage(JSON.stringify({ cmd, value }));
+  const $ = (id) => document.getElementById(id);
+
+  // Zustand aus popup.rs: Adresse, Titel, Fokus, maximiert
+  window.popupState = (s) => {
+    let host = '', secure = false;
+    try {
+      const url = new URL(s.url);
+      host = url.host || s.url;
+      secure = url.protocol === 'https:';
+    } catch { host = s.url || ''; }
+    $('host').textContent = host;
+    $('title').textContent = s.title && s.title !== host && s.title !== s.url ? s.title : '';
+    document.title = s.title || host;
+    $('lock').classList.toggle('open', !!host && !secure);
+    $('lock').querySelector('.shackle').setAttribute('d', !host || secure ? 'M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7' : 'M5.3 7V5.2a2.7 2.7 0 0 1 5.3-.7');
+    $('lock').setAttribute('aria-label', secure ? 'Sichere Verbindung' : 'Nicht sicher');
+    $('where').title = s.url || '';
+    document.body.classList.toggle('inactive', !s.focused);
+    document.documentElement.classList.toggle('maximized', !!s.maximized);
+  };
+
+  $('close').addEventListener('click', () => send('close'));
+
+  // Ränder: Größe ändern (die Seite lässt ringsum MARGIN frei, oben ist die Leiste)
+  const EDGE = 6;
+  const edge = (e) => {
+    if (document.documentElement.classList.contains('maximized')) return '';
+    const n = e.clientY < EDGE, s = e.clientY > innerHeight - EDGE, w = e.clientX < EDGE, o = e.clientX > innerWidth - EDGE;
+    return (n ? 'n' : s ? 's' : '') + (w ? 'w' : o ? 'e' : '');
+  };
+  const cursors = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
+  addEventListener('pointermove', (e) => { document.body.style.cursor = cursors[edge(e)] || ''; });
+  addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const dir = edge(e);
+    if (dir) { e.preventDefault(); send('resize', dir); return; }
+    // Leiste ziehen bewegt das Fenster (nicht über dem Knopf)
+    if (!e.target.closest('button') && e.clientY < parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bar'))) {
+      e.preventDefault();
+      send('drag');
+    }
+  });
+  addEventListener('dblclick', (e) => { if (!e.target.closest('button') && !edge(e)) send('maximize'); });
+  addEventListener('contextmenu', (e) => e.preventDefault());
+  send('ready');
+})();
+</script>
+</body>
+</html>

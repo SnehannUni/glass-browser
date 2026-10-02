@@ -64,27 +64,14 @@
   window.addEventListener('mouseup', () => { grab = null; }, true);
   window.addEventListener('dblclick', (e) => { if (grabbable(e)) window.ipc.postMessage('window_maximize'); }, true);
 
-  // ---------- Leiste oben beim Scrollen aus- und einblenden ----------
-  // Runter blendet sie aus, hoch wieder ein (wie Safari auf dem iPhone): Die Seite verschiebt sich so nur, während
-  // sich ihr Inhalt ohnehin bewegt. Zählt auch große Scrollbereiche in der Seite (Gmail, ChatGPT). Pro Bewegung nur
-  // eine Meldung. Ändert sich die Höhe des Bereichs (die Leiste fährt gerade aus/ein), ist das kein Scrollen.
-  const SCROLL_STEP = 24, SCROLL_PAUSE = 300;
-  const scrolls = new WeakMap();
-  document.addEventListener('scroll', (e) => {
-    if (document.visibilityState !== 'visible') return; // Hintergrund-Tabs
-    const el = e.target === document ? document.scrollingElement : e.target;
-    if (!(el instanceof Element) || el.clientHeight < innerHeight / 2) return;
-    const top = el.scrollTop, height = el.clientHeight, last = scrolls.get(el);
-    let run = 0, sent = false;
-    if (last && last.height === height) {
-      const delta = top - last.top;
-      const same = e.timeStamp - last.at < SCROLL_PAUSE && Math.sign(delta) === Math.sign(last.run);
-      run = same ? last.run + delta : delta;
-      sent = same && last.sent;
-    }
-    const cmd = sent ? null : run > SCROLL_STEP && top > SCROLL_STEP ? 'scroll_down' : run < -SCROLL_STEP ? 'scroll_up' : null;
-    scrolls.set(el, { top, height, run, at: e.timeStamp, sent: sent || !!cmd });
-    if (cmd) window.ipc.postMessage(cmd);
+  // ---------- Scrollen melden ----------
+  // Liegt Glas der Oberfläche über der Seite (Favoriten, Vorschläge …), zeigt es ein Bild von ihr – nach dem Scrollen
+  // muss es neu. Höchstens alle 50 ms eine Meldung, die letzte kommt erst nach der letzten Bewegung (auch Scrollbereiche
+  // in der Seite zählen).
+  let scrollTimer = 0;
+  document.addEventListener('scroll', () => {
+    if (scrollTimer || document.visibilityState !== 'visible') return;
+    scrollTimer = setTimeout(() => { scrollTimer = 0; window.ipc.postMessage('scrolled'); }, 50);
   }, { capture: true, passive: true });
 
   // ---------- Werbeblocker ----------

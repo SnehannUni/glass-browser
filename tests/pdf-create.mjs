@@ -167,30 +167,6 @@ try {
   const H = helpers(page);
   await ready(page, 3);
 
-  // ---------- Leiste von Glass gleitet: die Leisten unten im Viewer stehen dabei still ----------
-  await delay(800);
-  await page(`(() => { window.__rec = []; const orig = window.__glassWall; window.__glassWall = (g) => { window.__g = g; orig(g); };
-    const loop = (time) => { const dock = document.getElementById('dock');
-      if (window.__g) window.__rec.push([window.__g.y, dock.getBoundingClientRect().bottom, parseFloat(dock.style.getPropertyValue('--clip-bottom')) || 0, time]);
-      if (window.__rec.length < 400) requestAnimationFrame(loop); };
-    requestAnimationFrame(loop); })()`);
-  for (const hide of [true, false]) {
-    await page(`window.__rec.length = 0`);
-    await ui(`window.pageScrolled(${hide})`);
-    await delay(700);
-    const rec = await page(`window.__rec`);
-    const onScreen = rec.map(([y, bottom]) => y + bottom), moved = rec.map(([y]) => y);
-    const span = (a) => Math.max(...a) - Math.min(...a);
-    assert.ok(span(moved) > 30, `the page slid (${span(moved)} px)`);
-    assert.ok(span(onScreen) < 8, `dock stays in place while the page slides: ${span(onScreen).toFixed(1)} px`);
-    assert.equal(rec.at(-1)[2], 0, 'no offset left afterwards');
-    // Flüssig: während des Gleitens (ohne das erste Bild, in dem die Seite einmal ihre Größe ändert) ein Bild je ~16 ms
-    const sliding = rec.filter((r, i) => i > 1 && r[2] > 0).map((r) => r[3]);
-    const gaps = sliding.slice(1).map((t, i) => t - sliding[i]).sort((a, b) => a - b);
-    assert.ok(gaps[Math.floor(gaps.length / 2)] < 21, `smooth while sliding (median ${gaps[Math.floor(gaps.length / 2)]?.toFixed(1)} ms between frames)`);
-  }
-  console.log('PASS: the dock stays in place while the Glass toolbar slides in and out.');
-
   // Bilder als Dateien, im Viewer gezeichnet
   await page(`window.__image = async (w, h, color, type, name) => {
     const c = new OffscreenCanvas(w, h), x = c.getContext('2d');
