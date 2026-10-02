@@ -144,7 +144,7 @@ try {
   const held = await exeRow();
   assert.ok(held.visible && /Bestätigung/.test(held.meta), `held row shown: ${JSON.stringify(held)}`);
   const hub = await attach2(u => u.startsWith('edge://downloads-hub'), 'WebView2 download window');
-  await waitFor(() => hub(`document.body.innerHTML.length > 0`), 'download window rendered');
+  await waitFor(() => hub(`(document.body?.innerHTML.length ?? 0) > 0`), 'download window rendered');
   await ui(`[...document.querySelectorAll('#dls .dl')].find(r => r.textContent.includes('tool.exe')).querySelector('.rm').click()`);
   await waitFor(async () => !(await exeRow()), 'held exe canceled');
 
