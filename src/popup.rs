@@ -8,7 +8,7 @@
 
 use crate::{rounded_region, UserEvent, CONTENT_RADIUS, MARGIN};
 use serde_json::json;
-use std::{cell::RefCell, num::NonZeroIsize, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, num::NonZeroIsize, rc::Rc};
 use tao::{
     dpi::{PhysicalPosition, PhysicalSize},
     event_loop::{EventLoopProxy, EventLoopWindowTarget},
@@ -17,9 +17,10 @@ use tao::{
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
-    raw_window_handle as rwh, NewWindowFeatures, NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder,
+    raw_window_handle as rwh, NewWindowFeatures, NewWindowResponse, Rect, WebView, WebViewBuilder,
     WebViewBuilderExtWindows, WebViewExtWindows,
 };
+use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 
 /// Höhe der Leiste über der Seite (= --bar in popup.html).
 const BAR: f64 = 36.0;
@@ -40,6 +41,9 @@ struct Pending {
 struct Shared {
     next: u32,
     pending: Vec<Pending>,
+    /// Neue Fenster, die WebView2 gerade gemeldet hat: Adresse, ging eine Nutzeraktion (Klick, Taste) voraus?
+    /// Siehe `watch_gestures`.
+    gestures: VecDeque<(String, bool)>,
 }
 
 /// Öffnet Popups für Tabs, Postfächer und andere Popups – alle auf dem Hauptthread, daher `Rc`.
@@ -67,11 +71,49 @@ impl Opener {
         Opener { shared: Rc::default(), parent: parent.hwnd(), proxy }
     }
 
+    /// WebView2 meldet, ob ein neues Fenster auf eine Nutzeraktion zurückgeht – wry reicht das nicht weiter. Dieser
+    /// zweite Handler läuft gleich nach dem von wry; der entscheidet erst danach (`request`, aus der Nachrichtenschleife).
+    pub fn watch_gestures(&self, core: &ICoreWebView2) {
+        let shared = self.shared.clone();
+        let handler = webview2_com::NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let (mut uri, mut user) = (windows::core::PWSTR::null(), windows::core::BOOL::default());
+            unsafe {
+                args.Uri(&mut uri)?;
+                args.IsUserInitiated(&mut user)?;
+            }
+            let mut s = shared.borrow_mut();
+            s.gestures.push_back((webview2_com::take_pwstr(uri), user.as_bool()));
+            while s.gestures.len() > 32 {
+                s.gestures.pop_front();
+            }
+            Ok(())
+        }));
+        let mut token = 0;
+        let _ = unsafe { core.add_NewWindowRequested(&handler, &mut token) };
+    }
+
+    /// Ging dem neuen Fenster mit dieser Adresse ein Klick oder eine Taste voraus?
+    fn user_initiated(&self, url: &str) -> bool {
+        let mut s = self.shared.borrow_mut();
+        let i = s.gestures.iter().position(|(u, _)| u == url);
+        i.and_then(|i| s.gestures.remove(i)).is_some_and(|(_, user)| user)
+    }
+
     /// `window.open` einer Seite. Mit Größe ein eigenes Fenster (wie Chrome), sonst ein neuer Tab im Hauptfenster
     /// (`tab`: der Tab, aus dem es kam – bei Popups der Tab, der das erste Popup geöffnet hat).
+    /// Wie der Popup-Blocker von Chrome nur nach einem Klick oder einer Taste – sonst könnte jede Seite (auch aus
+    /// einem Hintergrund-Tab) ungefragt Fenster und Tabs öffnen, so viele sie will.
     pub fn request(&self, tab: u32, private: bool, url: String, features: NewWindowFeatures) -> NewWindowResponse {
+        if !self.user_initiated(&url) {
+            return NewWindowResponse::Deny;
+        }
         if features.size.is_none() {
-            let _ = self.proxy.send_event(UserEvent::NewWindow(tab, url));
+            // Den Tab lädt Glass selbst (`load_url`) – damit umginge die Seite Chromiums Sperre für data:- und
+            // file:-Adressen, die eine Seite nicht selbst öffnen darf. Also nur Webadressen.
+            if url.starts_with("https://") || url.starts_with("http://") {
+                let _ = self.proxy.send_event(UserEvent::NewWindow(tab, url, private));
+            }
             return NewWindowResponse::Deny;
         }
         let key = {
@@ -86,13 +128,13 @@ impl Opener {
                 let _ = self.proxy.send_event(UserEvent::PopupOpen);
                 NewWindowResponse::Create { webview }
             }
-            // Notfalls das schlichte Fenster von WebView2 – Hauptsache, die Anmeldung klappt
-            Err(_) => NewWindowResponse::Allow,
+            // Ohne Glass-Fenster lieber gar keins: Das schlichte von WebView2 zeigt keine Adresse
+            Err(_) => NewWindowResponse::Deny,
         }
     }
 
     fn build_page(&self, key: u32, tab: u32, private: bool, features: &NewWindowFeatures) -> wry::Result<WebView> {
-        let (p_title, p_nav, p_load, p_close) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
+        let (p_title, p_load, p_close) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
         let opener = self.clone();
         // Gleiche Umgebung und gleiches Profil wie die Seite, die es öffnet – sonst lehnt WebView2 das Fenster ab.
         // Keine Startadresse: Die setzt WebView2 selbst.
@@ -105,17 +147,15 @@ impl Opener {
             .with_document_title_changed_handler(move |title| {
                 let _ = p_title.send_event(UserEvent::PopupTitle(key, title));
             })
-            .with_navigation_handler(move |url| {
-                let _ = p_nav.send_event(UserEvent::PopupUrl(key, url));
-                true
-            })
-            .with_on_page_load_handler(move |event, url| {
-                if matches!(event, PageLoadEvent::Finished) {
-                    let _ = p_load.send_event(UserEvent::PopupUrl(key, url));
-                }
+            // Die Adresse erst, wenn die neue Seite wirklich da ist (Started = ContentLoading, nach dem Commit) – beim
+            // Start einer Navigation brächte eine Seite sonst kurz eine fremde Adresse in die Leiste (etwa mit einer
+            // Antwort 204, bei der sie gar nicht wechselt).
+            .with_on_page_load_handler(move |_, url| {
+                let _ = p_load.send_event(UserEvent::PopupUrl(key, url));
             })
             .with_new_window_req_handler(move |url, features| opener.request(tab, private, url, features))
             .build_as_child(&Parent(self.parent))?;
+        self.watch_gestures(&page.webview());
         // window.close() der Seite (die Anmeldung ist fertig)
         let handler = webview2_com::WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
             let _ = p_close.send_event(UserEvent::PopupClose(key));
@@ -146,6 +186,14 @@ impl Popup {
     fn new(p: Pending, target: &EventLoopWindowTarget<UserEvent>, main: &Window, ui: &WebView, proxy: &EventLoopProxy<UserEvent>) -> Option<Popup> {
         let scale = main.scale_factor();
         let (w, h) = p.size.map_or(DEFAULT_SIZE, |s| (s.width, s.height));
+        // Höchstens so groß wie der Bildschirm – sonst deckt ein Popup alles zu
+        let (w, h) = match main.current_monitor() {
+            Some(m) => {
+                let screen = m.size().to_logical::<f64>(scale);
+                (w.min(screen.width - 2.0 * MARGIN), h.min(screen.height - BAR - MARGIN))
+            }
+            None => (w, h),
+        };
         let logical = (
             (w + 2.0 * MARGIN).max(MIN_SIZE.0),
             (h + BAR + MARGIN).max(MIN_SIZE.1),
@@ -178,6 +226,8 @@ impl Popup {
             .with_bounds(crate::full_bounds(&window))
             .with_default_context_menus(false)
             .with_browser_accelerator_keys(false)
+            // Hineingezogene Links oder Dateien würden die Leiste selbst zu einer fremden Seite machen
+            .with_drag_drop_handler(|_| true)
             .with_ipc_handler(move |req| {
                 let _ = p_ui.send_event(UserEvent::PopupUi(key, req.body().clone()));
             })

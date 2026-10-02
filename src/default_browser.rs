@@ -44,11 +44,19 @@ fn write(key: &str, name: &str, value: &str) {
     }
 }
 
+/// Läuft die installierte Glass-Exe (unter `%LOCALAPPDATA%\Programs`), nicht irgendeine Kopie?
+pub fn installed() -> bool {
+    let (Ok(exe), Some(base)) = (std::env::current_exe(), std::env::var_os("LOCALAPPDATA")) else { return false };
+    exe.starts_with(std::path::Path::new(&base).join("Programs"))
+}
+
 /// Einträge (neu) schreiben, damit sie auf die laufende Exe zeigen – nach einem Umzug oder Update stimmt der Pfad sonst nicht.
 pub fn register() {
     let Ok(exe) = std::env::current_exe() else { return };
     let exe = exe.display().to_string();
-    let open = format!("\"{exe}\" \"%1\"");
+    // Wie Chrome: Alles nach `--single-argument` ist genau eine Adresse (main.rs, `launch_args`). Mit "%1" in
+    // Anführungszeichen könnte ein Link mit " darin weitere Argumente an Glass anhängen.
+    let open = format!("\"{exe}\" --single-argument %1");
     let current = |prog: &str| read(&format!(r"Software\Classes\{prog}\shell\open\command"), "").as_deref() == Some(open.as_str());
     // Auch neu schreiben, wenn noch der alte Name „Glass“ eingetragen ist
     let named = read(&format!(r"{CLIENT}\Capabilities"), "ApplicationName").as_deref() == Some(NAME);

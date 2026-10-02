@@ -58,6 +58,28 @@ pub const PROVIDERS: [Provider; 3] = [
     Provider { key: "gmail", name: "Gmail", url: "https://mail.google.com/mail/", hosts: &["mail.google.com"], listed: true, keep: &[], login: None },
 ];
 
+/// Domains, auf denen ein Postfach (ohne Adressfeld) unterwegs sein darf: die Anbieter samt ihrer Anmeldung
+/// (Google leitet über accounts.google.<Land> und youtube.com, Microsoft über live.com und microsoftonline.com).
+/// Alles andere öffnet Glass als Tab (siehe `build_content_webview`).
+const MAILBOX_DOMAINS: &[&str] = &[
+    "icloud.com", "apple.com",
+    "google.com", "gmail.com", "youtube.com", "gstatic.com",
+    "live.com", "microsoft.com", "microsoftonline.com", "office.com", "office365.com", "outlook.com", "cloud.microsoft",
+    "msauth.net", "msftauth.net", "live.net",
+];
+
+/// Darf ein Postfach diese Adresse selbst zeigen? (Nur https; about:blank für leere Zwischenschritte.)
+pub fn mailbox_may_show(url: &str) -> bool {
+    if url == "about:blank" {
+        return true;
+    }
+    let Some(host) = url.strip_prefix("https://").and_then(|r| r.split(['/', '?', '#', ':']).next()) else { return false };
+    let host = host.to_ascii_lowercase();
+    // Google meldet sich auch über die Länder-Domains an (accounts.google.de …)
+    let google_cc = host.strip_prefix("accounts.google.").is_some_and(|cc| !cc.is_empty() && cc.split('.').all(|p| p.len() <= 3 && p.chars().all(|c| c.is_ascii_alphabetic())));
+    google_cc || MAILBOX_DOMAINS.iter().any(|d| host == *d || host.strip_suffix(d).is_some_and(|rest| rest.ends_with('.')))
+}
+
 /// Welches Postfach gehört zu dieser Adresse (nur https)?
 pub fn provider_of(url: &str) -> Option<usize> {
     let host = url.strip_prefix("https://")?.split(['/', '?', '#', ':']).next()?;
@@ -559,7 +581,7 @@ impl Browser {
         let id = self.next_id;
         self.next_id += 1;
         let bounds = to_rect(hidden_bounds(self.mail_pane(self.content_area())));
-        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, false, &start, bounds, false) else { return };
+        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, false, &start, bounds, false, true) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
         deny_notifications(&webview);
         self.watch_downloads(&webview, id, false); // Anhänge laufen über dieselbe Download-Liste
@@ -656,6 +678,18 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mailboxes_stay_with_their_provider_and_its_sign_in() {
+        for url in ["https://mail.google.com/mail/u/0/", "https://accounts.google.com/v3/signin", "https://accounts.google.de/accounts/SetSID",
+            "https://idmsa.apple.com/appleauth/", "https://login.live.com/oauth20", "https://login.microsoftonline.com/common", "about:blank"] {
+            assert!(mailbox_may_show(url), "{url}");
+        }
+        for url in ["https://evil.example/login", "https://mail.google.com.evil.de/", "https://notgoogle.com/", "http://mail.google.com/",
+            "https://accounts.google.evil-site.example/", "data:text/html,x", "file:///C:/x.html"] {
+            assert!(!mailbox_may_show(url), "{url}");
+        }
+    }
 
     #[test]
     fn providers_by_host() {

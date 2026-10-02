@@ -2529,7 +2529,7 @@
     const tab = activeTab();
     if (!tab?.url) return;
     if (isFavorite(tab.url)) favorites = favorites.filter((f) => !sameUrl(f.url, tab.url));
-    else favorites.unshift({ url: tab.url, title: tab.title || hostOf(tab.url) });
+    else favorites.unshift({ url: tab.url, title: tab.title || hostOf(tab.url), icon: pngIcon(tab.favicon) });
     saveFavorites();
     renderStar();
     star.classList.remove('pop'); void star.offsetWidth; star.classList.add('pop');
@@ -2539,6 +2539,18 @@
   // Knopf oben rechts: beim Drüberfahren klappt die Liste aus
   const favBtn = $('btn-favs'), favPanel = $('favs'), privateBtn = $('btn-private');
   let favTimer = 0;
+  // Icons der Favoriten: das Bild, das Chromium im Tab schon geladen hat (data:image/png, siehe favicon.rs). Nicht selbst
+  // von der Website holen – die Oberfläche läuft im normalen Profil und schickte dabei deren Cookies mit.
+  const pngIcon = (icon) => (typeof icon === 'string' && icon.startsWith('data:image/png;base64,') ? icon : '');
+  function favoriteIcon(f) {
+    if (pngIcon(f.icon)) return f.icon;
+    const origin = parse(f.url)?.origin;
+    const open = state.tabs?.find((t) => !t.private && pngIcon(t.favicon) && parse(t.url)?.origin === origin);
+    if (!open) return '';
+    f.icon = open.favicon; // ältere Favoriten bekommen ihr Icon, sobald die Seite einmal offen ist
+    saveFavorites();
+    return f.icon;
+  }
   function renderFavorites() {
     const head = document.createElement('div');
     head.className = 'fv-head';
@@ -2550,11 +2562,11 @@
       row.innerHTML = `<span class="fv-ic">${svg('globe')}</span><span class="fv-text"><span class="fv-title"></span><span class="fv-host"></span></span>`;
       row.querySelector('.fv-title').textContent = f.title || hostOf(f.url);
       row.querySelector('.fv-host').textContent = hostOf(f.url);
-      const origin = parse(f.url)?.origin;
-      if (origin?.startsWith('http')) {
+      const icon = favoriteIcon(f);
+      if (icon) {
         const img = new Image();
         img.onload = () => row.querySelector('.fv-ic').replaceChildren(img);
-        img.src = `${origin}/favicon.ico`;
+        img.src = icon;
       }
       const rm = document.createElement('button');
       rm.className = 'rm';

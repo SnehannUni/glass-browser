@@ -82,8 +82,10 @@ fn needs_confirmation(path: &str) -> bool {
         .is_some_and(|e| RISKY.iter().any(|r| r.eq_ignore_ascii_case(e)))
 }
 
+/// Anzeigename – ohne Steuerzeichen für die Schreibrichtung: „Rechnung<U+202E>fdp.exe“ erschiene sonst als „Rechnungexe.pdf“.
 fn file_name(path: &str) -> String {
-    Path::new(path).file_name().map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned())
+    let name = Path::new(path).file_name().map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned());
+    name.chars().filter(|c| !matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')).collect()
 }
 
 impl Downloads {
@@ -321,9 +323,28 @@ pub fn open_dialog(webview: &ICoreWebView2) {
     }
 }
 
-/// Datei mit dem zugehörigen Programm öffnen.
+/// Dateitypen, die beim Öffnen Code ausführen (Programme, Skripte, Installer, Verknüpfungen, Container).
+const RUNNABLE: &[&str] = &[
+    "exe", "com", "scr", "pif", "bat", "cmd", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "msi",
+    "msp", "mst", "msc", "lnk", "url", "reg", "cpl", "inf", "scf", "jar", "chm", "appx", "appxbundle", "msix", "msixbundle",
+    "application", "appref-ms", "settingcontent-ms", "library-ms", "search-ms", "iso", "img", "vhd", "vhdx", "xll", "gadget",
+];
+
+/// Würde das Öffnen der Datei Code ausführen? (Windows ignoriert Punkte und Leerzeichen am Ende des Namens.)
+fn runnable(path: &str) -> bool {
+    Path::new(path.trim_end_matches([' ', '.']))
+        .extension()
+        .is_some_and(|e| RUNNABLE.iter().any(|r| e.eq_ignore_ascii_case(r)))
+}
+
+/// Datei mit dem zugehörigen Programm öffnen. Programme und Skripte startet ein Klick in der Liste nicht –
+/// die zeigt Glass im Explorer, wo man sie bewusst selbst startet (mit den Warnungen von Windows).
 pub fn open(path: &str) {
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    if runnable(path) {
+        reveal(path);
+        return;
+    }
     let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
     unsafe { ShellExecuteW(std::ptr::null_mut(), windows_sys::w!("open"), wide.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
 }
@@ -338,5 +359,25 @@ pub fn reveal(path: &str) {
             SHOpenFolderAndSelectItems(pidl, 0, std::ptr::null(), 0);
             ILFree(pidl);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{file_name, runnable};
+
+    #[test]
+    fn programs_and_scripts_are_not_run_from_the_list() {
+        for path in [r"C:\D\setup.exe", r"C:\D\Rechnung.pdf.HTA", r"C:\D\x.ps1", r"C:\D\a.lnk", r"C:\D\trick.exe. ", r"C:\D\disk.iso"] {
+            assert!(runnable(path), "{path}");
+        }
+        for path in [r"C:\D\Rechnung.pdf", r"C:\D\foto.jpg", r"C:\D\archiv.zip", r"C:\D\ohne-endung"] {
+            assert!(!runnable(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn display_names_drop_direction_overrides() {
+        assert_eq!(file_name("C:/D/Rechnung\u{202E}fdp.exe"), "Rechnungfdp.exe");
     }
 }

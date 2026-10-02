@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -69,8 +69,11 @@ fn viewer_csp() -> String {
 thread_local! {
     /// PDFs von der Festplatte, die ein Viewer zeigt oder speichern darf: Schlüssel → Pfad.
     static LOCAL: RefCell<HashMap<String, PathBuf>> = RefCell::default();
-    /// „Speichern unter“: Bytes, die auf den Dialog warten (Tab, Schlüssel → Vorschlag für den Namen, Inhalt).
-    static SAVE_AS: RefCell<HashMap<String, (String, Vec<u8>)>> = RefCell::default();
+    /// „Speichern unter“: Bytes, die auf den Dialog warten (Ticket → API-Geheimnis des Tabs, Vorschlag für den Namen, Inhalt).
+    static SAVE_AS: RefCell<HashMap<String, (String, String, Vec<u8>)>> = RefCell::default();
+    /// Ergebnis des Dialogs, bis der Viewer es abholt (Ticket → API-Geheimnis des Tabs, Ergebnis). Abholen statt
+    /// `evaluate_script`: Das träfe das oberste Dokument des Tabs – bei einem PDF im iframe die fremde Seite drumherum.
+    static SAVED: RefCell<HashMap<String, (String, Value)>> = RefCell::default();
     /// Neue PDFs aus dem Viewer (Schlüssel, Name, Bytes) – auch Neu laden zeigt sie wieder.
     static NEW: RefCell<VecDeque<(String, String, Vec<u8>)>> = RefCell::default();
     /// Installierte Schriften für „Text bearbeiten“ (einmal aus der Registry gelesen).
@@ -90,15 +93,29 @@ struct Inner {
     wall: String,
     /// Ebenso der Pfad `api/<Geheimnis>/` (Unterschriften, Speichern, Verschlüsseln).
     api: String,
+    /// Adressen, unter denen in diesem Tab gerade der Viewer läuft (abgefangene PDFs) – nur sie dürfen dessen
+    /// Nachrichten an Glass schicken (`is_viewer`).
+    viewers: RefCell<HashSet<String>>,
 }
 
 impl Default for Documents {
     fn default() -> Self {
-        Self(Rc::new(Inner { pending: RefCell::default(), wall: token(), api: token() }))
+        Self(Rc::new(Inner { pending: RefCell::default(), wall: token(), api: token(), viewers: RefCell::default() }))
     }
 }
 
+/// Adresse ohne Sprungmarke (`#page=2` ändert das Dokument nicht).
+fn without_fragment(url: &str) -> &str {
+    url.split('#').next().unwrap_or_default()
+}
+
 impl Documents {
+    /// Zeigt das Dokument unter `url` den Viewer? (Für Nachrichten über `window.ipc`, die jede Seite schicken kann.)
+    pub fn is_viewer(&self, url: &str) -> bool {
+        let url = without_fragment(url);
+        is_page(url) || self.0.viewers.borrow().contains(url)
+    }
+
     fn add(&self, bytes: Vec<u8>) -> String {
         let mut docs = self.0.pending.borrow_mut();
         while docs.len() >= PENDING {
@@ -126,15 +143,17 @@ impl Documents {
     }
 }
 
-/// 128 Bit Zufall, damit keine andere Seite im Tab das PDF erraten und abrufen kann.
+/// 128 Bit Zufall aus dem Zufallsgenerator des Systems, damit keine andere Seite im Tab das PDF erraten und abrufen kann.
 fn token() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let part = || {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
-        h.finish()
-    };
-    format!("{:016x}{:016x}", part(), part())
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("Zufallsgenerator des Systems");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Viewer-Seite für eine Datei von der Festplatte oder ein neues PDF? Die gibt es nur als Dokument (Seite, iframe),
+/// nie per `fetch` – sonst könnte eine Seite sie lesen und das API-Geheimnis darin finden.
+pub fn is_page(uri: &str) -> bool {
+    uri.strip_prefix(HOST).is_some_and(|path| path.starts_with("file/") || path.starts_with("new/"))
 }
 
 // ---------- PDFs von der Festplatte ----------
@@ -177,7 +196,9 @@ pub fn file_url(path: &Path) -> String {
 pub fn pdf_path_from_file_url(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file:///")?;
     let path = percent_decode(rest.split(['?', '#']).next().unwrap_or_default()).replace('/', "\\");
-    path.to_ascii_lowercase().ends_with(".pdf").then(|| PathBuf::from(path))
+    // Nur lokale Laufwerke (C:\…): Bei file:////server/… meldete schon das Lesen Windows dort mit dem Konto an
+    let local = path.as_bytes().get(1) == Some(&b':') && path.as_bytes()[0].is_ascii_alphabetic();
+    (local && path.to_ascii_lowercase().ends_with(".pdf")).then(|| PathBuf::from(path))
 }
 
 // ---------- Abfangen von PDFs aus dem Netz ----------
@@ -229,10 +250,14 @@ fn paused(core: &ICoreWebView2, docs: &Documents, p: &Value) {
         && (mime.starts_with("application/pdf") || mime.starts_with("application/x-pdf"))
         // Als Download gemeint: bleibt ein Download
         && !disposition.to_ascii_lowercase().starts_with("attachment");
+    let url = without_fragment(p["request"]["url"].as_str().unwrap_or_default()).to_owned();
     if !is_pdf {
+        // Dieselbe Adresse liefert jetzt eine gewöhnliche Seite: die darf nicht mehr als Viewer sprechen
+        docs.0.viewers.borrow_mut().remove(&url);
         return call(core, "Fetch.continueRequest", json!({ "requestId": id }), |_| {});
     }
-    let name = file_name(&disposition, p["request"]["url"].as_str().unwrap_or_default());
+    let name = file_name(&disposition, &url);
+    docs.0.viewers.borrow_mut().insert(url);
     let (core2, docs) = (core.clone(), docs.clone());
     call(core, "Fetch.getResponseBody", json!({ "requestId": id }), move |reply| {
         let bytes = reply.and_then(|r| match r["base64Encoded"].as_bool() {
@@ -298,6 +323,22 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
         return Some(match call {
             "signatures" => Served::ok("application/json", Cow::Owned(std::fs::read(signatures_file()).unwrap_or_else(|_| b"[]".to_vec()))),
             "fonts" => Served::ok("application/json", Cow::Owned(fonts().list.to_string().into_bytes())),
+            // Ergebnis von „Speichern unter“: 204, solange der Dialog noch offen ist
+            _ if call.starts_with("saved/") => {
+                let ticket = &call["saved/".len()..];
+                SAVED.with(|s| {
+                    let mut saved = s.borrow_mut();
+                    match saved.get(ticket) {
+                        Some((api, _)) if *api == docs.0.api => {
+                            let (_, result) = saved.remove(ticket).unwrap();
+                            Served::ok("application/json", Cow::Owned(result.to_string().into_bytes()))
+                        }
+                        Some(_) => Served::status(404),
+                        None if SAVE_AS.with(|w| w.borrow().get(ticket).is_some_and(|(api, ..)| *api == docs.0.api)) => Served::status(204),
+                        None => Served::status(404),
+                    }
+                })
+            }
             // Nur Dateien aus der Liste der installierten Schriften
             _ => match call.strip_prefix("font/").and_then(|file| fonts().files.get(&percent_decode(file).to_lowercase()).cloned()) {
                 Some(path) => match std::fs::read(path) {
@@ -354,7 +395,7 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
 pub enum Post {
     /// Gleich beantworten.
     Reply(Served),
-    /// „Speichern unter“: Glass zeigt den Dialog (main.rs) und meldet das Ergebnis mit `window.__glassSaved`.
+    /// „Speichern unter“ (Ticket): Glass zeigt den Dialog (main.rs), der Viewer holt das Ergebnis unter `saved/<Ticket>` ab.
     SaveAs(String),
     /// Ein neues PDF in einem neuen Tab zeigen (Adresse).
     OpenTab(String),
@@ -384,7 +425,7 @@ pub fn post(docs: &Documents, uri: &str, body: Vec<u8>) -> Option<Post> {
                 return Some(reply(false));
             }
             let ticket = token();
-            SAVE_AS.with(|s| s.borrow_mut().insert(ticket.clone(), (param("name"), body)));
+            SAVE_AS.with(|s| s.borrow_mut().insert(ticket.clone(), (docs.0.api.clone(), param("name"), body)));
             Post::SaveAs(ticket)
         }
         // Geschütztes PDF entschlüsseln (gleiches Format wie encrypt) – pdf-lib kann verschlüsselte PDFs nicht lesen
@@ -408,12 +449,29 @@ pub fn post(docs: &Documents, uri: &str, body: Vec<u8>) -> Option<Post> {
     })
 }
 
-/// „Speichern unter“ ausführen (nach dem Dialog in main.rs): `None` = abgebrochen.
-/// Liefert den Schlüssel der neuen Datei – künftiges Strg+S speichert dorthin.
-pub fn finish_save_as(ticket: &str, choose: impl FnOnce(&str) -> Option<PathBuf>) -> Value {
-    let Some((name, bytes)) = SAVE_AS.with(|s| s.borrow_mut().remove(ticket)) else { return json!({ "ok": false }) };
-    let Some(path) = choose(&name) else { return json!({ "ok": false, "cancelled": true }) };
-    match write_atomic(&path, &bytes) {
+/// „Speichern unter“ ausführen (`choose` zeigt den Dialog mit einem Namensvorschlag, `None` = abgebrochen).
+/// Das Ergebnis holt der Viewer unter `api/<Geheimnis>/saved/<Ticket>` ab; es enthält den Schlüssel der neuen
+/// Datei – künftiges Strg+S speichert dorthin.
+pub fn finish_save_as(ticket: &str, choose: impl FnOnce(&str) -> Option<PathBuf>) {
+    // Bis der Dialog zu ist, bleibt das Ticket in SAVE_AS (der Viewer bekommt so lange 204)
+    let Some((api, name, bytes)) = SAVE_AS.with(|s| s.borrow().get(ticket).cloned()) else { return };
+    let result = save_as_result(choose(&pdf_name(&name)), &bytes);
+    SAVE_AS.with(|s| s.borrow_mut().remove(ticket));
+    SAVED.with(|s| s.borrow_mut().insert(ticket.to_owned(), (api, result)));
+}
+
+/// Vorschlag für den Dateinamen: Den liefert die Website (Content-Disposition, Adresse) – also nur der Name ohne
+/// Ordner, und immer als `.pdf`. Sonst schlüge der Dialog etwa „Rechnung.hta“ vor (eine PDF, die zugleich ein Programm ist).
+fn pdf_name(name: &str) -> String {
+    let name: String = name.chars().filter(|c| !c.is_control() && !matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')).collect();
+    let name = Path::new(name.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = Path::new(name.trim_end_matches([' ', '.'])).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if stem.trim().is_empty() { "PDF-Dokument.pdf".to_owned() } else { format!("{}.pdf", stem.trim()) }
+}
+
+fn save_as_result(path: Option<PathBuf>, bytes: &[u8]) -> Value {
+    let Some(path) = path else { return json!({ "ok": false, "cancelled": true }) };
+    match write_atomic(&path, bytes) {
         Ok(()) => json!({
             "ok": true,
             "file": remember(&path),
@@ -684,6 +742,40 @@ mod tests {
         assert_eq!(file_name("inline; filename=\"Rechnung.pdf\"", "https://a.de/get?id=3"), "Rechnung.pdf");
         assert_eq!(file_name("inline; filename*=UTF-8''%C3%9Cbersicht.pdf", "https://a.de/x"), "Übersicht.pdf");
         assert_eq!(file_name("", "https://a.de/"), "PDF-Dokument");
+    }
+
+    #[test]
+    fn save_as_suggests_only_pdf_names() {
+        assert_eq!(pdf_name("Rechnung.pdf"), "Rechnung.pdf");
+        assert_eq!(pdf_name("Rechnung.hta"), "Rechnung.pdf");
+        assert_eq!(pdf_name("Rechnung.pdf.exe. "), "Rechnung.pdf.pdf");
+        assert_eq!(pdf_name(r"..\..\Autostart\x.bat"), "x.pdf");
+        assert_eq!(pdf_name("Re\u{202E}fdp.exe"), "Refdp.pdf");
+        assert_eq!(pdf_name(""), "PDF-Dokument.pdf");
+    }
+
+    #[test]
+    fn save_as_result_only_for_the_tab_that_asked() {
+        let (docs, other) = (Documents::default(), Documents::default());
+        let Some(Post::SaveAs(ticket)) = post(&docs, &format!("{HOST}api/{}/save-as?name=a.pdf", docs.0.api), b"%PDF".to_vec()) else { panic!() };
+        let poll = |d: &Documents| serve(d, &format!("{HOST}api/{}/saved/{ticket}", d.0.api), || None).unwrap();
+        assert_eq!(poll(&docs).status, 204); // Dialog noch offen
+        assert_eq!(poll(&other).status, 404);
+        finish_save_as(&ticket, |_| None);
+        assert_eq!(poll(&other).status, 404);
+        let done = poll(&docs);
+        assert_eq!(serde_json::from_slice::<Value>(&done.body).unwrap()["cancelled"], true);
+        assert_eq!(poll(&docs).status, 404); // nur einmal abzuholen
+    }
+
+    #[test]
+    fn only_viewer_documents_count_as_viewer() {
+        let docs = Documents::default();
+        assert!(docs.is_viewer(&format!("{HOST}file/abc/x.pdf")));
+        assert!(!docs.is_viewer("https://evil.example/"));
+        docs.0.viewers.borrow_mut().insert("https://a.de/x.pdf".into());
+        assert!(docs.is_viewer("https://a.de/x.pdf#page=2"));
+        assert!(!is_page(&format!("{HOST}doc/abc")) && is_page(&format!("{HOST}new/abc/x.pdf")));
     }
 
     #[test]

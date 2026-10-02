@@ -1,6 +1,7 @@
 //! Updates über GitHub-Releases: Jeder Push auf `main` baut per GitHub Actions eine neue `Browser.exe`
 //! und veröffentlicht sie als Release `build-<Nummer>`. Glass vergleicht diese Nummer mit der eigenen
 //! (`GLASS_BUILD`, beim Bauen in der CI gesetzt) und bietet neuere Versionen im Update-Modal an.
+//! Installiert wird nur eine Exe mit gültiger Signatur (`signature.rs`).
 //!
 //! Austausch der laufenden Exe: Windows erlaubt, eine laufende Exe umzubenennen. Die alte wird zu
 //! `Browser.old.exe`, die neue nimmt ihren Platz ein und startet – sie wartet, bis die alte beendet ist,
@@ -12,6 +13,8 @@ const API_HOST: &str = "api.github.com";
 const LATEST: &str = "/repos/SnehannUni/glass-browser/releases/latest";
 /// Name der Exe im Release. (Früher `Glass.exe` – den Namen kennt Discord als Spiel und blendet sein Overlay ein.)
 const ASSET: &str = "Browser.exe";
+/// Ed25519-Signatur der Exe (Base64, siehe `signature.rs`). Releases ohne sie werden nicht angeboten.
+const SIGNATURE_ASSET: &str = "Browser.exe.sig";
 
 /// Nur explizit gekennzeichnete Main-Releases nehmen am Auto-Update teil.
 /// Eine Build-Nummer allein (z. B. in einem lokalen Dev-Build) reicht nicht aus.
@@ -26,10 +29,12 @@ fn release_build(reference: Option<&str>, build: Option<&str>) -> Option<u32> {
     build.and_then(|b| b.parse().ok()).filter(|b| *b > 0)
 }
 
+#[derive(Clone)]
 pub struct Release {
     pub build: u32,
     pub notes: String,
     pub url: String,
+    pub signature_url: String,
 }
 
 /// Neueres Release als die laufende Version? (Blockiert – im Hintergrund-Thread aufrufen.)
@@ -41,9 +46,12 @@ pub fn check() -> Option<Release> {
     if build <= current {
         return None;
     }
-    let url = json["assets"].as_array()?.iter().find(|a| a["name"] == ASSET)?["browser_download_url"].as_str()?.to_owned();
+    let asset = |name: &str| -> Option<String> {
+        Some(json["assets"].as_array()?.iter().find(|a| a["name"] == name)?["browser_download_url"].as_str()?.to_owned())
+    };
+    let (url, signature_url) = (asset(ASSET)?, asset(SIGNATURE_ASSET)?);
     let notes = json["body"].as_str().unwrap_or_default().trim().to_owned();
-    Some(Release { build, notes, url })
+    Some(Release { build, notes, url, signature_url })
 }
 
 fn paths() -> std::io::Result<(PathBuf, PathBuf, PathBuf)> {
@@ -51,16 +59,33 @@ fn paths() -> std::io::Result<(PathBuf, PathBuf, PathBuf)> {
     Ok((exe.clone(), exe.with_extension("old.exe"), exe.with_extension("new.exe")))
 }
 
-/// Neue Exe laden, prüfen, an die Stelle der laufenden setzen und starten.
+/// Datei aus einem Release laden (GitHub leitet auf seinen Datei-Server um; WinHTTP folgt der Umleitung selbst).
+fn download(url: &str) -> Result<Vec<u8>, String> {
+    let rest = url.strip_prefix("https://github.com/").ok_or("Ungültige Download-Adresse")?;
+    crate::suggest::https_get("github.com", &format!("/{rest}")).ok_or_else(|| "Download fehlgeschlagen".into())
+}
+
+/// Stammt die Exe von uns und gehört sie zu genau diesem Build? (Siehe `signature.rs`.)
+fn verify(build: u32, exe: &[u8], signature: &[u8]) -> bool {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let key = STANDARD.decode(crate::signature::PUBLIC_KEY).ok().and_then(|k| <[u8; 32]>::try_from(k).ok());
+    let sig = STANDARD.decode(signature.trim_ascii()).ok().and_then(|s| <[u8; 64]>::try_from(s).ok());
+    let (Some(key), Some(sig)) = (key, sig) else { return false };
+    let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&key) else { return false };
+    key.verify_strict(&crate::signature::message(build, exe), &ed25519_dalek::Signature::from_bytes(&sig)).is_ok()
+}
+
+/// Neue Exe laden, Signatur prüfen, an die Stelle der laufenden setzen und starten.
 /// Danach muss sich Glass beenden (die neue Instanz wartet darauf).
-pub fn install(url: &str) -> Result<(), String> {
+pub fn install(release: &Release) -> Result<(), String> {
     if current_build().is_none() { return Err("Auto-Updates sind in Entwickler-Builds deaktiviert.".into()); }
-    let rest = url.strip_prefix("https://").ok_or("Ungültige Download-Adresse")?;
-    let (host, path) = rest.split_once('/').ok_or("Ungültige Download-Adresse")?;
-    // GitHub leitet auf seinen Datei-Server um; WinHTTP folgt der Umleitung selbst.
-    let bytes = crate::suggest::https_get(host, &format!("/{path}")).ok_or("Download fehlgeschlagen")?;
+    let signature = download(&release.signature_url)?;
+    let bytes = download(&release.url)?;
     if bytes.len() < 1_000_000 || !bytes.starts_with(b"MZ") {
         return Err("Die heruntergeladene Datei ist keine gültige Browser.exe".into());
+    }
+    if !verify(release.build, &bytes, &signature) {
+        return Err("Die Signatur des Updates stimmt nicht – es wird nicht installiert.".into());
     }
     let (exe, old, new) = paths().map_err(|e| e.to_string())?;
     std::fs::write(&new, &bytes).map_err(|e| format!("Konnte das Update nicht speichern: {e}"))?;
@@ -83,11 +108,12 @@ pub fn install(url: &str) -> Result<(), String> {
 pub fn startup(args: Vec<String>) -> Vec<String> {
     let mut rest = Vec::new();
     let mut updated = false;
-    let mut it = args.into_iter();
-    while let Some(arg) = it.next() {
-        if arg == "--wait-pid" {
+    let mut it = args.into_iter().enumerate();
+    while let Some((i, arg)) = it.next() {
+        // Nur so, wie `install` die neue Version startet: als erstes Argument
+        if i == 0 && arg == "--wait-pid" {
             updated = true;
-            if let Some(pid) = it.next().and_then(|p| p.parse().ok()) {
+            if let Some(pid) = it.next().and_then(|(_, p)| p.parse().ok()) {
                 wait_for(pid);
             }
         } else {
@@ -178,7 +204,23 @@ fn wait_for(pid: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::release_build;
+    use super::{release_build, verify};
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn only_signatures_from_the_release_key_for_the_same_build_pass() {
+        let exe = b"MZ fake exe".as_slice();
+        // Mit einem fremden Schlüssel signiert: passt nicht zum eingebauten öffentlichen Schlüssel
+        let foreign = SigningKey::from_bytes(&[7; 32]);
+        let sig = STANDARD.encode(foreign.sign(&crate::signature::message(5, exe)).to_bytes());
+        assert!(!verify(5, exe, sig.as_bytes()));
+        for junk in [b"".as_slice(), b"kein base64!", b"AAAA"] {
+            assert!(!verify(5, exe, junk));
+        }
+        // Die Build-Nummer steckt in der Signatur: dieselbe Exe als anderer Build zählt nicht
+        assert_ne!(crate::signature::message(5, exe), crate::signature::message(6, exe));
+    }
 
     #[test]
     fn only_main_releases_with_valid_build_numbers_receive_updates() {

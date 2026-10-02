@@ -1,6 +1,10 @@
 // Trusted account picker. Websites never receive the list of saved usernames.
 (() => {
   let panel, request;
+  // Erst so lange nach dem Erscheinen der Konten zählt ein Klick darauf – sonst könnte eine Seite die Auswahl genau
+  // dorthin holen, wo man gerade klickt (Doppelklick, Spiel …), und das Passwort mit einem einzigen Klick bekommen.
+  const ARM_MS = 500;
+  let armedAt = 0;
   const send = (cmd, extra = {}) => window.ipc.postMessage(JSON.stringify({ cmd, ...extra }));
   window.hidePasswordSuggestions = () => {
     if (!panel) return;
@@ -33,13 +37,14 @@
         panel.append(retry);
       }
     } else data.accounts.slice(0, 5).forEach((account, index) => {
+      if (index === 0) armedAt = performance.now() + ARM_MS;
       const button = document.createElement('button');
       button.className = 'key';
       button.type = 'button';
       button.textContent = account.username || account.label;
       Object.assign(button.style, { display: 'block', textAlign: 'left', width: '100%', height: '38px', padding: '0 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
       button.addEventListener('click', e => {
-        if (!e.isTrusted) return;
+        if (!e.isTrusted || performance.now() < armedAt) return;
         send('autofill_pick', { id: request, index });
         window.hidePasswordSuggestions();
       });

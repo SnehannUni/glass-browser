@@ -4,8 +4,14 @@
   const post = window.ipc.postMessage.bind(window.ipc);
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
   let active = null, token = null;
+  // Fast unsichtbar (opacity) zählt nicht: So ließe sich ein Loginfeld unter etwas legen, das man ohnehin anklickt
+  const opaque = el => {
+    let alpha = 1;
+    for (let n = el; n instanceof Element; n = n.parentElement || n.getRootNode().host) alpha *= +getComputedStyle(n).opacity;
+    return alpha >= 0.2;
+  };
   const visible = el => el instanceof HTMLInputElement && !el.disabled && !el.readOnly &&
-    el.type !== 'hidden' && el.getClientRects().length && getComputedStyle(el).visibility === 'visible';
+    el.type !== 'hidden' && el.getClientRects().length && getComputedStyle(el).visibility === 'visible' && opaque(el);
   const hint = el => (el.autocomplete || '').toLowerCase().split(/\s+/);
   function loginField(el) {
     if (!visible(el) || hint(el).some(h => ['new-password', 'one-time-code'].includes(h))) return false;
@@ -30,15 +36,29 @@
     const r = el.getBoundingClientRect();
     post(JSON.stringify({ autofill: 'focus', token, rect: [r.x, r.y, r.width, r.height] }));
   }
-  document.addEventListener('focusin', e => { if (e.isTrusted) focus(e.composedPath()[0]); }, true);
+  // Die Auswahl erscheint nur, wenn man selbst ins Feld geklickt oder getippt hat (Tab-Taste). Ein focus() der Seite
+  // löst zwar auch ein echtes focusin aus – damit könnte sie die Auswahl aber jederzeit dorthin holen, wo man gleich klickt.
+  let gesture = { at: -Infinity, target: null };
+  const byUser = el => performance.now() - gesture.at < 1000 &&
+    (!gesture.target || gesture.target === el || [...(el.labels || [])].some(l => l.contains(gesture.target)));
+  document.addEventListener('focusin', e => {
+    const el = e.composedPath()[0];
+    if (e.isTrusted && byUser(el)) focus(el);
+    else if (el !== active) cancel();
+  }, true);
   document.addEventListener('pointerdown', e => {
     if (!e.isTrusted) return;
     const target = e.composedPath()[0];
+    gesture = { at: performance.now(), target };
     if (target === active && token) return;
     if (!loginField(target)) cancel();
     else if (target === document.activeElement) focus(target);
   }, true);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') cancel(); }, true);
+  document.addEventListener('keydown', e => {
+    if (!e.isTrusted) return;
+    if (e.key === 'Escape') cancel();
+    else gesture = { at: performance.now(), target: null }; // Tastatur: der Fokus folgt der Taste
+  }, true);
   addEventListener('scroll', cancel, true);
   addEventListener('pagehide', cancel);
   Object.defineProperty(window, '__glassAutofillFill', { value: (expected, origin, username, password) => {

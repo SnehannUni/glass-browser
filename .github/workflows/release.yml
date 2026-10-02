@@ -25,15 +25,16 @@ jobs:
       GLASS_BUILD: ${{ github.run_number }}
       GLASS_RELEASE_REF: ${{ github.ref }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # Fremde Actions auf Commits festgelegt: Ein umgehängter Tag kann nichts in die Releases schmuggeln.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Bauen
         run: cargo build --release --locked
 
       - name: Lizenzen der Bibliotheken
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-about
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
@@ -58,8 +59,15 @@ jobs:
           Copy-Item target/release/glass-browser.exe Browser.exe
           Copy-Item target/release/glass-browser.exe Glass.exe
 
+      # Signatur fürs Auto-Update (src/signature.rs). Ohne das Secret bricht der Lauf ab – lieber kein Release als ein
+      # unsigniertes, das ohnehin keine Installation annehmen würde.
+      - name: Signieren
+        env:
+          GLASS_SIGNING_KEY: ${{ secrets.GLASS_SIGNING_KEY }}
+        run: cargo run --release --locked --example sign -- Browser.exe ${{ github.run_number }} Browser.exe.sig
+
       - name: Release veröffentlichen
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: build-${{ github.run_number }}
           name: Winter Browser Build ${{ github.run_number }}
@@ -68,6 +76,7 @@ jobs:
           make_latest: true
           files: |
             Browser.exe
+            Browser.exe.sig
             Glass.exe
             WinterBrowser-Store-build-${{ github.run_number }}.msix
             THIRD_PARTY_LICENSES.html

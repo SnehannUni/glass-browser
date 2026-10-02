@@ -3,6 +3,7 @@
 mod blocker;
 mod suggest;
 mod update;
+mod signature;
 mod window_frame;
 mod autofill;
 mod paths;
@@ -105,8 +106,9 @@ enum UserEvent {
     Favicon(u32, String),
     PageFavicon(u32, String, String),
     Load(u32, bool, String),
-    /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
-    NewWindow(u32, String),
+    /// Tab, aus dem das neue Fenster angefordert wurde, dessen Adresse und ob es privat ist. (Privat steht dabei,
+    /// weil der Tab schon zu sein kann, wenn ein Popup von ihm noch Tabs öffnet – privat muss privat bleiben.)
+    NewWindow(u32, String, bool),
     /// Eine Seite (z. B. ein Video) betritt oder verlässt den Vollbildmodus.
     Fullscreen(u32, bool),
     /// In eine Webseite wurde geklickt (sie hat den Tastaturfokus bekommen).
@@ -116,7 +118,7 @@ enum UserEvent {
     /// Eine Webseite fragt nach CSS zum Ausblenden von Werbeflächen (JSON aus content.js).
     Cosmetic(u32, String),
     /// Auf GitHub gibt es eine neuere Version (Build-Nummer, Änderungen, Download-Adresse).
-    UpdateAvailable(u32, String, String),
+    UpdateAvailable(update::Release),
     /// Update installiert (Glass beendet sich, die neue Version startet) oder Fehlermeldung.
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
@@ -149,8 +151,8 @@ enum UserEvent {
     PdfViewer(u32),
     /// Ein PDF von der Festplatte (file://-Adresse, Kommandozeile): im Viewer zeigen, damit Strg+S dorthin speichert.
     OpenPdfFile(u32, std::path::PathBuf),
-    /// Der PDF-Viewer möchte „Speichern unter“ (Tab, Ticket aus `pdf::post`).
-    PdfSaveAs(u32, String),
+    /// Der PDF-Viewer möchte „Speichern unter“ (Ticket aus `pdf::post`).
+    PdfSaveAs(String),
     /// Strg+O im PDF-Viewer: Datei auswählen und in einem neuen Tab öffnen.
     PdfOpen,
     /// Der PDF-Viewer hat ein neues PDF gebaut (etwa aus Bildern): in einem neuen Tab zeigen (Adresse aus `pdf::post`).
@@ -215,8 +217,9 @@ struct Tab {
     /// Ganz an den Anfang zurückgegangen: der Tab zeigt den Startbildschirm, die Seite wartet
     /// ausgeblendet dahinter – „Vor“ holt sie zurück.
     home: bool,
-    /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`).
-    pending_prompt: Option<String>,
+    /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`), und der Host,
+    /// auf dem er eingetippt werden darf.
+    pending_prompt: Option<(String, String)>,
     /// Seit wann die Seite ausgeblendet ist (`None`: gerade sichtbar). Siehe `sleep_idle_tabs`.
     hidden_since: Cell<Option<Instant>>,
     /// Der Tab ist die Mail-Ansicht (mail.rs): keine eigene Webseite, links die Liste, rechts ein Postfach.
@@ -276,8 +279,8 @@ struct Browser {
     /// Tabs, deren Zähler im Schutzschild neu gemeldet werden muss (gesammelt wie `ui_dirty`).
     blocked_dirty: Vec<u32>,
     split: Option<Split>,
-    /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
-    update: Option<(u32, String, String)>,
+    /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adressen) – wird im Modal angeboten.
+    update: Option<update::Release>,
     /// Die Oberfläche hat die Leiste ausgeblendet: Webseiten reichen dann bis an den Rand.
     chrome_hidden: bool,
     /// Die Leiste steht links statt oben (Einstellung der Oberfläche, dort gespeichert).
@@ -539,7 +542,7 @@ impl Browser {
         let url = tab.url.clone();
         tab.hang = Hang::default();
         let old = tab.webview.take();
-        let built = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, tab.private, &url, bounds, false);
+        let built = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, tab.private, &url, bounds, false, false);
         tab.webview = built.ok();
         drop(old);
         let private = tab.private;
@@ -875,11 +878,23 @@ impl Browser {
         self.activate(((self.active as isize + step).rem_euclid(n)) as usize);
     }
 
+    /// Hat die Seite `id` gerade den Tastaturfokus (aktiver Tab bzw. das gezeigte Postfach, Glass im Vordergrund)?
+    fn keyboard_owner(&self, id: u32) -> bool {
+        let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } == self.window.hwnd() as _;
+        let shown = if self.mail_view_active() {
+            self.mail.shown_tab().is_some_and(|t| t.id == id)
+        } else {
+            self.tabs.get(self.active).is_some_and(|t| t.id == id && t.shows_page())
+        };
+        foreground && shown
+    }
+
     fn navigate_to(&mut self, url: String) {
         let bounds = to_rect(self.content_area());
         let tab = &mut self.tabs[self.active];
         tab.url = url.clone();
         tab.loading = true;
+        tab.pending_prompt = None; // ein noch nicht eingetippter Prompt gehört nicht in die nächste Seite
         // In der Mail-Ansicht eine Adresse eingetippt: Der Tab wird zu einem gewöhnlichen
         if std::mem::take(&mut tab.mail_view) {
             tab.title.clear();
@@ -895,7 +910,7 @@ impl Browser {
                 let _ = self.tabs[self.active].webview.as_ref().map(|wv| wv.focus());
             }
             None => {
-                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, tab.id, tab.private, &url, bounds, true);
+                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, tab.id, tab.private, &url, bounds, true, false);
                 tab.webview = wv.ok();
                 let (id, private) = (tab.id, tab.private);
                 if let Some(wv) = &self.tabs[self.active].webview {
@@ -1045,7 +1060,7 @@ impl Browser {
 
     /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
     fn show_update(&self) {
-        if let Some((build, notes, _)) = &self.update {
+        if let Some(update::Release { build, notes, .. }) = &self.update {
             let info = json!({ "build": build, "current": update::current_build(), "notes": notes });
             let _ = self.ui.evaluate_script(&format!("window.showUpdate?.({info})"));
         }
@@ -1099,10 +1114,10 @@ impl Browser {
             "mail_list" => self.mail_list_width(msg["value"].as_f64()),
             // Update-Modal: „Jetzt installieren“ – Download und Austausch laufen im Hintergrund
             "update_install" => {
-                if let Some((_, _, url)) = self.update.clone() {
+                if let Some(release) = self.update.clone() {
                     let proxy = self.proxy.clone();
                     std::thread::spawn(move || {
-                        let _ = proxy.send_event(UserEvent::UpdateDone(update::install(&url)));
+                        let _ = proxy.send_event(UserEvent::UpdateDone(update::install(&release)));
                     });
                 }
             }
@@ -1144,8 +1159,9 @@ impl Browser {
                 (None, Search::Query(prefix)) => self.navigate_to(format!("{prefix}{}", url_encode(value.trim()))),
                 // Seite öffnen und den Prompt eintippen, sobald sie geladen ist (siehe UserEvent::Load)
                 (None, Search::Typed(home)) => {
-                    self.tabs[self.active].pending_prompt = Some(value.trim().to_owned());
                     self.navigate_to((*home).to_owned());
+                    let host = home.parse::<wry::http::Uri>().ok().and_then(|u| u.host().map(str::to_owned)).unwrap_or_default();
+                    self.tabs[self.active].pending_prompt = Some((value.trim().to_owned(), host));
                 }
             },
             "back" => self.go_back(),
@@ -1292,16 +1308,21 @@ impl Browser {
                     }
                     return self.command(&cmd, &Value::Null);
                 }
+                // Tastenkürzel nur von der Seite, die gerade den Tastaturfokus hat: window.ipc kann jede Seite benutzen –
+                // sonst schlösse etwa ein Hintergrund-Tab mit „close_tab“ den Tab, den man gerade liest.
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
-                    return self.command(&cmd, &Value::Null);
+                    if self.keyboard_owner(from) {
+                        return self.command(&cmd, &Value::Null);
+                    }
+                    return true;
                 }
                 // Eine sichtbare Seite hat gescrollt, während Glas über ihr liegt: Die Oberfläche braucht ein neues Bild
                 if cmd == "scrolled" && !self.overlay.is_empty() && self.panes().iter().any(|(p, _)| self.tabs[*p].id == from) {
                     let _ = self.ui.evaluate_script("window.pageMoved?.()");
                 }
             }
-            UserEvent::UpdateAvailable(build, notes, url) => {
-                self.update = Some((build, notes, url));
+            UserEvent::UpdateAvailable(release) => {
+                self.update = Some(release);
                 self.show_update();
             }
             // Erfolgreich: beenden, die neue Version wartet schon darauf
@@ -1361,16 +1382,14 @@ impl Browser {
                     let _ = wv.load_url(&pdf::local_url(&path));
                 }
             }
-            UserEvent::PdfSaveAs(id, ticket) => {
+            UserEvent::PdfSaveAs(ticket) => {
                 let hwnd = self.window.hwnd() as isize;
                 // Tests (tests/pdf-editor.mjs) speichern ohne Dialog in einen festen Ordner
-                let result = pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
-                    Some(dir) => Some(std::path::PathBuf::from(dir).join(name)),
+                // Das Ergebnis holt der Viewer selbst ab (pdf.rs, `saved/`)
+                pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
+                    Some(dir) => Some(std::path::PathBuf::from(dir).join(std::path::Path::new(name).file_name()?)),
                     None => file_dialog(hwnd, true, name),
                 });
-                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
-                    let _ = wv.evaluate_script(&format!("window.__glassSaved?.({result})"));
-                }
             }
             UserEvent::PdfOpen => {
                 if let Some(path) = file_dialog(self.window.hwnd() as isize, false, "") {
@@ -1392,8 +1411,8 @@ impl Browser {
                 }
             }
             UserEvent::OpenUrls(urls) => {
-                for url in urls {
-                    self.new_tab(Some(resolve_input(&url)), false);
+                for url in urls.iter().filter_map(|u| resolve_input(u)) {
+                    self.new_tab(Some(url), false);
                 }
                 self.window.set_minimized(false);
                 self.window.set_focus();
@@ -1411,8 +1430,9 @@ impl Browser {
             UserEvent::Cosmetic(id, raw) => {
                 let Some(wv) = self.tab_mut(id).and_then(|t| t.webview.as_ref()) else { return true };
                 let msg: Value = serde_json::from_str(&raw).unwrap_or_default();
+                // Die Listen schickt die Seite selbst: begrenzt, damit sie Glass nicht mit Millionen Namen ausbremst
                 let list = |k: &str| -> Vec<String> {
-                    msg[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+                    msg[k].as_array().map(|a| a.iter().take(5000).filter_map(|v| v.as_str().filter(|s| s.len() <= 256).map(str::to_owned)).collect()).unwrap_or_default()
                 };
                 let url = msg["url"].as_str().unwrap_or_default();
                 let css = blocker::hide_css(url, &list("classes"), &list("ids"), msg["first"].as_bool().unwrap_or(false));
@@ -1450,7 +1470,9 @@ impl Browser {
                 }
             }
             UserEvent::Load(id, loading, url) => {
-                if !loading {
+                // Kontonamen vorab laden – nicht für private Tabs: deren Seiten gehen iCloud nichts an
+                let private = self.index_of(id).is_some_and(|i| self.tabs[i].private);
+                if !loading && !private {
                     if let Ok(uri) = url.parse::<wry::http::Uri>() {
                         if uri.scheme_str() == Some("https") {
                             if let Some(host) = uri.host() {
@@ -1465,8 +1487,12 @@ impl Browser {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
                         tab.pdf_viewer = false;
-                    } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
-                        let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
+                    } else if let (Some((prompt, host)), Some(wv)) = (&tab.pending_prompt, &tab.webview) {
+                        // Nur in die Seite des Anbieters tippen – nicht in eine, auf die er weiterleitet (Anmeldung …)
+                        if url.parse::<wry::http::Uri>().ok().and_then(|u| u.host().map(str::to_owned)).as_deref() == Some(host.as_str()) {
+                            let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
+                            tab.pending_prompt = None;
+                        }
                     }
                     tab.hang = Hang::default(); // auch Weiterleitungen: Die Antwort auf die neue Adresse steht noch aus
                     tab.loading = loading;
@@ -1481,12 +1507,11 @@ impl Browser {
             }
             UserEvent::MailSync => self.sync_mail(),
             // Links aus einem privaten Tab öffnen sich wieder privat.
-            UserEvent::NewWindow(from, url) => {
+            UserEvent::NewWindow(from, url, private) => {
                 // Ein Postfach öffnet nur Tabs, solange es in der Mail-Ansicht zu sehen ist (Link in einer Mail)
                 if self.mail.owns(from) && !(self.mail_view_active() && self.mail.shown_tab().is_some_and(|t| t.id == from)) {
                     return true;
                 }
-                let private = self.index_of(from).is_some_and(|i| self.tabs[i].private);
                 self.new_tab(Some(url), private);
                 self.tabs[self.active].popup = true;
             }
@@ -1566,12 +1591,16 @@ fn build_content_webview(
     url: &str,
     bounds: Rect,
     visible: bool,
+    mailbox: bool,
 ) -> wry::Result<WebView> {
     let (p_ipc, p_title, p_load, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
-    let opener = opener.clone();
+    let (opener, gestures) = (opener.clone(), opener.clone());
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
     let main_nav = Rc::new(RefCell::new(url.to_owned()));
     let nav = main_nav.clone();
+    // PDFs dieses Tabs (Viewer, Speichern …); die IPC prüft damit, ob eine Nachricht wirklich vom Viewer kommt
+    let docs = pdf::Documents::default();
+    let ipc_docs = docs.clone();
     // Alle Tabs teilen die WebView2-Umgebung der UI: ein Browser-, GPU- und Netzwerkprozess für alles.
     // Private Tabs laufen darin im InPrivate-Profil: Cookies, Cache, Verlauf und Logins liegen nur im
     // Arbeitsspeicher, sind von den normalen Tabs getrennt und verschwinden mit dem letzten privaten Tab.
@@ -1588,6 +1617,10 @@ fn build_content_webview(
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("mail-content.js"))
         .with_ipc_handler(move |req| {
+            // Nachrichten kann jede Seite schicken (window.ipc) – übergroße gar nicht erst lesen
+            if req.body().len() > 1024 * 1024 {
+                return;
+            }
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
             let event = if body.starts_with('{') {
@@ -1598,15 +1631,22 @@ fn build_content_webview(
                     UserEvent::MailReport(id, req.uri().to_string(), body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
-                } else if msg["pdf"] == "open" {
-                    UserEvent::PdfOpen
                 } else if msg.get("pdf").is_some() {
-                    UserEvent::PdfViewer(id)
+                    // window.ipc kann jede Seite benutzen – Dateidialog und Fensterlage nur für den PDF-Viewer
+                    if !ipc_docs.is_viewer(&req.uri().to_string()) { return; }
+                    if msg["pdf"] == "open" { UserEvent::PdfOpen } else { UserEvent::PdfViewer(id) }
                 } else { UserEvent::Cosmetic(id, body) }
             } else { UserEvent::Content(id, body) };
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
+            // Ein Postfach zeigt keine Adresse: Fremde Seiten (etwa per window.opener.location aus einem Popup) öffnen
+            // sich als gewöhnlicher Tab, wo man sieht, wo man ist – sonst stünde eine Phishing-Seite rechts in der
+            // Mail-Ansicht, und Glass böte daneben auch noch „klicken, um dich anzumelden“ an.
+            if mailbox && !mail::mailbox_may_show(&url) {
+                let _ = p_nav.send_event(UserEvent::NewWindow(id, url, false));
+                return false;
+            }
             // PDF von der Festplatte: statt des Edge-Viewers unser Viewer (der auch dorthin speichern kann)
             if let Some(path) = pdf::pdf_path_from_file_url(&url) {
                 let _ = p_nav.send_event(UserEvent::OpenPdfFile(id, path));
@@ -1631,6 +1671,7 @@ fn build_content_webview(
         // Popups mit Größe (z. B. „Mit Google anmelden“) als eigenes Glass-Fenster, alles andere als neuer Tab
         .with_new_window_req_handler(move |url, features| opener.request(id, private, url, features))
         .build_as_child(window)?;
+    gestures.watch_gestures(&webview.webview());
 
     if !private {
         let proxy = proxy.clone();
@@ -1666,7 +1707,6 @@ fn build_content_webview(
         };
     }
 
-    let docs = pdf::Documents::default();
     watch_requests(&webview, ui, proxy, id, main_nav.clone(), docs.clone());
     let (core, first) = (webview.webview(), windows::core::HSTRING::from(url));
     let p_answer = proxy.clone();
@@ -1764,8 +1804,9 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
                     Some(pdf::Post::Reply(served)) => respond(served)?,
                     // Der Dialog kommt aus der Ereignisschleife, nicht aus diesem Rückruf
                     Some(pdf::Post::SaveAs(ticket)) => {
-                        respond(pdf::Served { status: 202, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
-                        let _ = proxy.send_event(UserEvent::PdfSaveAs(id, ticket));
+                        let body = std::borrow::Cow::Owned(ticket.clone().into_bytes());
+                        respond(pdf::Served { status: 202, mime: "text/plain", body, csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfSaveAs(ticket));
                     }
                     Some(pdf::Post::OpenTab(url)) => {
                         respond(pdf::Served { status: 204, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
@@ -1775,11 +1816,14 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
                 }
                 return Ok(());
             }
+            let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
+            args.ResourceContext(&mut context)?;
+            if pdf::is_page(&uri) && context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT {
+                return respond(pdf::Served { status: 403, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None });
+            }
             if let Some(served) = pdf::serve(&docs, &uri, wallpaper) {
                 return respond(served);
             }
-            let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
-            args.ResourceContext(&mut context)?;
             let kind = match context {
                 // Die Seite selbst nie sperren – nur Dokumente in iframes
                 COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if *main_nav.borrow() == uri => return Ok(()),
@@ -1817,7 +1861,7 @@ fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf
     use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::{
         Common::COMDLG_FILTERSPEC, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
-        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, SIGDN_FILESYSPATH,
+        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_STRICTFILETYPES, SIGDN_FILESYSPATH,
     };
     unsafe {
         let dialog: IFileDialog = if save {
@@ -1830,7 +1874,8 @@ fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf
         dialog.SetDefaultExtension(w!("pdf")).ok()?;
         let mut options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
         if save {
-            options |= FOS_OVERWRITEPROMPT;
+            // Nur als .pdf speichern – auch wenn jemand im Dialog eine andere Endung eintippt
+            options |= FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES;
         }
         dialog.SetOptions(options).ok()?;
         if save && !name.is_empty() {
@@ -1877,18 +1922,55 @@ fn as_url(input: &str) -> Option<String> {
     None
 }
 
-/// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
-/// Eine vorhandene Datei (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) wird zur file://-Adresse.
-fn resolve_input(input: &str) -> String {
+/// Was Glass beim Start öffnen soll. Links und Dateien startet Windows mit `--single-argument <Adresse>`
+/// (default_browser.rs): Alles danach ist genau eine Adresse – auch wenn sie Anführungszeichen enthält, mit denen
+/// eine fremde App sonst weitere Argumente wie `--wait-pid` anhängen könnte. Nach einem Update wartet `update::startup`
+/// zuerst auf die alte Instanz – beide dürfen WebView2 nicht gleichzeitig öffnen.
+fn launch_args() -> Vec<String> {
+    const SINGLE: &str = " --single-argument ";
+    let raw = unsafe {
+        let line = windows_sys::Win32::System::Environment::GetCommandLineW();
+        let len = (0..).take_while(|&i| *line.add(i) != 0).count();
+        String::from_utf16_lossy(std::slice::from_raw_parts(line, len))
+    };
+    match raw.find(SINGLE) {
+        Some(i) => {
+            update::startup(Vec::new()); // nur aufräumen
+            let url = raw[i + SINGLE.len()..].trim();
+            (!url.is_empty()).then(|| url.to_owned()).into_iter().collect()
+        }
+        None => update::startup(std::env::args().skip(1).collect()),
+    }
+}
+
+/// Netzwerkpfad (`\\server\freigabe`, `file://server/…`)? Schon das Nachsehen, ob es die Datei gibt, meldet Windows
+/// dort mit dem Benutzerkonto an (NTLM) – ein Link von außen darf das nicht auslösen.
+fn network_path(input: &str) -> bool {
+    let s = input.trim().replace('/', "\\").to_ascii_lowercase();
+    let local_drive = |p: &str| p.as_bytes().get(1) == Some(&b':') && p.as_bytes()[0].is_ascii_alphabetic();
+    s.starts_with(r"\\") || s.strip_prefix("file:").is_some_and(|rest| !local_drive(rest.trim_start_matches('\\')))
+}
+
+/// Adresse von außen (Aufruf, andere Instanz) → URL, sonst Google-Suche. Andere Apps bestimmen sie: also nur
+/// Webadressen und Dateien auf lokalen Laufwerken (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) – keine data:-,
+/// javascript:- oder Netzwerkadressen.
+fn resolve_input(input: &str) -> Option<String> {
+    if network_path(input) {
+        return None;
+    }
     let path = std::path::Path::new(input.trim());
     if path.is_file() {
-        if let Ok(full) = std::fs::canonicalize(path) {
-            // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse
-            let full = full.to_string_lossy().trim_start_matches(r"\\?\").to_owned();
-            return pdf::file_url(std::path::Path::new(&full));
-        }
+        let full = std::fs::canonicalize(path).ok()?;
+        // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse (\\?\UNC\… ist ein Netzwerkpfad)
+        let full = full.to_string_lossy().strip_prefix(r"\\?\").filter(|p| !p.starts_with("UNC\\"))?.to_owned();
+        return Some(pdf::file_url(std::path::Path::new(&full)));
     }
-    as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())))
+    if input.trim() == "about:blank" {
+        return Some("about:blank".into());
+    }
+    let url = as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())));
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("file:///")).then_some(url)
 }
 
 fn url_encode(s: &str) -> String {
@@ -2003,11 +2085,11 @@ fn style_frame(window: &Window) {
 
 
 fn main() -> wry::Result<()> {
-    // Nach einem Update zuerst auf die alte Instanz warten – beide dürfen WebView2 nicht gleichzeitig öffnen.
-    let args = update::startup(std::env::args().skip(1).collect());
+    let args = launch_args();
     // Dateien mit vollem Pfad: Das offene Glass hat ein anderes Arbeitsverzeichnis
     let args: Vec<String> = args
         .into_iter()
+        .filter(|a| !network_path(a))
         .map(|a| match std::path::absolute(&a) {
             Ok(path) if path.is_file() => path.display().to_string(),
             _ => a,
@@ -2024,9 +2106,10 @@ fn main() -> wry::Result<()> {
         let p_open = proxy.clone();
         listener.listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
     }
-    // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf).
+    // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf) – nicht eine
+    // Kopie, die jemand aus „Downloads“ startet: Die würde sonst zum Programm für alle Links.
     // Die Store-Version braucht das nicht: Ihr Paketmanifest meldet sie an.
-    if !cfg!(feature = "store") && update::current_build().is_some() {
+    if !cfg!(feature = "store") && update::current_build().is_some() && default_browser::installed() {
         std::thread::spawn(default_browser::register);
     }
 
@@ -2075,7 +2158,7 @@ fn main() -> wry::Result<()> {
         // Verbindungen und DNS-Cache nicht nach Webseite trennen: Nur so kann ein Tab die Verbindung nutzen, die die
         // Oberfläche beim Tippen vorgewärmt hat (warmUp in ui.html). Gemessen: DNS + TLS 0 statt ~60 ms. Cookies bleiben getrennt.
         .with_additional_browser_args(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,PartitionConnectionsByNetworkIsolationKey,SplitHostCacheByNetworkIsolationKey --ui-disable-partial-swap",
+            "--disable-features=msWebOOUI,msPdfOOUI,PartitionConnectionsByNetworkIsolationKey,SplitHostCacheByNetworkIsolationKey --ui-disable-partial-swap",
         )
         .with_ipc_handler(move |req| {
             if req.uri().to_string() == UI_URL {
@@ -2093,7 +2176,7 @@ fn main() -> wry::Result<()> {
             loop {
                 if let Some(r) = update::check().filter(|r| r.build > offered) {
                     offered = r.build;
-                    let _ = p_update.send_event(UserEvent::UpdateAvailable(r.build, r.notes, r.url));
+                    let _ = p_update.send_event(UserEvent::UpdateAvailable(r));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
             }
@@ -2152,7 +2235,7 @@ fn main() -> wry::Result<()> {
         hover_cursor: Cell::new(None), ui_dirty: Cell::new(false), blocked_dirty: Vec::new(), hang_tick: false,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
-    let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
+    let start_urls: Vec<String> = args.iter().filter_map(|a| resolve_input(a)).collect();
     if start_urls.is_empty() {
         browser.new_tab(None, false);
     }
@@ -2225,4 +2308,25 @@ fn main() -> wry::Result<()> {
             _ => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{network_path, resolve_input};
+
+    #[test]
+    fn links_from_other_apps_are_web_addresses_or_local_files() {
+        for input in [r"\\server\share\a.pdf", "//server/share/a.pdf", "file://server/share/a.pdf", "file:////server/a.pdf", r"file:\\server\a"] {
+            assert!(network_path(input), "{input}");
+            assert_eq!(resolve_input(input), None, "{input}");
+        }
+        assert!(!network_path("file:///C:/Users/a.pdf") && !network_path(r"C:\a.pdf") && !network_path("https://a.de"));
+        for input in ["data:text/html,<h1>Bank</h1>", "javascript://%0aalert(1)", "ms-settings://x", "about:settings"] {
+            assert_eq!(resolve_input(input), None, "{input}");
+        }
+        assert_eq!(resolve_input("github.com").as_deref(), Some("https://github.com"));
+        assert_eq!(resolve_input("about:blank").as_deref(), Some("about:blank"));
+        assert!(resolve_input("rust borrow checker").unwrap().starts_with("https://www.google.com/search?q="));
+        assert_eq!(resolve_input("file:///C:/Docs/x.html").as_deref(), Some("file:///C:/Docs/x.html"));
+    }
 }

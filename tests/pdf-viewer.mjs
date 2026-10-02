@@ -163,7 +163,10 @@ try {
   // Link mit target=_blank auf ein PDF: neuer Tab, auch dort der Viewer
   await page(`location.href = ${JSON.stringify(origin + '/links')}`);
   await waitFor(() => page(`!!document.getElementById('pdf')`), 'link page');
-  await page(`document.getElementById('pdf').click()`);
+  // Wirklich klicken: Neue Tabs gibt es nur nach einer Nutzeraktion (ein .click() aus dem Skript blockt Glass wie Chrome)
+  const link = await page(`(()=>{const r=document.getElementById('pdf').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  await page.call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...link });
+  await page.call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...link });
   let second;
   await waitFor(async () => { second = (await targets()).find(t => t.url.endsWith('/Zweites%20Dokument.pdf')); return !!second; }, 'new tab');
   const tab2 = await connect(second);
