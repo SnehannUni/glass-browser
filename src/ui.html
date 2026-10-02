@@ -526,8 +526,9 @@
   .dl .fv-ic { width: 22px; height: 22px; }
   .dl .fv-ic svg { width: 18px; height: 18px; }
   .dl-sub { font-size: 11px; color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dl.failed .dl-sub { color: #ff6961; }
-  .dl.missing .fv-title { color: var(--label-3); text-decoration: line-through; }
+  .dl.dl-failed .dl-sub { color: #ff6961; }
+  .dl.dl-missing .fv-title { color: var(--label-3); text-decoration: line-through; }
+  .dl.dl-held .dl-sub { color: #ffb340; }
   /* Fortschrittsbalken unter dem Namen, solange es lädt */
   .dl-bar { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .14); overflow: hidden; }
   .dl-bar > i { display: block; height: 100%; background: #0a84ff; border-radius: inherit; transition: width .3s; }
@@ -535,7 +536,7 @@
   @keyframes dl-slide { from { translate: -100%; } to { translate: 340%; } }
   /* Knöpfe rechts in der Zeile: beim Laden immer, sonst beim Drüberfahren */
   .dl .rm { opacity: .75; }
-  .dl:not(.progress) .rm { opacity: 0; }
+  .dl:not(.dl-progress) .rm { opacity: 0; }
   .dl:is(:hover, .vh) .rm { opacity: .75; }
   .dl .rm svg { width: 12px; height: 12px; stroke-width: 1.75; }
 
@@ -2657,12 +2658,15 @@
   }
   function downloadRow(d) {
     const row = document.createElement('div');
-    row.className = `fv dl ${d.state}`;
+    // Mit Vorsilbe: „progress“ allein ist schon die Ladeleiste der Adresszeile (`.progress` – unsichtbar)
+    row.className = `fv dl dl-${d.state}${d.held ? ' dl-held' : ''}`;
     row.title = d.url;
     row.innerHTML = `<span class="fv-ic">${svg('file')}</span><span class="fv-text"><span class="fv-title"></span><span class="dl-sub"></span></span>`;
     row.querySelector('.fv-title').textContent = d.name;
     const sub = row.querySelector('.dl-sub');
-    if (d.state === 'progress') {
+    // Ganz angekommen, aber WebView2 hält ihn an (riskanter Dateityp): Behalten geht nur in dessen Download-Fenster
+    if (d.held) sub.textContent = 'Wartet auf Bestätigung – klicken';
+    else if (d.state === 'progress') {
       sub.textContent = progressText(d);
       const bar = document.createElement('span');
       bar.className = `dl-bar${d.total ? '' : ' vague'}`;
@@ -2686,6 +2690,7 @@
     row.addEventListener('click', () => {
       if (d.state === 'done') { dlCmd('open', d.id); closeDownloads(); }
       else if (d.state === 'failed' && d.resumable) dlCmd('resume', d.id);
+      else if (d.held) { dlCmd('confirm', d.id); closeDownloads(); }
     });
     return row;
   }
@@ -2756,9 +2761,17 @@
     clearTimeout(dlTimer);
     dlTimer = setTimeout(closeDownloads, wait);
   };
+  // Ein riskanter Download (Programm), der noch läuft, meldet sich womöglich nicht mehr, wenn WebView2 ihn zum Behalten
+  // anhält – solange einmal pro Sekunde nachfragen, damit die Zeile „Wartet auf Bestätigung“ zeigt
+  let dlPoll = 0;
+  function pollHeld() {
+    clearTimeout(dlPoll);
+    if (downloads.some((d) => d.state === 'progress' && d.confirm && !d.held)) dlPoll = setTimeout(() => dlCmd('poll'), 1000);
+  }
   window.setDownloads = ({ visible, items }, started) => {
     downloads = items;
     dlBtn.hidden = !visible;
+    pollHeld();
     renderDownloadButton();
     renderDownloads(); // auch zugeklappt: beim Aufklappen (und für Tests) stimmt die Liste schon
     if (!started) return;
