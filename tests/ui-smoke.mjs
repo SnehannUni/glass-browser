@@ -524,7 +524,17 @@ try {
   await call('Page.addScriptToEvaluateOnNewDocument', { source: contentScript });
   await call('Page.navigate', { url: 'https://glass-autofill.test/' });
   await waitFor(`!!document.getElementById('user')`);
+  // A page's own focus() reports nothing (it could summon the picker under the user's next click) – real clicks do
+  const clickField = async (id) => {
+    const { x, y } = await evaluate(`(()=>{const r=document.getElementById(${JSON.stringify(id)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+  };
   await evaluate(`document.getElementById('user').focus()`);
+  await delay(100);
+  assert.equal(await evaluate(`messages.filter(m=>m.autofill==='focus').length`), 0, 'script focus() reports no login field');
+  await evaluate(`document.getElementById('user').blur()`);
+  await clickField('user');
   await waitFor(`messages.some(m=>m.autofill==='focus')`);
   const token = await evaluate(`messages.find(m=>m.autofill==='focus').token`);
   await evaluate(`__glassAutofillFill('wrong-token',location.origin,'test-user','test-password')`);
@@ -534,15 +544,16 @@ try {
   await evaluate(`__glassAutofillFill(${JSON.stringify(token)},location.origin,'test-user','test-password')`);
   assert.equal(await evaluate(`document.getElementById('user').value`), 'test-user');
   assert.equal(await evaluate(`document.getElementById('pass').value`), 'test-password');
-  await evaluate(`messages.length=0;document.getElementById('signup').focus();document.getElementById('search').focus();document.getElementById('otp').focus()`);
+  await evaluate(`messages.length=0`);
+  for (const id of ['signup', 'search', 'otp']) await clickField(id);
   assert.equal(await evaluate(`messages.filter(m=>m.autofill==='focus').length`), 0);
-  await evaluate(`document.getElementById('pass').focus()`);
-  assert.equal(await evaluate(`messages.filter(m=>m.autofill==='focus').length`), 1);
-  await evaluate(`document.getElementById('search').focus()`);
+  await clickField('pass');
+  await waitFor(`messages.filter(m=>m.autofill==='focus').length === 1`);
+  await clickField('search');
   const stale = await evaluate(`messages.find(m=>m.autofill==='focus').token`);
   await evaluate(`__glassAutofillFill(${JSON.stringify(stale)},location.origin,'changed','changed')`);
   assert.equal(await evaluate(`document.getElementById('pass').value`), 'test-password');
-  console.log('PASS: login detection, signup/OTP exclusion, token/origin checks, stale-focus rejection and synthetic filling.');
+  console.log('PASS: login detection (real clicks only), signup/OTP exclusion, token/origin checks, stale-focus rejection and synthetic filling.');
   console.log('PASS: spacing, shared hovers, stable close icon, toolbar/new-tab suggestions, shortcuts, frame states.');
   await call('Browser.close');
 } finally {

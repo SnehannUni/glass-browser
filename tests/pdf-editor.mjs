@@ -112,7 +112,8 @@ try {
     const before = existsSync(path) ? statSync(path).mtimeMs : 0;
     await page(`document.querySelector(${JSON.stringify(button)}).click()`);
     await waitFor(() => existsSync(path) && statSync(path).mtimeMs !== before, `saved ${file}`);
-    await delay(150);
+    // „Speichern unter“: Der Viewer holt das Ergebnis alle 250 ms ab (pdf.rs, saved/)
+    await delay(400);
     return { fileName: file, ...(await inspect(await readFile(path))) };
   };
   const pageRect = (n) => rect(`#viewer .page[data-page-number="${n}"]`);

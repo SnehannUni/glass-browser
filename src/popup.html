@@ -72,17 +72,18 @@
 
   // Zustand aus popup.rs: Adresse, Titel, Fokus, maximiert
   window.popupState = (s) => {
-    let host = '', secure = false;
+    // Noch keine Adresse (etwa ein about:blank, das der Opener beschreibt): offenes Schloss, kein Titel der Seite
+    let host = 'about:blank', secure = false;
     try {
       const url = new URL(s.url);
       host = url.host || s.url;
-      secure = url.protocol === 'https:';
-    } catch { host = s.url || ''; }
+      secure = url.protocol === 'https:' && !!url.host;
+    } catch { host = s.url || 'about:blank'; }
     $('host').textContent = host;
-    $('title').textContent = s.title && s.title !== host && s.title !== s.url ? s.title : '';
-    document.title = s.title || host;
-    $('lock').classList.toggle('open', !!host && !secure);
-    $('lock').querySelector('.shackle').setAttribute('d', !host || secure ? 'M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7' : 'M5.3 7V5.2a2.7 2.7 0 0 1 5.3-.7');
+    $('title').textContent = s.url && s.title && s.title !== host && s.title !== s.url ? s.title : '';
+    document.title = (s.url && s.title) || host;
+    $('lock').classList.toggle('open', !secure);
+    $('lock').querySelector('.shackle').setAttribute('d', secure ? 'M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7' : 'M5.3 7V5.2a2.7 2.7 0 0 1 5.3-.7');
     $('lock').setAttribute('aria-label', secure ? 'Sichere Verbindung' : 'Nicht sicher');
     $('where').title = s.url || '';
     document.body.classList.toggle('inactive', !s.focused);

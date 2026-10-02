@@ -69,17 +69,29 @@ try {
     assert.equal(await page.evaluate(`(async()=>{const credential=await navigator.credentials.create({publicKey:{challenge:new Uint8Array(32),rp:{name:'Glass test'},user:{id:new Uint8Array([1]),name:'test',displayName:'Test'},pubKeyCredParams:[{type:'public-key',alg:-7}]}});const result=await navigator.credentials.get({mediation:'required',publicKey:{challenge:new Uint8Array(32),allowCredentials:[{type:'public-key',id:credential.rawId}]}});return result.id===credential.id})()`),true);
     console.log('PASS: conditional passkey popup disabled; explicit WebAuthn registration/sign-in succeeds.');
   }
+  // Like a user: a real (CDP = trusted) click into the field
+  const clickField = async (selector) => {
+    const point = await page.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+    await page.call('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
+    await page.call('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+  };
   await ui.evaluate(`window.pickerAppeared=false;new MutationObserver(()=>{if(document.getElementById('password-suggestions'))window.pickerAppeared=true}).observe(document.body,{childList:true,subtree:true})`);
+  // A page calling focus() itself must not summon the picker (it could put it right under the user's next click)
   await page.evaluate(`document.getElementById('user').focus()`);
+  await delay(1500);
+  assert.equal(await ui.evaluate(`window.pickerAppeared`), false, 'script focus() does not open the account picker');
+  await page.evaluate(`document.getElementById('user').blur()`);
+  console.log('PASS: script focus() alone opens no account picker.');
+  await clickField('#user');
   if (synthetic) {
     await delay(100);
-    await page.evaluate(`document.querySelector('input[type=password]').focus()`);
+    await clickField('input[type=password]');
     await delay(100);
     await ui.evaluate(`window.testPicker=document.getElementById('password-suggestions')`);
   }
   if (unavailable) {
     await delay(2000);
-    await page.evaluate(`document.querySelector('input[type=password]').focus()`);
+    await clickField('input[type=password]');
     await delay(1000);
     assert.equal(await ui.evaluate(`window.pickerAppeared || !!document.getElementById('password-suggestions')`), false, 'unavailable iCloud never opens even a loading/error popup');
     console.log('PASS: unavailable iCloud stays invisible on username and password focus.');
@@ -93,16 +105,24 @@ try {
   assert.ok(result.includes(synthetic ? 'synthetic-user' : 'Keine passenden Passwörter'), `Native account picker result: ${result}`);
   if (synthetic) {
     assert.equal(await ui.evaluate('window.testPicker'),null,'pending lookup does not show a loading popup');
+    const point = await ui.evaluate(`(()=>{const r=document.querySelector('#password-suggestions button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+    const press = async () => {
+      await ui.call('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
+      await ui.call('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+    };
+    // A real click right as the accounts appear does not count yet (the page could have timed the picker under it)
+    await press();
+    await delay(300);
+    assert.equal(await page.evaluate(`document.querySelector('input[type=password]').value`), '', 'click within 500 ms is ignored');
     // A synthetic click cannot authorize credential filling.
     await ui.evaluate(`document.querySelector('#password-suggestions button').click()`);
     assert.equal(await page.evaluate(`document.querySelector('input[type=password]').value`), '');
-    const point = await ui.evaluate(`(()=>{const r=document.querySelector('#password-suggestions button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
-    await ui.call('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
-    await ui.call('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+    await delay(300);
+    await press();
     for (let i=0;i<50;i++) {if(await page.evaluate(`document.querySelector('input[type=password]').value==='synthetic-password'`))break;await delay(100);}
     assert.equal(await page.evaluate(`document.getElementById('user').value`), 'synthetic-user');
     assert.equal(await page.evaluate(`document.querySelector('input[type=password]').value`), 'synthetic-password');
-    console.log('PASS: trusted native picker fills synthetic credentials; script-generated click rejected.');
+    console.log('PASS: trusted native picker fills synthetic credentials; script-generated and too-early clicks rejected.');
   }
   }
   await page.evaluate(`document.getElementById('user').blur();document.body.dispatchEvent(new Event('scroll'))`);

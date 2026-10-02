@@ -106,8 +106,9 @@ enum UserEvent {
     Favicon(u32, String),
     PageFavicon(u32, String, String),
     Load(u32, bool, String),
-    /// Tab, aus dem das neue Fenster angefordert wurde, und dessen Adresse.
-    NewWindow(u32, String),
+    /// Tab, aus dem das neue Fenster angefordert wurde, dessen Adresse und ob es privat ist. (Privat steht dabei,
+    /// weil der Tab schon zu sein kann, wenn ein Popup von ihm noch Tabs öffnet – privat muss privat bleiben.)
+    NewWindow(u32, String, bool),
     /// Eine Seite (z. B. ein Video) betritt oder verlässt den Vollbildmodus.
     Fullscreen(u32, bool),
     /// In eine Webseite wurde geklickt (sie hat den Tastaturfokus bekommen).
@@ -216,8 +217,9 @@ struct Tab {
     /// Ganz an den Anfang zurückgegangen: der Tab zeigt den Startbildschirm, die Seite wartet
     /// ausgeblendet dahinter – „Vor“ holt sie zurück.
     home: bool,
-    /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`).
-    pending_prompt: Option<String>,
+    /// Prompt, den Glass nach dem Laden selbst eintippt (Anbieter ohne `?q=`, siehe `Search::Typed`), und der Host,
+    /// auf dem er eingetippt werden darf.
+    pending_prompt: Option<(String, String)>,
     /// Seit wann die Seite ausgeblendet ist (`None`: gerade sichtbar). Siehe `sleep_idle_tabs`.
     hidden_since: Cell<Option<Instant>>,
     /// Der Tab ist die Mail-Ansicht (mail.rs): keine eigene Webseite, links die Liste, rechts ein Postfach.
@@ -876,11 +878,23 @@ impl Browser {
         self.activate(((self.active as isize + step).rem_euclid(n)) as usize);
     }
 
+    /// Hat die Seite `id` gerade den Tastaturfokus (aktiver Tab bzw. das gezeigte Postfach, Glass im Vordergrund)?
+    fn keyboard_owner(&self, id: u32) -> bool {
+        let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } == self.window.hwnd() as _;
+        let shown = if self.mail_view_active() {
+            self.mail.shown_tab().is_some_and(|t| t.id == id)
+        } else {
+            self.tabs.get(self.active).is_some_and(|t| t.id == id && t.shows_page())
+        };
+        foreground && shown
+    }
+
     fn navigate_to(&mut self, url: String) {
         let bounds = to_rect(self.content_area());
         let tab = &mut self.tabs[self.active];
         tab.url = url.clone();
         tab.loading = true;
+        tab.pending_prompt = None; // ein noch nicht eingetippter Prompt gehört nicht in die nächste Seite
         // In der Mail-Ansicht eine Adresse eingetippt: Der Tab wird zu einem gewöhnlichen
         if std::mem::take(&mut tab.mail_view) {
             tab.title.clear();
@@ -1145,8 +1159,9 @@ impl Browser {
                 (None, Search::Query(prefix)) => self.navigate_to(format!("{prefix}{}", url_encode(value.trim()))),
                 // Seite öffnen und den Prompt eintippen, sobald sie geladen ist (siehe UserEvent::Load)
                 (None, Search::Typed(home)) => {
-                    self.tabs[self.active].pending_prompt = Some(value.trim().to_owned());
                     self.navigate_to((*home).to_owned());
+                    let host = home.parse::<wry::http::Uri>().ok().and_then(|u| u.host().map(str::to_owned)).unwrap_or_default();
+                    self.tabs[self.active].pending_prompt = Some((value.trim().to_owned(), host));
                 }
             },
             "back" => self.go_back(),
@@ -1293,8 +1308,13 @@ impl Browser {
                     }
                     return self.command(&cmd, &Value::Null);
                 }
+                // Tastenkürzel nur von der Seite, die gerade den Tastaturfokus hat: window.ipc kann jede Seite benutzen –
+                // sonst schlösse etwa ein Hintergrund-Tab mit „close_tab“ den Tab, den man gerade liest.
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
-                    return self.command(&cmd, &Value::Null);
+                    if self.keyboard_owner(from) {
+                        return self.command(&cmd, &Value::Null);
+                    }
+                    return true;
                 }
                 // Eine sichtbare Seite hat gescrollt, während Glas über ihr liegt: Die Oberfläche braucht ein neues Bild
                 if cmd == "scrolled" && !self.overlay.is_empty() && self.panes().iter().any(|(p, _)| self.tabs[*p].id == from) {
@@ -1449,7 +1469,9 @@ impl Browser {
                 }
             }
             UserEvent::Load(id, loading, url) => {
-                if !loading {
+                // Kontonamen vorab laden – nicht für private Tabs: deren Seiten gehen iCloud nichts an
+                let private = self.index_of(id).is_some_and(|i| self.tabs[i].private);
+                if !loading && !private {
                     if let Ok(uri) = url.parse::<wry::http::Uri>() {
                         if uri.scheme_str() == Some("https") {
                             if let Some(host) = uri.host() {
@@ -1464,8 +1486,12 @@ impl Browser {
                         tab.blocked = 0;
                         tab.page_favicon.clear();
                         tab.pdf_viewer = false;
-                    } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
-                        let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
+                    } else if let (Some((prompt, host)), Some(wv)) = (&tab.pending_prompt, &tab.webview) {
+                        // Nur in die Seite des Anbieters tippen – nicht in eine, auf die er weiterleitet (Anmeldung …)
+                        if url.parse::<wry::http::Uri>().ok().and_then(|u| u.host().map(str::to_owned)).as_deref() == Some(host.as_str()) {
+                            let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
+                            tab.pending_prompt = None;
+                        }
                     }
                     tab.hang = Hang::default(); // auch Weiterleitungen: Die Antwort auf die neue Adresse steht noch aus
                     tab.loading = loading;
@@ -1480,12 +1506,11 @@ impl Browser {
             }
             UserEvent::MailSync => self.sync_mail(),
             // Links aus einem privaten Tab öffnen sich wieder privat.
-            UserEvent::NewWindow(from, url) => {
+            UserEvent::NewWindow(from, url, private) => {
                 // Ein Postfach öffnet nur Tabs, solange es in der Mail-Ansicht zu sehen ist (Link in einer Mail)
                 if self.mail.owns(from) && !(self.mail_view_active() && self.mail.shown_tab().is_some_and(|t| t.id == from)) {
                     return true;
                 }
-                let private = self.index_of(from).is_some_and(|i| self.tabs[i].private);
                 self.new_tab(Some(url), private);
                 self.tabs[self.active].popup = true;
             }
@@ -1567,7 +1592,7 @@ fn build_content_webview(
     visible: bool,
 ) -> wry::Result<WebView> {
     let (p_ipc, p_title, p_load, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
-    let opener = opener.clone();
+    let (opener, gestures) = (opener.clone(), opener.clone());
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
     let main_nav = Rc::new(RefCell::new(url.to_owned()));
     let nav = main_nav.clone();
@@ -1633,6 +1658,7 @@ fn build_content_webview(
         // Popups mit Größe (z. B. „Mit Google anmelden“) als eigenes Glass-Fenster, alles andere als neuer Tab
         .with_new_window_req_handler(move |url, features| opener.request(id, private, url, features))
         .build_as_child(window)?;
+    gestures.watch_gestures(&webview.webview());
 
     if !private {
         let proxy = proxy.clone();
