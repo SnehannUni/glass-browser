@@ -542,7 +542,7 @@ impl Browser {
         let url = tab.url.clone();
         tab.hang = Hang::default();
         let old = tab.webview.take();
-        let built = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, tab.private, &url, bounds, false);
+        let built = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, tab.private, &url, bounds, false, false);
         tab.webview = built.ok();
         drop(old);
         let private = tab.private;
