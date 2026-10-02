@@ -34,7 +34,7 @@ document.addEventListener('pointermove', (e) => {
   pointer = { x: e.clientX, y: e.clientY };
   if (!lightFrame) lightFrame = requestAnimationFrame(() => {
     lightFrame = 0;
-    for (const el of document.querySelectorAll('.glass')) if (el.offsetWidth) window.GlassRim.move(el, pointer.x, pointer.y);
+    window.GlassRim.moveAll(document.querySelectorAll('.glass'), pointer.x, pointer.y);
   });
 });
 document.documentElement.addEventListener('pointerleave', () => window.GlassRim.leave());

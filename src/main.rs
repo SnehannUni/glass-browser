@@ -58,6 +58,10 @@ const CONTENT_RADIUS: f64 = 4.0;
 const SPLIT_GAP: f64 = 4.0;
 /// So lange darf ein Tab unsichtbar sein, bevor er schlafen geht (`sleep_idle_tabs`).
 const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Takt von `poll_hover`, solange Glass im Vordergrund ist (ein Bild bei 60 Hz).
+const HOVER_TICK: std::time::Duration = std::time::Duration::from_millis(16);
+/// Ein `UserEvent::HoverTick` ist unterwegs – höchstens einer, auch wenn die Ereignisschleife gerade hängt.
+static HOVER_TICK_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const PROMPT_JS: &str = include_str!("prompt.js");
 
 /// Wie ein Suchanbieter den Text bekommt.
@@ -111,6 +115,8 @@ enum UserEvent {
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
     SleepTabs,
+    /// Mausposition prüfen (siehe `poll_hover` und den Takt-Thread in `main`).
+    HoverTick,
     /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
     Download(u32, downloads::Change),
     /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
@@ -235,6 +241,13 @@ struct Browser {
     overlay: Vec<(String, [f64; 5])>,
     /// Zuletzt an die Oberfläche gemeldete Mausposition (siehe `poll_hover`).
     hover: Option<(i32, i32, bool)>,
+    /// Bildschirmposition des Zeigers bei der letzten vollständigen Prüfung. Steht er still und hat sich am
+    /// Fenster nichts verschoben, spart sich `poll_hover` die Fenstersuche. `None`: beim nächsten Mal neu prüfen.
+    hover_cursor: Cell<Option<(i32, i32)>>,
+    /// Die Oberfläche braucht einen neuen Stand (`sync_ui`) – gesammelt am Ende des Ereignisstapels.
+    ui_dirty: Cell<bool>,
+    /// Tabs, deren Zähler im Schutzschild neu gemeldet werden muss (gesammelt wie `ui_dirty`).
+    blocked_dirty: Vec<u32>,
     split: Option<Split>,
     /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
     update: Option<(u32, String, String)>,
@@ -315,6 +328,7 @@ impl Browser {
             self.layout();
             return;
         }
+        self.hover_cursor.set(None); // die Seiten gleiten unter dem Zeiger weg
         for (i, area) in self.panes() {
             if let Some(wv) = &self.tabs[i].webview {
                 let _ = wv.set_bounds(to_rect(area));
@@ -494,6 +508,8 @@ impl Browser {
             Graphics::Gdi::{CombineRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_DIFF},
             UI::WindowsAndMessaging::GetClientRect,
         };
+        // Neue Regionen ändern, ob unter dem Zeiger eine Webseite oder die Oberfläche liegt
+        self.hover_cursor.set(None);
         let scale = self.window.scale_factor();
         let px = |v: f64| (v * scale).round() as i32;
         let radius = px(CONTENT_RADIUS);
@@ -542,10 +558,15 @@ impl Browser {
             UI::WindowsAndMessaging::{GetAncestor, GetCursorPos, GetParent, WindowFromPoint, GA_ROOT},
         };
         let mut pt = POINT { x: 0, y: 0 };
+        let found = unsafe { GetCursorPos(&mut pt) } != 0;
+        if found && self.hover_cursor.get() == Some((pt.x, pt.y)) {
+            return;
+        }
+        self.hover_cursor.set(found.then_some((pt.x, pt.y)));
         let top = self.window.hwnd() as *mut core::ffi::c_void;
         let mut over_ui = false;
         let over_window = unsafe {
-            GetCursorPos(&mut pt) != 0 && {
+            found && {
                 let hit = WindowFromPoint(pt);
                 !hit.is_null() && GetAncestor(hit, GA_ROOT) == top && {
                     // Liegt eine Webseite unter dem Zeiger? Dann ist deren Container ein Vorfahr des Treffers.
@@ -614,7 +635,27 @@ impl Browser {
         self.sync_geometry();
     }
 
+    /// Für Meldungen, die beim Laden einer Seite schubweise kommen (Titel, Icon, Ladezustand): Die Oberfläche
+    /// bekommt am Ende des Ereignisstapels einen einzigen neuen Stand statt einen pro Meldung.
+    fn sync_ui_soon(&self) {
+        self.ui_dirty.set(true);
+    }
+
+    /// Gesammelte Änderungen an die Oberfläche (siehe `sync_ui_soon`, `blocked_dirty`).
+    fn flush_ui(&mut self) {
+        if self.ui_dirty.get() {
+            self.sync_ui(); // enthält auch die Zähler des Werbeblockers
+            self.blocked_dirty.clear();
+        }
+        for id in std::mem::take(&mut self.blocked_dirty) {
+            if let Some(tab) = self.index_of(id).map(|i| &self.tabs[i]) {
+                let _ = self.ui.evaluate_script(&format!("window.setBlocked?.({id}, {})", tab.blocked));
+            }
+        }
+    }
+
     fn sync_ui(&self) {
+        self.ui_dirty.set(false);
         let tabs: Vec<Value> = self
             .tabs
             .iter()
@@ -1156,6 +1197,10 @@ impl Browser {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             UserEvent::SleepTabs => self.sleep_idle_tabs(),
+            UserEvent::HoverTick => {
+                HOVER_TICK_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
+                self.poll_hover();
+            }
             UserEvent::Download(id, change) => {
                 let started = matches!(change, downloads::Change::Started { .. });
                 if let downloads::Change::Started { fresh: true } = change {
@@ -1220,10 +1265,13 @@ impl Browser {
                 self.window.set_focus();
             }
             // Zähler nur im Schutzschild aktualisieren – ein komplettes sync_ui pro Anfrage wäre zu viel.
+            // Gesperrt wird schubweise: gemeldet wird einmal pro Ereignisstapel (`flush_ui`).
             UserEvent::Blocked(id) => {
                 if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
                     tab.blocked += 1;
-                    let _ = self.ui.evaluate_script(&format!("window.setBlocked?.({id}, {})", tab.blocked));
+                    if !self.blocked_dirty.contains(&id) {
+                        self.blocked_dirty.push(id);
+                    }
                 }
             }
             UserEvent::Cosmetic(id, raw) => {
@@ -1245,7 +1293,7 @@ impl Browser {
                 if let Some(tab) = self.tab_mut(id) {
                     if !tab.private && source == tab.url && favicon::valid_page_icon(&icon) {
                         tab.page_favicon = icon;
-                        self.sync_ui();
+                        self.sync_ui_soon();
                         if self.mail.owns(id) { self.sync_mail(); }
                     }
                 }
@@ -1253,7 +1301,7 @@ impl Browser {
             UserEvent::Favicon(id, icon) => {
                 if let Some(tab) = self.tab_mut(id) {
                     tab.favicon = icon;
-                    self.sync_ui();
+                    self.sync_ui_soon();
                     if self.mail.owns(id) { self.sync_mail(); }
                 }
             }
@@ -1264,7 +1312,7 @@ impl Browser {
                     if let Some(Ok(url)) = tab.webview.as_ref().map(|wv| wv.url()) {
                         tab.url = url;
                     }
-                    self.sync_ui();
+                    self.sync_ui_soon();
                 }
             }
             UserEvent::Load(id, loading, url) => {
@@ -1290,7 +1338,7 @@ impl Browser {
                     if !url.is_empty() {
                         tab.url = url;
                     }
-                    self.sync_ui();
+                    self.sync_ui_soon();
                 }
                 if self.mail.owns(id) {
                     self.mail_loaded(id, loading);
@@ -1712,6 +1760,11 @@ fn resize_direction(value: &str) -> Option<ResizeDirection> {
 
 /// Aktuelles Desktop-Hintergrundbild – die Oberfläche legt es wie macOS hinter das Glas.
 fn wallpaper() -> Option<Vec<u8>> {
+    wallpaper_paths().find_map(|p| std::fs::read(p).ok())
+}
+
+/// Wo das Hintergrundbild liegen kann, in dieser Reihenfolge.
+fn wallpaper_paths() -> impl Iterator<Item = std::path::PathBuf> {
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let mut buf = [0u16; 1024];
@@ -1734,7 +1787,7 @@ fn wallpaper() -> Option<Vec<u8>> {
     // Fallback: die Kopie, die Windows selbst für den Desktop erzeugt.
     let transcoded = std::env::var_os("APPDATA")
         .map(|p| std::path::PathBuf::from(p).join(r"Microsoft\Windows\Themes\TranscodedWallpaper"));
-    registry_path.into_iter().chain(transcoded).find_map(|p| std::fs::read(p).ok())
+    registry_path.into_iter().chain(transcoded)
 }
 
 fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
@@ -1785,7 +1838,8 @@ fn style_frame(window: &Window) {
 
     // Die Oberfläche zeichnet das Wallpaper selbst und rundet ihre Ecken wie Windows (8 px)
     // (siehe `--radius` in ui.html); außerhalb davon ist das Fenster durchsichtig. Acrylic nur als Ersatz.
-    if wallpaper().is_none() && window_vibrancy::apply_acrylic(window, None).is_err() {
+    // Nur nachsehen, ob es eine Datei gibt – lesen (mehrere MB) muss sie erst die Oberfläche (`/wallpaper`).
+    if !wallpaper_paths().any(|p| p.is_file()) && window_vibrancy::apply_acrylic(window, None).is_err() {
         let _ = window_vibrancy::apply_mica(window, Some(true));
     }
 }
@@ -1914,6 +1968,22 @@ fn main() -> wry::Result<()> {
         }
     });
 
+    // Takt für `poll_hover`, solange Glass im Vordergrund ist. Nicht über ControlFlow::WaitUntil: tao wartet dort
+    // nur mit dem groben Windows-Timer (15,6 ms) und überbrückt den Rest aktiv – gemessen ~5 % CPU im Leerlauf.
+    // `thread::sleep` nutzt unter Windows einen hochauflösenden Timer und wartet wirklich.
+    let p_hover = proxy.clone();
+    let hwnd = window.hwnd() as isize;
+    std::thread::spawn(move || loop {
+        let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } as isize == hwnd;
+        std::thread::sleep(if foreground { HOVER_TICK } else { HOVER_TICK * 6 });
+        if foreground
+            && !HOVER_TICK_PENDING.swap(true, std::sync::atomic::Ordering::Relaxed)
+            && p_hover.send_event(UserEvent::HoverTick).is_err()
+        {
+            break;
+        }
+    });
+
     let opener = popup::Opener::new(&window, proxy.clone());
     let icloud = autofill::start(proxy.clone());
     let _ = icloud.send(json!({"id": 0, "op": "probe"}));
@@ -1923,6 +1993,7 @@ fn main() -> wry::Result<()> {
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         mail, downloads, parked: Vec::new(), opener, popups: Vec::new(),
+        hover_cursor: Cell::new(None), ui_dirty: Cell::new(false), blocked_dirty: Vec::new(),
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
@@ -1951,23 +2022,16 @@ fn main() -> wry::Result<()> {
                 *control_flow = ControlFlow::Exit;
             }
         };
-        // Solange das Fenster aktiv ist, regelmäßig die Mausposition prüfen (siehe `poll_hover`)
-        // (Vordergrund statt is_focused(): Hat eine Webseite den Fokus, gilt das Hauptfenster für tao als unfokussiert.)
-        let foreground = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
-            == browser.window.hwnd() as *mut core::ffi::c_void;
         // Gleitet die Leiste gerade, läuft die Schleife ohne Pause – den Takt gibt DwmFlush vor (`slide_chrome`).
-        *control_flow = if browser.chrome_slide.is_some() {
-            ControlFlow::Poll
-        } else if foreground {
-            ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(16))
-        } else {
-            ControlFlow::Wait
-        };
+        // Sonst schläft sie bis zum nächsten Ereignis; die Mausposition stößt der Takt-Thread an (`HoverTick`).
+        // (Vorher alle 16 ms per WaitUntil – das wartet in tao den Rest aktiv ab, siehe oben.)
+        *control_flow = if browser.chrome_slide.is_some() { ControlFlow::Poll } else { ControlFlow::Wait };
         match event {
-            Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. } | tao::event::StartCause::Poll) => {
+            Event::NewEvents(tao::event::StartCause::Poll) => {
                 browser.slide_chrome();
                 browser.poll_hover();
             }
+            Event::MainEventsCleared => browser.flush_ui(),
             // Fenster eines Popups (popup.rs)
             Event::WindowEvent { window_id, event, .. } if window_id != browser.window.id() => {
                 browser.popup_window_event(window_id, event);
@@ -1980,9 +2044,12 @@ fn main() -> wry::Result<()> {
                     browser.sync_ui();
                     browser.sync_geometry();
                 }
-                WindowEvent::Moved(_) => browser.sync_geometry(),
+                WindowEvent::Moved(_) => {
+                    browser.hover_cursor.set(None); // gleiche Bildschirmposition, aber anderer Punkt im Fenster
+                    browser.sync_geometry();
+                }
                 WindowEvent::Focused(focused) => {
-                    browser.sync_ui();
+                    browser.sync_ui_soon();
                     // Zurück aus den Windows-Einstellungen: Hinweis ausblenden, sobald Glass Standard ist
                     if focused {
                         browser.show_default_browser();
