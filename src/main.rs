@@ -2076,7 +2076,7 @@ fn main() -> wry::Result<()> {
         // Verbindungen und DNS-Cache nicht nach Webseite trennen: Nur so kann ein Tab die Verbindung nutzen, die die
         // Oberfläche beim Tippen vorgewärmt hat (warmUp in ui.html). Gemessen: DNS + TLS 0 statt ~60 ms. Cookies bleiben getrennt.
         .with_additional_browser_args(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,PartitionConnectionsByNetworkIsolationKey,SplitHostCacheByNetworkIsolationKey --ui-disable-partial-swap",
+            "--disable-features=msWebOOUI,msPdfOOUI,PartitionConnectionsByNetworkIsolationKey,SplitHostCacheByNetworkIsolationKey --ui-disable-partial-swap",
         )
         .with_ipc_handler(move |req| {
             if req.uri().to_string() == UI_URL {
