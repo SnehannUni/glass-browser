@@ -184,7 +184,8 @@ pub fn pdf_path_from_file_url(url: &str) -> Option<PathBuf> {
 
 /// Schaltet das Abfangen für eine neue WebView ein und ruft danach `ready` auf – erst dann darf sie die erste
 /// Adresse laden, sonst liefe ein PDF in einem neuen Tab (Link mit target=_blank) am Viewer vorbei.
-pub fn intercept(core: &ICoreWebView2, docs: Documents, ready: impl FnOnce() + 'static) {
+/// `answered` erfährt die Adresse jedes Dokuments (Seite oder iframe), dessen Antwort angekommen ist.
+pub fn intercept(core: &ICoreWebView2, docs: Documents, answered: impl Fn(&str) + 'static, ready: impl FnOnce() + 'static) {
     use webview2_com::DevToolsProtocolEventReceivedEventHandler;
     // Als Absender kommt die WebView selbst mit – so hält der Handler keinen eigenen Verweis auf sie.
     let handler = DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |sender, args| {
@@ -192,6 +193,7 @@ pub fn intercept(core: &ICoreWebView2, docs: Documents, ready: impl FnOnce() + '
         let mut raw = PWSTR::null();
         unsafe { args.ParameterObjectAsJson(&mut raw)? };
         let params: Value = serde_json::from_str(&webview2_com::take_pwstr(raw)).unwrap_or_default();
+        answered(params["request"]["url"].as_str().unwrap_or_default());
         paused(&core, &docs, &params);
         Ok(())
     }));
