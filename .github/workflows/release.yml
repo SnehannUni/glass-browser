@@ -1,5 +1,6 @@
 # Baut bei jedem Push auf main die fertige Browser.exe und veröffentlicht sie als Release „build-<Nummer>“.
 # Glass prüft dieses Release beim Start und bietet neuere Versionen im Update-Modal an (src/update.rs).
+# Dazu kommt das Paket für den Microsoft Store (WinterBrowser-Store-build-<Nummer>.msix, siehe store/README.md).
 name: Release
 
 on:
@@ -37,6 +38,19 @@ jobs:
           tool: cargo-about
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 
+      - name: Store-Version bauen
+        # ohne Selbst-Update, Registry-Anmeldung und iCloud-Passwörter; eigener Ordner, damit Browser.exe unverändert bleibt
+        run: cargo build --release --locked --features store --target-dir target-store
+
+      - name: Store-Paket (MSIX)
+        shell: pwsh
+        # Identität aus dem Partner Center (Repository-Variablen); fehlen sie, entsteht ein Testpaket
+        env:
+          STORE_IDENTITY_NAME: ${{ vars.STORE_IDENTITY_NAME }}
+          STORE_PUBLISHER: ${{ vars.STORE_PUBLISHER }}
+          STORE_PUBLISHER_NAME: ${{ vars.STORE_PUBLISHER_NAME }}
+        run: ./store/build-msix.ps1 -Exe target-store/release/glass-browser.exe -Build ${{ github.run_number }} -Out WinterBrowser-Store-build-${{ github.run_number }}.msix
+
       - name: Dateien fürs Release
         shell: pwsh
         # Glass.exe: dieselbe Datei für ältere Installationen (bis Build 4), die noch nach diesem Namen suchen
@@ -48,12 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Glass Build ${{ github.run_number }}
+          name: Winter Browser Build ${{ github.run_number }}
           body: ${{ github.event.head_commit.message }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: |
             Browser.exe
             Glass.exe
+            WinterBrowser-Store-build-${{ github.run_number }}.msix
             THIRD_PARTY_LICENSES.html
             LICENSE

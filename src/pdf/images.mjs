@@ -104,8 +104,8 @@ export async function addImagePages(pdf, images, { size = 'a4', margin = 0, at =
 /** Ein neues PDF aus den Bildern. */
 export async function pdfFromImages(lib, images, options) {
   const pdf = await lib.PDFDocument.create();
-  pdf.setCreator('Glass');
-  pdf.setProducer('Glass');
+  pdf.setCreator('Winter Browser');
+  pdf.setProducer('Winter Browser');
   await addImagePages(pdf, images, options);
   return pdf.save();
 }

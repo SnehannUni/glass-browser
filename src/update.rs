@@ -15,7 +15,9 @@ const ASSET: &str = "Browser.exe";
 
 /// Nur explizit gekennzeichnete Main-Releases nehmen am Auto-Update teil.
 /// Eine Build-Nummer allein (z. B. in einem lokalen Dev-Build) reicht nicht aus.
+/// Die Store-Version aktualisiert der Microsoft Store – ihr Paketordner ist ohnehin schreibgeschützt.
 pub fn current_build() -> Option<u32> {
+    if cfg!(feature = "store") { return None; }
     release_build(option_env!("GLASS_RELEASE_REF"), option_env!("GLASS_BUILD"))
 }
 
@@ -63,10 +65,10 @@ pub fn install(url: &str) -> Result<(), String> {
     let (exe, old, new) = paths().map_err(|e| e.to_string())?;
     std::fs::write(&new, &bytes).map_err(|e| format!("Konnte das Update nicht speichern: {e}"))?;
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old).map_err(|e| format!("Konnte Glass nicht ersetzen: {e}"))?;
+    std::fs::rename(&exe, &old).map_err(|e| format!("Konnte den Browser nicht ersetzen: {e}"))?;
     if let Err(e) = std::fs::rename(&new, &exe) {
         let _ = std::fs::rename(&old, &exe); // alte Version wiederherstellen
-        return Err(format!("Konnte Glass nicht ersetzen: {e}"));
+        return Err(format!("Konnte den Browser nicht ersetzen: {e}"));
     }
     std::process::Command::new(&exe)
         .arg("--wait-pid")
@@ -92,6 +94,7 @@ pub fn startup(args: Vec<String>) -> Vec<String> {
             rest.push(arg);
         }
     }
+    if cfg!(feature = "store") { return rest; }
     if let Ok((exe, old, _)) = paths() {
         let _ = std::fs::remove_file(old);
         if updated { std::thread::spawn(move || refresh_shell_icons(&exe)); }
