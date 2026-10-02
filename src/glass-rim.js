@@ -8,9 +8,8 @@
     for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
     return el;
   }
-  function illuminate(el, state) {
+  function illuminate(el, state, bounds = el.getBoundingClientRect()) {
     const { w, h, radius: r, perimeter: p } = state;
-    const bounds = el.getBoundingClientRect();
     const dx = pointer ? (pointer.x - bounds.left) * w / bounds.width - w / 2 : -1;
     const dy = pointer ? (pointer.y - bounds.top) * h / bounds.height - h / 2 : -1;
     // Distance to the visible rounded shape, not its centre: long controls
@@ -20,8 +19,12 @@
     const qy = Math.abs((pointer?.y ?? bounds.top) - (bounds.top+bounds.height/2)) - (bounds.height/2-radius);
     const distance = Math.max(0, Math.hypot(Math.max(qx,0), Math.max(qy,0)) + Math.min(Math.max(qx,qy),0) - radius);
     const t = Math.min(1, Math.max(0, (distance-24)/256));
-    state.svg.style.setProperty('--rim-proximity', pointer ? String(1-t*t*(3-2*t)) : '0');
-    if (!Number.isFinite(dx + dy)) return;
+    const proximity = pointer ? 1-t*t*(3-2*t) : 0;
+    if (proximity !== state.proximity) state.svg.style.setProperty('--rim-proximity', String(proximity));
+    state.proximity = proximity;
+    // Unsichtbar (Zeiger weit weg, meist über der Webseite): Lichtkanten nicht nachführen. Sonst schriebe jede
+    // Mausbewegung ~100 Attribute pro Glasfläche, und die Oberfläche müsste jedes Bild neu zeichnen.
+    if (!proximity || !Number.isFinite(dx + dy)) return;
     // Project onto the nearest point of the rounded contour. Straight edges
     // preserve the cursor's tangential coordinate; corners use their own centre.
     const W = w - state.thickness, H = h - state.thickness;
@@ -104,7 +107,25 @@
   }
   window.GlassRim = {
     move(el, x, y) { pointer = {x, y}; update(el); const state=states.get(el); if(state) illuminate(el,state); },
-    leave() { pointer = null; document.querySelectorAll('.glass-rim').forEach(svg => svg.style.setProperty('--rim-proximity','0')); }
+    // Alle Flächen auf einmal: erst messen, dann schreiben – abwechselnd erzwänge jede Fläche eine neue Stilberechnung.
+    moveAll(els, x, y) {
+      pointer = {x, y};
+      const lit = [];
+      for (const el of els) {
+        update(el);
+        const state = states.get(el), bounds = state && el.getBoundingClientRect();
+        if (bounds?.width && bounds.height) lit.push([el, state, bounds]);
+      }
+      for (const [el, state, bounds] of lit) illuminate(el, state, bounds);
+    },
+    leave() {
+      pointer = null;
+      document.querySelectorAll('.glass-rim').forEach(svg => {
+        svg.style.setProperty('--rim-proximity','0');
+        const state = states.get(svg.parentNode);
+        if (state) state.proximity = 0;
+      });
+    }
   };
   const sizes = new ResizeObserver(entries => entries.forEach(e => update(e.target)));
   function watch(root) {

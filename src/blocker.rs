@@ -106,9 +106,17 @@ pub fn site_of(url: &str) -> String {
 /// Ist der Blocker für diese Seite abgeschaltet? (Gilt auch für alle Subdomains.)
 pub fn is_allowed(url: &str) -> bool {
     let Some(state) = STATE.get() else { return false };
-    let host = site_of(url);
     let allowed = state.allowed.read().unwrap();
-    allowed.iter().any(|a| host == *a || host.ends_with(&format!(".{a}")))
+    // Läuft für jede Anfrage jeder Seite (`should_block`) – meist ist die Liste leer
+    !allowed.is_empty() && {
+        let host = site_of(url);
+        allowed.iter().any(|a| same_or_subdomain(&host, a))
+    }
+}
+
+/// `host` ist `site` selbst oder eine Subdomain davon.
+fn same_or_subdomain(host: &str, site: &str) -> bool {
+    host.strip_suffix(site).is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }
 
 /// Blocker für die Seite von `url` an- bzw. ausschalten und speichern.
@@ -121,7 +129,7 @@ pub fn toggle(url: &str) {
     let mut allowed = state.allowed.write().unwrap();
     // Auch eine übergeordnete Ausnahme aufheben (z. B. „youtube.com“, wenn man auf „m.youtube.com“ ist).
     let before = allowed.len();
-    allowed.retain(|a| !(site == *a || site.ends_with(&format!(".{a}"))));
+    allowed.retain(|a| !same_or_subdomain(&site, a));
     if allowed.len() == before {
         allowed.insert(site);
     }

@@ -31,3 +31,8 @@ strip = true
 [build-dependencies]
 # Icon und Versionsinfos in die Exe einbetten (build.rs)
 winresource = "0.1"
+
+# Die Exe bleibt klein (opt-level "z"), aber die Bibliotheken laufen mit voller Optimierung: Der Werbeblocker
+# prüft jede Anfrage jeder Seite im UI-Thread. Gemessen: 6,7 → 3,9 µs pro Anfrage, Aufbau der Filter 140 → 75 ms.
+[profile.release.package."*"]
+opt-level = 3

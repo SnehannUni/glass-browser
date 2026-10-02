@@ -221,22 +221,35 @@ try {
   await waitFor(`getComputedStyle(document.getElementById('address'),'::before').opacity==='0'`);
   console.log('PASS: compact icon spacing, neighbour clearance and snappy shared hover motion.');
   // Native cursor updates must move the light over child webviews without hovering the UI behind them.
-  await evaluate(`hoverAt(300, 400, false)`);
+  // The light is the address field's rim highlight; it only tracks while the pointer is close enough to show it.
+  const light = `document.querySelector('#address > .glass-rim .glass-highlights path').getAttribute('stroke-dashoffset')`;
+  const nearAddress = (dx) => `{const r=document.getElementById('address').getBoundingClientRect();hoverAt(r.left+r.width/2+${dx},r.bottom+40,false)}`;
+  await evaluate(nearAddress(-80));
   await delay(40);
-  const firstLight = await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`);
-  await evaluate(`hoverAt(1200, 700, false)`);
+  const firstLight = await evaluate(light);
+  await evaluate(nearAddress(80));
   await delay(40);
-  assert.notEqual(await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`), firstLight);
+  assert.notEqual(await evaluate(light), firstLight);
   assert.equal(await evaluate(`document.querySelectorAll('.vh').length`), 0);
   await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,true)}`);
   assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), true);
   await evaluate(`{const r=document.getElementById('btn-new').getBoundingClientRect();hoverAt(r.x+r.width/2,r.y+r.height/2,false)}`);
   assert.equal(await evaluate(`document.getElementById('btn-new').classList.contains('vh')`), false);
   await delay(40);
-  const lastLight = await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`);
+  const lastLight = await evaluate(light);
   await evaluate(`hoverAt(null)`);
   await delay(40);
-  assert.equal(await evaluate(`document.getElementById('address').style.getPropertyValue('--lx')`), lastLight);
+  assert.equal(await evaluate(light), lastLight);
+  // Far away over a page the highlight is invisible: moving there must not touch the rim at all.
+  await evaluate(nearAddress(0));
+  await delay(40);
+  await evaluate(`hoverAt(200, 700, false)`);
+  await delay(40);
+  const farLight = await evaluate(light);
+  await evaluate(`hoverAt(1100, 760, false)`);
+  await delay(40);
+  assert.equal(await evaluate(light), farLight, 'invisible light is not re-rendered');
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('#address > .glass-rim')).getPropertyValue('--rim-proximity').trim()`), '0');
   console.log('Light follows native page coordinates; UI hover remains separate');
   for (const id of ['btn-private', 'btn-favs', 'btn-new']) {
     await evaluate(`document.getElementById('${id}').classList.add('vh')`);
