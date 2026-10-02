@@ -99,26 +99,39 @@ try {
   await openToolbarMenu();
   assert.equal(await evaluate(`document.getElementById('toolbar-menu').hidden`), false);
   assert.ok(await evaluate(`document.getElementById('toolbar-menu').getBoundingClientRect().right <= innerWidth`));
-  await evaluate(`document.getElementById('toolbar-pin').click();hoverAt(500,500,false)`);
-  assert.equal(await evaluate(`localStorage.getItem('glass.toolbarPinned')`), 'true');
-  await evaluate(`pageScrolled(true)`);
-  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'pinned toolbar survives scrolling down');
-  await openToolbarMenu();
-  assert.equal(await evaluate(`document.getElementById('toolbar-pin').getAttribute('aria-checked')`), 'true');
-  await evaluate(`document.getElementById('toolbar-pin').click();hoverAt(500,500,false)`);
-  await delay(300);
-  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'toolbar stays while nothing scrolls');
-  await evaluate(`pageScrolled(true)`);
-  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), true, 'scrolling down hides the toolbar');
-  await evaluate(`pageScrolled(false)`);
-  assert.equal(await evaluate(`document.body.classList.contains('chrome-hidden')`), false, 'scrolling up brings it back');
-  await evaluate(`pageScrolled(true)`);
-  assert.equal(await evaluate(`localStorage.getItem('glass.toolbarPinned')`), 'false');
-  await evaluate(`hoverAt(500,0,true)`);
-  await openToolbarMenu();
+  assert.equal(await evaluate(`document.getElementById('toolbar-pin').offsetWidth`), 0, 'top toolbar: no collapse entry');
+  assert.equal(await evaluate(`document.activeElement.id`), 'toolbar-side', 'focus starts on the first visible entry');
+  assert.equal(await evaluate(`typeof window.pageScrolled`), 'undefined', 'the toolbar no longer hides on scroll');
   await key('Escape','Escape');
   assert.equal(await evaluate(`document.getElementById('toolbar-menu').hidden`), true);
-  console.log('PASS: toolbar context menu, persisted pin toggle, hide on scroll down, show on scroll up verified.');
+  console.log('PASS: toolbar context menu verified; the toolbar always stays visible.');
+  // Glass over a page shows a picture of it. While it is open the picture keeps being renewed (videos, scrolling),
+  // one capture at a time; the old picture stays until the new one is decoded. Scrolling asks for one right away.
+  const pixel = (color) => `(() => { const c = document.createElement('canvas'); c.width = c.height = 4; const x = c.getContext('2d'); x.fillStyle = '${color}'; x.fillRect(0, 0, 4, 4); return c.toDataURL(); })()`;
+  const shotRequests = `messages.filter(m=>m.cmd==='page_shot').map(m=>m.token)`;
+  const shotImage = `document.querySelector('#page-shot > img:last-child')?.src || ''`;
+  await evaluate(`messages.length=0;render({...structuredClone(testState),panes:[{id:1,x:4,y:42,w:1272,h:774}]});document.getElementById('btn-favs').click()`);
+  const [first] = await evaluate(shotRequests);
+  await evaluate(`pageShot(${first}, 1, ${pixel('red')})`);
+  await waitFor(`document.getElementById('favs').classList.contains('open')`);
+  const red = await evaluate(shotImage);
+  assert.ok(red.includes('data:image/png'), 'picture of the page under the favorites');
+  await waitFor(`${shotRequests}.length === 2`); // renewed by itself
+  await evaluate(`pageMoved()`);
+  await delay(300);
+  const second = await evaluate(shotRequests);
+  assert.equal(second.length, 2, 'one capture at a time');
+  assert.equal(await evaluate(shotImage), red, 'the old picture stays until the new one is there');
+  await evaluate(`pageShot(${second[1]}, 1, ${pixel('blue')})`);
+  await waitFor(`${shotImage} !== ${JSON.stringify(red)}`);
+  await waitFor(`document.querySelectorAll('#page-shot > img').length === 1`); // the old one goes once the new one is drawn
+  assert.equal((await evaluate(shotRequests)).length, 3, 'scrolled meanwhile: the next picture right away');
+  await evaluate(`document.getElementById('btn-favs').click()`);
+  assert.equal(await evaluate(`document.getElementById('favs').classList.contains('open')`), false);
+  await delay(300);
+  assert.equal((await evaluate(shotRequests)).length, 3, 'no more pictures once the favorites are closed');
+  console.log('PASS: the picture under glass keeps up with the page while it is open.');
+  await evaluate(`render(structuredClone(testState))`);
   const swapped = await evaluate(`(()=>{render({...structuredClone(testState),active:2});const r={slot:document.querySelector('#addr-tab .title').textContent,listed:[...document.querySelectorAll('.tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id)};render(structuredClone(testState));return r})()`);
   assert.deepEqual(swapped, { slot: 'Second tab', listed: ['1'] }, 'previous tab returns to the list, new one moves to the field');
   const paired = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:1,right:2};render(s);await new Promise(r=>setTimeout(r,600));const d=document.querySelector('.tab.docked'),a=document.getElementById('address').getBoundingClientRect();const pair=()=>({slot:document.querySelector('#addr-tab .title').textContent,docked:d&&d.dataset.id,gap:d&&Math.round(a.right-d.getBoundingClientRect().right),listed:[...document.querySelectorAll('#tabs .tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id),lens:!document.getElementById('lens').classList.contains('off')});const r=[pair()];s.active=2;render(s);await new Promise(r=>setTimeout(r,600));r.push((({gap,...x})=>x)({...pair(),docked:document.querySelector('.tab.docked')?.dataset.id}));render(structuredClone(testState));await new Promise(r=>setTimeout(r,50));r.push(document.querySelectorAll('.tab.docked').length);return r})()`);
@@ -259,19 +272,25 @@ try {
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
   await key('ArrowDown', 'ArrowDown'); assert.equal(await value(), 'alpha one');
   await key('Escape', 'Escape'); assert.equal(await value(), 'alpha');
-  // Start screen: Tab switches the search provider like turning the wheel clockwise, Shift+Tab goes back
+  // Start screen: Tab opens the wheel and turns it clockwise, Shift+Tab goes back; after a pause it closes again
   const engineName = `document.getElementById('btn-engine').title`;
-  await key('Tab', 'Tab'); assert.match(await evaluate(engineName), /YouTube/, 'Tab turns to the provider coming up from below');
+  const wheelOpen = `document.getElementById('wheel').classList.contains('open') && !document.getElementById('wheel').dataset.closing`;
+  await key('Tab', 'Tab'); await waitFor(`/YouTube/.test(${engineName})`); // turns once the wheel is open (two frames later)
+  assert.ok(await evaluate(`document.querySelector('#wheel .slot.on').getAnimations().some((a) => a.transitionProperty)`), 'the first turn is animated');
+  assert.equal(await evaluate(wheelOpen), true, 'Tab shows the wheel');
+  assert.equal(await evaluate(`document.querySelector('#wheel .slot.on').title`), 'YouTube', 'the wheel turned to it');
   assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'Tab keeps the focus in the field');
   await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/, 'Shift+Tab switches back');
+  await waitFor(`!document.getElementById('wheel').classList.contains('open')`);
+  assert.match(await evaluate(engineName), /Google/, 'after a pause the wheel closes on the chosen provider');
   // Without focus in the field, Tab does not go to the search icon: it focuses the field and switches
   await evaluate(`document.getElementById('addr-input').blur()`);
   await key('Tab', 'Tab'); assert.equal(await evaluate('document.activeElement.id'), 'addr-input', 'first Tab focuses the field');
-  assert.match(await evaluate(engineName), /YouTube/);
+  await waitFor(`/YouTube/.test(${engineName})`);
   await key('Tab', 'Tab', 8); assert.match(await evaluate(engineName), /Google/);
   await evaluate(`(() => { const i = document.getElementById('addr-input'); i.value = 'alpha'; i.dispatchEvent(new Event('input')); })()`);
   await waitFor(`document.querySelectorAll('#suggest.open .sg').length===2`);
-  console.log('PASS: Tab on the start screen switches the search provider.');
+  console.log('PASS: Tab on the start screen turns the visible provider wheel.');
   await evaluate(`document.getElementById('btn-engine').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true}))`);
   assert.equal(await evaluate(`document.getElementById('wheel').classList.contains('open')`),true);
   await key('Escape','Escape');
@@ -328,6 +347,18 @@ try {
   assert.equal(await mailBadge(1102), '2', 'and later mails still count');
   await evaluate(`window.mailState({ boxes: [] })`);
   console.log('PASS: mail badge shows only new mails since the last visit.');
+  // Mail view: a reload button at the top right of the list (only there); it spins while a mailbox loads
+  const mailReload = `document.querySelector('.mv-reload')`;
+  assert.ok(!(await evaluate(`${mailReload}?.offsetWidth`)), 'no mail reload button outside the mail view');
+  const mailReloadState = await evaluate(`(() => { const s = structuredClone(testState); s.tabs.push({ id: 9, title: 'Mail', url: '', page: false, mail: true }); s.active = 9; s.mailView = { x: 4, y: 42, w: 1272, h: 774, pane: { x: 424, y: 42, w: 852, h: 774 } }; render(s);
+    window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: true, unread: 0, loading: true, list: [] }] });
+    const b = ${mailReload}, r = b.getBoundingClientRect(), list = document.getElementById('mailview').getBoundingClientRect();
+    const from = messages.length; b.click();
+    const out = { shown: r.width > 0, inList: b.closest('#mailview .mv-head') !== null, topRight: list.right - r.right < 20 && r.top - list.top < 20, busy: b.classList.contains('busy'), sent: messages.slice(from).map((m) => m.cmd) };
+    window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: false, list: [] }] }); out.unconnected = ${mailReload}.getBoundingClientRect().width > 0;
+    window.mailState({ boxes: [] }); render(structuredClone(testState)); return out; })()`);
+  assert.deepEqual(mailReloadState, { shown: true, inList: true, topRight: true, busy: true, sent: ['reload'], unconnected: true });
+  console.log('PASS: the mail list has a reload button at its top right.');
   // Mouse side buttons over the interface act like the back and forward buttons
   const sideButtons = await evaluate(`(() => { const from = messages.length; for (const button of [3, 4]) document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button }));
     return messages.slice(from).map((m) => m.cmd); })()`);

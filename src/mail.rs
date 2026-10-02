@@ -506,6 +506,20 @@ impl Browser {
         }
     }
 
+    /// Neu laden in der Mail-Ansicht (Knopf oben rechts, F5, Strg+R): alle Postfächer, damit neue Mails in der Liste
+    /// stehen. Rechts steht danach das ganze Postfach – die neu geladene Seite kennt die Leseansicht nicht mehr.
+    pub fn mail_reload(&mut self) {
+        self.mail.reader = false;
+        for b in &mut self.mail.boxes {
+            let Some(wv) = b.tab.as_ref().and_then(|t| t.webview.as_ref()) else { continue };
+            wake(b);
+            let _ = wv.reload();
+            b.reader.set(false);
+            b.heard = Some(Instant::now());
+        }
+        self.mail_layout();
+    }
+
     /// Alle 5 Minuten (und kurz nach dem Start): fehlende Postfächer unsichtbar laden, schlafende aufwecken.
     pub fn mail_tick(&mut self) {
         for p in 0..PROVIDERS.len() {
@@ -545,7 +559,7 @@ impl Browser {
         let id = self.next_id;
         self.next_id += 1;
         let bounds = to_rect(hidden_bounds(self.mail_pane(self.content_area())));
-        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &start, bounds, false) else { return };
+        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, false, &start, bounds, false) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
         deny_notifications(&webview);
         self.watch_downloads(&webview, id, false); // Anhänge laufen über dieselbe Download-Liste

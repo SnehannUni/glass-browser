@@ -102,29 +102,6 @@
     .glass { outline: 1px solid var(--label-2); outline-offset: -1px; }
   }
 
-  /* Zwischenablage-Verlauf nach Strg+V in einer Webseite (clipboard-ui.js) */
-  /* Liquid Glass über der Webseite: Die Linse (glassLens) bricht ein Bild der Seite, das passgenau dahinter liegt
-     (#clipboard-page). Schwarze Tönung, damit der Text auf jeder Seite lesbar bleibt. */
-  #clipboard-history {
-    position: fixed; z-index: 25; width: 320px; padding: 6px; box-sizing: border-box; border-radius: 18px;
-    background: rgba(0, 0, 0, .38); backdrop-filter: blur(4px) saturate(1.3); animation: drop-in .35s var(--ease);
-  }
-  #clipboard-page {
-    position: fixed; z-index: 24; pointer-events: none; background-size: 100% 100%;
-    opacity: 0; transition: opacity .15s var(--ease);
-  }
-  #clipboard-page.ready { opacity: 1; }
-  .clip-head { padding: 4px 12px 4px; font-size: 11px; font-weight: 600; color: var(--label-3); letter-spacing: .02em; }
-  .clip-hint { padding: 6px 12px 3px; font-size: 11px; color: var(--label-3); }
-  .clip-item {
-    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: 12px;
-    color: var(--label-2); cursor: default;
-  }
-  .clip-item.on { background: rgba(255, 255, 255, .12); color: var(--label); }
-  .clip-item:hover:not(.on) { background: rgba(255, 255, 255, .06); }
-  .clip-n { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--label-3); font-variant-numeric: tabular-nums; }
-  .clip-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
   .capsule { height: var(--toolbar-control-height); border-radius: var(--toolbar-control-radius); display: flex; align-items: center; }
 
   /* Gemeinsame Interaktion für alle Symboltasten – ohne Skalierung der SVGs. */
@@ -145,6 +122,7 @@
   :is(#toolbar-menu, #mail-menu)[hidden] { display: none; }
   :is(#toolbar-menu, #mail-menu) .item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
   :is(#toolbar-menu, #mail-menu) .item:is(:hover, :focus-visible) { background: rgba(255,255,255,.15); outline: none; }
+  :is(#toolbar-menu, #mail-menu) .item[hidden] { display: none; }
   #toolbar-menu .item .check { width: 16px; visibility: hidden; }
   #toolbar-menu .item[aria-checked="true"] .check { visibility: visible; }
   /* ---------- Toolbar ---------- */
@@ -156,8 +134,6 @@
     align-items: center; gap: 10px; padding: 0 12px 0 16px;
     transition: transform var(--chrome-slide), opacity var(--chrome-slide);
   }
-  /* Ausgeblendet schiebt die Webseite die Leiste nach oben weg (42 − 4 px Rand) – ihre Unterkante bleibt an der Seite */
-  body.chrome-hidden #toolbar { transform: translateY(-38px); opacity: 0; }
   /* Eine Zeile in drei Teilen: links Vor/Zurück und der aktive Tab (= Adressfeld), in der Mitte die übrigen Tabs, rechts Knöpfe und Fensterknöpfe.
      Die beiden Seiten sind gleich breit – so stehen die Tabs in der Fenstermitte, solange sie Platz haben. */
   /* kein min-width: 0 – die Seiten behalten ihren Platz, schrumpfen müssen die Tabs */
@@ -476,7 +452,7 @@
     backdrop-filter: blur(20px) saturate(1.4) brightness(.8);
   }
   #suggest.open { display: block; animation: drop-in .35s var(--ease); }
-  /* Glas-Popups (Vorschläge, Favoriten, Zwischenablage) rollen nur von oben auf – ohne opacity: Solange ein Element
+  /* Glas-Popups (Vorschläge, Favoriten) rollen nur von oben auf – ohne opacity: Solange ein Element
      mit backdrop-filter halb durchsichtig ist, zeichnet Chromium (GPU) sein Glas nur teilweise (die Liste erschien erst
      links). Ohne transform und ohne Überschwingen: Bewegt oder skaliert, pendelte die Liste am Ende um Bruchteile eines
      Pixels nach und Chromium zeichnete den Text danach neu – sie schien einzurasten. Die Aussparung reicht 40 px über
@@ -485,8 +461,8 @@
     from { clip-path: inset(-40px -40px 100% -40px); }
     to { clip-path: inset(-40px); }
   }
-  /* Vorschläge und Favoriten heben sich deutlich ab – über einer Webseite fällt der Schatten auf deren Bild
-     (#page-shot, SHADOW_ROOM im Skript deckt ihn ab) */
+  /* Vorschläge und Favoriten heben sich deutlich ab. Über einer Webseite ist das Loch nur so groß wie die Fläche selbst:
+     Dort liegt die echte Seite über dem Schatten (ein Schattenrand zeigte sonst unverwischt das Bild der Seite) */
   :is(#suggest, #favs, #dls) {
     box-shadow: inset 0 -10px 18px -14px rgba(255, 255, 255, .08), 0 14px 36px -10px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .22);
     /* Schriftfarbe hier neu setzen: geerbt käme sie fertig (weiß) vom body, .ink-dark griffe dann nicht */
@@ -495,7 +471,7 @@
   /* Bild der Webseite unter Glas, das über ihr liegt (pageShot): unter allem außer dem Wallpaper, die echte Seite
      liegt ohnehin darüber – sichtbar ist es nur in deren Aussparungen */
   #page-shot { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
-  #page-shot > div { position: absolute; border-radius: var(--pane-radius); background-size: 100% 100%; }
+  #page-shot > img { position: absolute; display: block; border-radius: var(--pane-radius); }
   .sg {
     display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 8px; border-radius: 12px;
     color: var(--label-2); white-space: nowrap; overflow: hidden;
@@ -586,6 +562,17 @@
   .mv-head { display: flex; align-items: baseline; gap: 8px; padding: 14px 16px 10px; }
   .mv-head h1 { margin: 0; font-size: 20px; font-weight: 700; }
   .mv-head .sub { color: var(--label-3); font-size: 12px; }
+  /* Postfächer neu laden: rechts oben in der Liste; das Symbol dreht sich, solange eines lädt */
+  .mv-reload {
+    align-self: center; margin: -4px -6px -4px auto; width: 28px; height: 28px; flex: none; border: 0; border-radius: 50%;
+    display: grid; place-items: center; background: transparent; color: var(--label-2);
+    transition: background-color .18s var(--ease), color .18s var(--ease);
+  }
+  .mv-reload svg { width: 14px; height: 14px; }
+  .mv-reload:is(:hover, .vh) { background-color: var(--control-hover); color: var(--label); }
+  .mv-reload:active { background-color: var(--control-pressed); }
+  .mv-reload.busy svg { animation: mail-spin .9s linear infinite; }
+  @keyframes mail-spin { to { rotate: 360deg; } }
   .mv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 6px; scrollbar-width: thin; }
   .mv-list .fv-empty { padding: 16px 12px; }
   /* Rechts, solange kein Postfach dort steht: Hinweis statt leerer Fläche */
@@ -759,7 +746,6 @@
      des Wallpapers – Unschärfe und Lichtbrechung fehlten während der Bewegung und sprängen beim Einrasten an.
      Ganz links draußen ist die Leiste ohnehin nicht mehr zu sehen. */
   body.side-left #toolbar { transition: transform var(--chrome-slide); }
-  body.side-left.chrome-hidden #toolbar { transform: translateX(calc(var(--margin) - var(--chrome-w))); opacity: 1; }
   body.side-left .side { align-self: stretch; }
   /* Raster statt Umbruch: Beim Aufklappen über der Seite ist die Leiste kurz schmal – umgebrochen rutschte
      Vor/Zurück in eine eigene Zeile und das Suchfeld sprang nach unten und wieder hoch */
@@ -872,7 +858,6 @@
     height: var(--strip-h); display: flex; align-items: center; justify-content: flex-end;
     transition: transform var(--chrome-slide);
   }
-  body.side-left.chrome-hidden #sidestrip { transform: translateY(calc(-1 * var(--side-top))); }
   #sidestrip .win { width: 32px; height: var(--strip-h); border-radius: 0; }
   #sidestrip .win:last-child { border-radius: 0 var(--pane-radius) var(--pane-radius) 0; }
   #sidestrip .winctl { gap: 0; margin: 0; }
@@ -949,7 +934,7 @@
   </div>
 
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
-    <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span><span id="toolbar-pin-label">Leiste dauerhaft anzeigen</span></button>
+    <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false" hidden><span class="check" aria-hidden="true">✓</span>Leiste einklappen</button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
     <button id="toolbar-default" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Als Standardbrowser festlegen…</button>
   </div>
@@ -1007,7 +992,6 @@
 <script src="/group-hover.js"></script>
 <script src="/animation-debug.js"></script>
 <script src="/autofill-ui.js"></script>
-<script src="/clipboard-ui.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -1192,7 +1176,6 @@
     // alten Filter erst entfernen, wenn der neue sicher gezeichnet ist
     if (old) requestAnimationFrame(() => requestAnimationFrame(() => old.remove()));
   }
-  window.glassLens = lens; // auch für Glas aus eigenen Skripten (clipboard-ui.js)
   const lensQueue = new Set();
   let lensFrame = 0;
   const resizeObserver = new ResizeObserver((entries) => {
@@ -1762,7 +1745,7 @@
     if (document.body.classList.contains('modal') || !toolbarMenu.hidden || !$('mail-menu').hidden) return;
     e.preventDefault();
     window.focusAddress();
-    switchEngine(e.shiftKey ? 1 : -1);
+    tabWheel(e.shiftKey ? 1 : -1);
   }, true);
   input.addEventListener('keydown', (e) => {
     if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -1773,14 +1756,14 @@
       // Pfeile drehen das offene Rad wie die gebogenen Pfeile darin: rechts/hoch im Uhrzeigersinn, links/runter zurück
       e.preventDefault();
       rotateWheel(e.key === 'ArrowRight' || e.key === 'ArrowUp' ? -1 : 1);
+      closeWheelSoon(); // von Tab geöffnet: Pause beginnt neu
     } else if (e.key === 'Escape') {
       if (suggestBox.classList.contains('open')) { closeSuggest(); input.value = typed; } else input.blur();
     } else if (e.key === 'Tab' && document.body.classList.contains('start')) {
-      // Startbildschirm: Tab wechselt den Suchanbieter – wie das Mausrad im Uhrzeigersinn ums Rad (ist es offen, dreht es
-      // sich mit), Umschalt+Tab zurück. Die Vorschläge wählt man hier mit den Pfeilen.
+      // Startbildschirm: Tab dreht das Rad der Suchanbieter – wie das Mausrad im Uhrzeigersinn, Umschalt+Tab zurück.
+      // Die Vorschläge wählt man hier mit den Pfeilen.
       e.preventDefault();
-      if (wheelOpen) rotateWheel(e.shiftKey ? 1 : -1);
-      else switchEngine(e.shiftKey ? 1 : -1);
+      tabWheel(e.shiftKey ? 1 : -1);
     } else if (['ArrowDown', 'ArrowUp', 'Tab'].includes(e.key) && suggestions.length && suggestBox.classList.contains('open')) {
       e.preventDefault();
       moveSuggestion(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
@@ -2049,16 +2032,28 @@
   }
   // Einen Platz weiterdrehen: -1 im Uhrzeigersinn (von unten rückt der nächste nach), +1 zurück.
   // Beim Bearbeiten nur so weit, dass unter der Spalte ein tauschbarer Kreis liegt (nicht Google).
-  // Tab auf dem Startbildschirm (Rad zu): Anbieter wechseln wie beim Drehen des Rads (step wie rotateWheel). Das Logo
-  // im Feld springt kurz, Vorschläge und Verbindung richten sich gleich nach dem neuen Anbieter.
-  function switchEngine(step) {
-    const n = shown.length;
-    setEngine(shown[(((shown.indexOf(engine) + step) % n) + n) % n]);
-    engineBtn.querySelector('img')?.animate([{ transform: 'scale(.4)' }, { transform: 'scale(1.15)', offset: .6 }, { transform: 'scale(1)' }],
-      { duration: 280, easing: 'ease-out' });
-    refreshSuggest(input.value);
-    warmUp(input.value);
+  // Tab auf dem Startbildschirm: Das Rad klappt auf und dreht einen Platz weiter (step wie rotateWheel) – man sieht,
+  // wohin man wechselt. Hat Tab es geöffnet, dreht es sich nach einer kurzen Pause wieder ein (nicht, solange die Maus
+  // darauf liegt); per Klick geöffnet bleibt es offen. Die Vorschläge richten sich beim Eindrehen nach dem neuen Anbieter.
+  const TAB_WHEEL_IDLE = 1400;
+  let wheelByTab = false, wheelHovered = false;
+  let tabTurn = null; // erster Schritt, der noch auf das Aufklappen wartet
+  function tabWheel(step) {
+    const turn = () => { rotateWheel(step); warmUp(input.value); closeWheelSoon(); };
+    if (tabTurn) { tabTurn(); tabTurn = null; } // schnell hintereinander: den wartenden Schritt nicht verlieren
+    if (wheel.classList.contains('open') && !wheel.dataset.closing) { turn(); return; }
+    openWheel();
+    wheelByTab = true;
+    // openWheel schaltet die Übergänge für zwei Bilder ab (.instant) – erst danach drehen, sonst springt der Kreis
+    tabTurn = turn;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (tabTurn === turn) { tabTurn = null; turn(); } }));
   }
+  function closeWheelSoon() {
+    clearTimeout(wheelTimer);
+    if (wheelByTab && !wheelHovered) wheelTimer = setTimeout(() => closeWheel(), TAB_WHEEL_IDLE);
+  }
+  wheel.addEventListener('pointerenter', () => { wheelHovered = true; clearTimeout(wheelTimer); });
+  wheel.addEventListener('pointerleave', () => { wheelHovered = false; closeWheelSoon(); });
   function rotateWheel(step) {
     const list = wheelEditing ? shown.slice(0, -1) : shown, n = list.length;
     setEngine(list[(((list.indexOf(engine) + step) % n) + n) % n]);
@@ -2086,6 +2081,7 @@
   function openWheel() {
     closeSuggest();
     clearTimeout(wheelTimer);
+    wheelByTab = false;
     slots.forEach((s) => s.getAnimations({ subtree: true }).forEach((a) => a.cancel()));
     delete wheel.dataset.closing;
     wheel.classList.add('open', 'instant');
@@ -2318,10 +2314,12 @@
   // ---------- Glas über der Webseite: Seitenbild und Schatten ----------
   // Die Webseite ist ein eigenes Fenster über der Oberfläche. Wo Vorschläge oder Favoriten über ihr liegen, spart
   // Rust sie aus (overlay) – durch das Loch sähe man nur das Wallpaper. Deshalb liegt dort ein Bild der Seite, das
-  // die Unschärfe des Glases verwischt. Ist es da, wird das Loch um SHADOW_ROOM größer: Der Schatten fällt auf die Seite.
+  // die Unschärfe des Glases verwischt. Das Loch ist nur so groß wie die Glasfläche: Daneben sähe man das Bild
+  // unverwischt – jede Abweichung von der echten Seite (ein Video läuft weiter, die Seite scrollt) stünde dort als
+  // Schicht hinter dem Glas.
   // Das Bild liegt, sobald es da ist, schon ganz unter der Seite (unsichtbar, die echte Seite liegt darüber): Öffnet
   // sich das Loch, ist es längst dekodiert und gezeichnet – sonst blitzte dort kurz das Wallpaper auf.
-  const SHADOW_ROOM = 40, SHOT_WAIT = 250, pageShot = $('page-shot');
+  const SHOT_WAIT = 250, pageShot = $('page-shot');
   let shot = null, shotSeq = 0, covered = null, dropTimer = 0;
   const shotReady = () => !!shot && shot.panes.every((p) => shot.images.has(p.id));
   function requestPageShot() {
@@ -2331,20 +2329,56 @@
     shot = { token: ++shotSeq, panes, images: new Map() };
     send('page_shot', { token: shot.token });
   }
+  // Solange ein Loch offen ist, ändert sich die Seite darunter weiter (Videos, Animationen, Scrollen – auch in Frames):
+  // Das Bild wird laufend erneuert, SHOT_REFRESH nach dem letzten. Scrollt die Seite (Rust meldet es nur, solange ein
+  // Loch offen ist), gleich. Das alte bleibt liegen, bis das neue dekodiert ist – sonst blitzte das Wallpaper.
+  // Nur eine Aufnahme zur Zeit; kommt währenddessen Scrollen dazu, folgt danach sofort noch eine.
+  const SHOT_REFRESH = 120;
+  let refreshTimer = 0;
+  function refreshShot() {
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
+    if (!covered || !shotReady()) return;
+    if (shot.next) { shot.again = true; return; }
+    const panes = (state.panes || []).filter((p) => hasPage(p.id));
+    if (!panes.length) return;
+    shot.next = { token: ++shotSeq, panes, images: new Map() };
+    send('page_shot', { token: shot.next.token });
+  }
+  const refreshShotSoon = () => { if (!refreshTimer) refreshTimer = setTimeout(refreshShot, SHOT_REFRESH); };
+  window.pageMoved = refreshShot;
+  const shotFor = (token) => shot?.token === token ? shot : shot?.next?.token === token ? shot.next : null;
+  // Die neuen Bilder (schon dekodiert, siehe pageShot) über die alten legen; die alten erst entfernen, wenn die neuen
+  // sicher gezeichnet sind (zwei Bilder später) – ein Bild ohne Foto zeigte im Loch kurz das Wallpaper.
+  function paintShot() {
+    const parts = shot.panes.map((p) => {
+      const img = shot.images.get(p.id);
+      Object.assign(img.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
+      return img;
+    });
+    const old = [...pageShot.children].filter((el) => !parts.includes(el));
+    pageShot.append(...parts);
+    if (old.length) requestAnimationFrame(() => requestAnimationFrame(() => old.forEach((el) => el.remove())));
+  }
   window.pageShot = async (token, id, image) => {
-    if (shot?.token !== token || !image) return;
+    if (!shotFor(token) || !image) return;
     const img = new Image();
     img.src = image;
     try { await img.decode(); } catch { return; }
-    if (shot?.token !== token) return;
-    shot.images.set(id, img);
-    if (!shotReady()) return;
-    pageShot.replaceChildren(...shot.panes.map((p) => {
-      const part = document.createElement('div');
-      Object.assign(part.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px`,
-        backgroundImage: `url("${shot.images.get(p.id).src}")` });
-      return part;
-    }));
+    const target = shotFor(token);
+    if (!target) return;
+    target.images.set(id, img);
+    if (!target.panes.every((p) => target.images.has(p.id))) return;
+    // Erneuertes Bild: einfach austauschen, das Loch bleibt, wie es ist
+    if (target !== shot) {
+      const again = shot.again;
+      shot = target;
+      paintShot();
+      updateInk();
+      if (again) refreshShot(); else refreshShotSoon();
+      return;
+    }
+    paintShot();
     if (covered) { coverPage(covered, covered === suggestBox ? suggestMost() : 0); updateInk(); return; }
     // Eine Liste hat auf das Bild gewartet: erst aufrollen, wenn es gezeichnet ist (ein Bild später) – sonst öffnete
     // sich das Loch schon, bevor Chromium es zeigt
@@ -2356,6 +2390,8 @@
   // Bild nicht mehr nötig – erst etwas später entfernen: Schließt sich gerade ein Loch, läge es bis dahin noch darin
   function dropShot() {
     shot = null;
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
     clearTimeout(dropTimer);
     dropTimer = setTimeout(() => { if (!shot) pageShot.replaceChildren(); }, 150);
   }
@@ -2366,7 +2402,7 @@
     const p = shot.panes.find((q) => cx >= q.x && cx <= q.x + q.w && cy >= q.y && cy <= q.y + q.h);
     return p && { ...p, img: shot.images.get(p.id) };
   }
-  // Glasfläche `el` (offen, Lage in left/top) aus der Seite aussparen; mit fertigem Seitenbild samt Schattenrand –
+  // Glasfläche `el` (offen, Lage in left/top) aus der Seite aussparen; mit fertigem Seitenbild –
   // und gleich so hoch, wie sie höchstens wird (`most`): Wächst die Liste, muss Rust die Aussparung nicht erst
   // nachziehen (bis dahin läge die echte Seite ein, zwei Bilder lang über den neuen Zeilen). Darunter liegt ja das Bild.
   function coverPage(el, most = 0) {
@@ -2374,12 +2410,14 @@
     const ready = shotReady();
     const [x, y, w] = [parseFloat(el.style.left), parseFloat(el.style.top), el.offsetWidth];
     const h = ready ? Math.max(el.offsetHeight, most) : el.offsetHeight;
-    const m = ready ? SHADOW_ROOM : 0;
-    send('overlay', { rect: { x: x - m, y: y - m, w: w + 2 * m, h: h + 2 * m, r: 18 + m } });
+    send('overlay', { rect: { x, y, w, h, r: 18 } });
+    if (ready && !shot.next) refreshShotSoon(); // Loch offen: ab jetzt laufend erneuern
   }
   function uncoverPage() {
     if (covered) scheduleInk();
     covered = null;
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
   }
   // Neue Fenstergröße: Die Seiten liegen anders – das alte Bild passte nicht mehr
   addEventListener('resize', () => { dropShot(); if (covered) coverPage(covered); });
@@ -2720,8 +2758,15 @@
     mailBtn.querySelector('.mail-badge').textContent = fresh ? plural(fresh) : '';
     mailBtn.title = !total ? 'Mail' : `Mail – ${fresh ? `${fresh.toLocaleString('de-DE')} neu, ` : ''}${total.toLocaleString('de-DE')} ungelesen`;
   }
+  const mailReload = document.createElement('button');
+  mailReload.type = 'button';
+  mailReload.className = 'mv-reload';
+  mailReload.title = 'Postfächer neu laden (F5)';
+  mailReload.innerHTML = svg('reload');
+  mailReload.addEventListener('click', () => send('reload'));
   window.mailState = (next) => {
     mail = next;
+    mailReload.classList.toggle('busy', mail.boxes.some((b) => b.loading));
     updateMailSeen();
     renderMailBadge();
     if (!mail.boxes.some((b) => b.key === mailFilter)) mailFilter = mailFilter === 'unread' ? 'unread' : 'all';
@@ -2813,6 +2858,7 @@
     head.className = 'mv-head';
     head.innerHTML = '<h1>Mail</h1><span class="sub"></span>';
     head.querySelector('.sub').textContent = unread ? `${unread.toLocaleString('de-DE')} ungelesen` : '';
+    head.append(mailReload);
 
     // Filter: alle, nur ungelesene, einzelne Postfächer (zeigt es auch rechts); „+ Gmail“ verbindet
     const chips = document.createElement('div');
@@ -2986,7 +3032,6 @@
   // Das Licht verfolgt auch die Position über Webseiten. Nur echte UI-Treffer erhalten .vh.
   let vhover = [];
   window.hoverAt = (x, y, overUI = true) => {
-    chromeHover(x, y);
     sideHover(x, y);
     window.GroupHover.at(x, y, overUI);
     trackLight(x, y);
@@ -3101,31 +3146,23 @@
   // Doppelklick in die Lücke: wieder 50 : 50
   divider.addEventListener('dblclick', () => send('split_ratio', { value: 0.5 }));
 
-  // ---------- Leiste oben automatisch ausblenden ----------
-  // Scrollt man eine Webseite nach unten, verschwindet die Leiste, die Seite reicht dann bis an den Rand
-  // (Rust: chrome_hidden). Zurück kommt sie beim Hochscrollen, über den oberen Fensterrand, Strg+L/T/Tab oder beim
-  // Wechsel auf eine andere Website – und bleibt dann, bis wieder nach unten gescrollt wird.
-  const TOOLBAR_PIN_KEY = 'glass.toolbarPinned';
-  let toolbarPinned = false;
-  try { toolbarPinned = localStorage.getItem(TOOLBAR_PIN_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
-  // Leiste links: standardmäßig voll; „Leiste einklappen“ (gleicher Menüeintrag) lässt nur die Tab-Logos stehen
+  // ---------- Menü der Leiste ----------
+  // Die Leiste bleibt immer sichtbar – oben wie links blendet sie sich beim Scrollen nicht aus.
+  // Leiste links: standardmäßig voll; „Leiste einklappen“ lässt nur die Tab-Logos stehen
   const SIDE_COLLAPSED_KEY = 'glass.sideCollapsed';
   let sideCollapsedPref = false;
   try { sideCollapsedPref = localStorage.getItem(SIDE_COLLAPSED_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
   const toolbarMenu = $('toolbar-menu'), toolbarPin = $('toolbar-pin');
-  // Ein Eintrag, je nach Seite: oben „dauerhaft anzeigen“ (sonst blendet sie sich aus), links „einklappen“.
-  // Links fährt sie nie ganz weg.
-  const chromeKept = () => toolbarPinned || sideLeft();
+  // „Leiste einklappen“ gibt es nur links
   function renderToolbarPin() {
-    $('toolbar-pin-label').textContent = sideLeft() ? 'Leiste einklappen' : 'Leiste dauerhaft anzeigen';
-    toolbarPin.setAttribute('aria-checked', String(sideLeft() ? sideCollapsedPref : toolbarPinned));
+    toolbarPin.hidden = !sideLeft();
+    toolbarPin.setAttribute('aria-checked', String(sideCollapsedPref));
   }
   renderToolbarPin();
   function closeToolbarMenu() {
     if (toolbarMenu.hidden) return;
     toolbarMenu.hidden = true;
     send('overlay', { rect: null });
-    showChrome();
   }
   $('toolbar').addEventListener('contextmenu', (e) => {
     if (e.target.closest('button, input, form, .tab, .capsule, a, [role="button"]')) return;
@@ -3137,16 +3174,13 @@
     const y = Math.max(4, Math.min(e.clientY, innerHeight - toolbarMenu.offsetHeight - 4));
     Object.assign(toolbarMenu.style, { left: `${x}px`, top: `${y}px` });
     send('overlay', { rect: { x, y, w: toolbarMenu.offsetWidth, h: toolbarMenu.offsetHeight, r: 12 } });
-    showChrome();
-    toolbarPin.focus({ preventScroll: true });
+    toolbarMenu.querySelector('.item:not([hidden])').focus({ preventScroll: true });
   });
   // Glass bei Windows anmelden und die Einstellungsseite dafür öffnen (wie „Festlegen“ im Hinweis auf dem Startbildschirm)
   $('toolbar-default').addEventListener('click', () => { closeToolbarMenu(); send('default_browser'); });
   toolbarPin.addEventListener('click', () => {
-    try {
-      if (sideLeft()) { sideCollapsedPref = !sideCollapsedPref; localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsedPref)); }
-      else { toolbarPinned = !toolbarPinned; localStorage.setItem(TOOLBAR_PIN_KEY, String(toolbarPinned)); }
-    } catch { /* Sitzungseinstellung */ }
+    sideCollapsedPref = !sideCollapsedPref;
+    try { localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsedPref)); } catch { /* Sitzungseinstellung */ }
     renderToolbarPin();
     closeToolbarMenu();
     toolbarPin.blur();
@@ -3202,7 +3236,6 @@
     closeToolbarMenu();
     toolbarSide.blur();
     applySide(left);
-    showChrome(); // zurück nach oben: sichtbar, bis wieder nach unten gescrollt wird
   });
 
   // Aufgeklappt über der Seite: Rust schneidet die Leiste aus der Webseite aus – Bild für Bild genau so breit,
@@ -3235,7 +3268,7 @@
   // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
   const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
     || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
-    || $('clipboard-history') // Zwischenablage-Liste: Ihr Glas zeigt ein Bild der Seite, die Seite darf nicht gleiten || document.body.matches('.modal, .wheel-open');
+    || document.body.matches('.modal, .wheel-open');
   // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
   let flyoutTimer = 0, flyoutPointer = null;
   function sideHover(x, y) {
@@ -3266,7 +3299,7 @@
     if (toolbarMenu.hidden) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault(); e.stopImmediatePropagation();
-      const items = [...toolbarMenu.querySelectorAll('.item:not(:disabled)')];
+      const items = [...toolbarMenu.querySelectorAll('.item:not(:disabled, [hidden])')];
       const i = items.indexOf(document.activeElement);
       items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus({ preventScroll: true });
     } else if (e.key === 'Escape' || e.key === 'Tab') {
@@ -3276,35 +3309,6 @@
   }, true);
   window.addEventListener('blur', closeToolbarMenu);
   window.addEventListener('resize', closeToolbarMenu);
-  const REVEAL_ZONE = 6;
-  let chromeHidden = false, pointerAt = null;
-  const chromeBusy = () => chromeKept() || !toolbarMenu.hidden || !activeTab()?.page || document.body.classList.contains('start') || editing()
-    || resizeDrag || tabDrag || document.body.matches('.modal, .wheel-open')
-    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
-    || (pointerAt != null && overChrome(pointerAt.x, pointerAt.y)); // Maus ruht auf der Leiste
-  function setChromeHidden(hidden) {
-    hidden = hidden && !chromeKept();
-    if (hidden === chromeHidden) return;
-    chromeHidden = hidden;
-    document.body.classList.toggle('chrome-hidden', hidden);
-    send('chrome_hidden', { value: hidden });
-  }
-  const showChrome = () => setChromeHidden(false);
-  // Scrollrichtung der sichtbaren Seite (content.js → Rust): runter blendet aus, außer gerade ist etwas offen
-  window.pageScrolled = (down) => {
-    if (!down) showChrome();
-    else if (!chromeBusy()) setChromeHidden(true);
-  };
-  // Mausposition von hoverAt: ausgeblendet reicht der Fensterrand (oben bzw. links), eingeblendet hält jede
-  // Bewegung auf der Leiste sie offen
-  function chromeHover(x, y) {
-    pointerAt = x == null || y == null ? null : { x, y };
-    if (!pointerAt) return;
-    const near = chromeHidden ? (sideLeft() ? x : y) < REVEAL_ZONE : overChrome(x, y);
-    if (near) showChrome();
-  }
-  input.addEventListener('focus', showChrome);
-  input.addEventListener('blur', showChrome);
 
   // ---------- Zustand aus Rust ----------
   window.preparePasswordSuggestions = () => { closeSuggest(); closeFavorites(); };
@@ -3312,8 +3316,6 @@
     const switched = next.active !== state.active;
     const wasMail = !switched && !!activeTab()?.mail; // Mail-Ansicht schon vorher (ein leerer Tab wird zu ihr)
     const opened = switched && !state.tabs.some((t) => t.id === next.active); // gerade neu geöffneter Tab
-    const wasHost = switched ? null : hostOf(activeTab()?.url || ''); // Website vor diesem Stand
-    const slideFrom = !!next.chromeHidden !== !!state.chromeHidden ? state.panes : null; // Leiste fährt aus/ein
     state = next;
     if (opened && engine !== ENGINES[0]) { engine = ENGINES[0]; renderEngine(); } // neuer Tab → immer Google
     document.documentElement.style.setProperty('--chrome', `${state.chromeHeight}px`);
@@ -3345,16 +3347,9 @@
     }
     recordSearches();
     renderTabs();
-    renderPanes(slideFrom);
-    if (slideFrom) window.clipboardFollow?.(slideFrom, state.panes || []);
+    renderPanes();
     renderAddress();
     if (switched && empty) window.focusAddress();
-    // Tabwechsel, neuer Tab oder eine andere Website → Leiste zeigen; Startbildschirm → immer sichtbar.
-    // Innerhalb derselben Website (z. B. auf YouTube ein Video öffnen) bleibt sie weg.
-    if (!hasPage) setChromeHidden(false);
-    else if (switched || hostOf(activeTab()?.url || '') !== wasHost) showChrome();
-    // Nach einem Neuladen der Oberfläche kennt Rust womöglich noch den alten Zustand
-    if (!!state.chromeHidden !== chromeHidden) send('chrome_hidden', { value: chromeHidden });
   };
 
   // ---------- Bedienung ----------
