@@ -1,6 +1,8 @@
 // Downloads: WebView2 lädt wie gewohnt in den Downloads-Ordner, nur ohne sein eigenes Fenster. Stattdessen steht rechts
 // oben ein Knopf – erst ab dem ersten Download dieser Sitzung – mit einer Glas-Liste der letzten Downloads (wie die Favoriten).
 // Fertige Downloads aus normalen Tabs merkt sich `GlassBrowser\downloads.json`; private Tabs hinterlassen dort nichts.
+// Ausnahme: Programme & Co. (`needs_confirmation`) hält WebView2 womöglich an, bis man sie behält – das geht nur in seinem
+// eigenen Download-Fenster. Für sie bleibt es deshalb an.
 
 use serde_json::{json, Value};
 use std::{cell::RefCell, path::{Path, PathBuf}, rc::Rc, time::{Duration, Instant}};
@@ -36,13 +38,15 @@ struct Item {
     /// Nur solange er läuft oder sich fortsetzen lässt; danach braucht Glass ihn nicht mehr.
     op: Option<ICoreWebView2DownloadOperation>,
     notified: Instant,
+    /// Riskanter Dateityp: WebView2 zeigt sein Download-Fenster (`needs_confirmation`).
+    confirm: bool,
 }
 
 /// Was die Oberfläche erfahren muss.
 pub enum Change {
     /// Neuer Download. `fresh`: Der Tab hatte davor keine Seite (Link in neuem Tab, eingetippte Adresse) –
-    /// Glass räumt ihn dann wieder ab.
-    Started { fresh: bool },
+    /// Glass räumt ihn dann wieder ab. `confirm`: WebView2 zeigt dafür sein eigenes Download-Fenster.
+    Started { fresh: bool, confirm: bool },
     Updated,
 }
 
@@ -60,6 +64,22 @@ pub struct Downloads {
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Dateitypen, die WebView2 als gefährlich anhalten kann („Dieser Dateityp kann Ihr Gerät beschädigen“), bis man sie
+/// behält oder löscht. Das geht nur in seinem eigenen Download-Fenster – unterdrückt Glass es, hinge der Download für immer.
+/// (Auswahl aus Chromiums Liste ausführbarer Dateitypen unter Windows.)
+fn needs_confirmation(path: &str) -> bool {
+    const RISKY: &[&str] = &[
+        "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "msix", "msixbundle", "appx", "appxbundle", "appinstaller",
+        "application", "appref-ms", "ps1", "psm1", "psd1", "ps1xml", "vb", "vbe", "vbs", "js", "jse", "wsf", "wsh", "wsc",
+        "hta", "cpl", "msc", "jar", "jnlp", "reg", "lnk", "url", "scf", "inf", "dll", "ocx", "sys", "drv", "gadget",
+        "settingcontent-ms", "xbap", "vsix", "crx",
+    ];
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RISKY.iter().any(|r| r.eq_ignore_ascii_case(e)))
 }
 
 fn file_name(path: &str) -> String {
@@ -80,7 +100,7 @@ impl Downloads {
                 Some(Item {
                     id: next_id - 1, tab: 0, name: file_name(&path), path, url: v["url"].as_str().unwrap_or_default().to_owned(),
                     received: size, total: size, state: State::Done, private: false, time: v["time"].as_u64().unwrap_or_default(),
-                    op: None, notified: Instant::now(),
+                    op: None, notified: Instant::now(), confirm: false,
                 })
             })
             .take(KEEP)
@@ -110,9 +130,19 @@ impl Downloads {
                     State::Done => "done",
                     State::Failed => "failed",
                 };
+                // Riskanter Typ: frisch nachsehen – kleine Dateien sind da, bevor sich BytesReceivedChanged meldet
+                let (mut received, mut total) = (i.received, i.total);
+                if let (true, State::Progress, Some(op)) = (i.confirm, i.state, &i.op) {
+                    unsafe {
+                        let _ = op.BytesReceived(&mut received);
+                        let _ = op.TotalBytesToReceive(&mut total);
+                    }
+                }
+                // Vollständig angekommen, aber noch nicht fertig: WebView2 wartet aufs Behalten
+                let held = i.confirm && i.state == State::Progress && total > 0 && received >= total;
                 json!({
-                    "id": i.id, "name": i.name, "url": i.url, "received": i.received, "total": i.total, "state": state,
-                    "time": i.time, "resumable": i.state == State::Failed && i.op.is_some(),
+                    "id": i.id, "name": i.name, "url": i.url, "received": received, "total": total.max(0), "state": state,
+                    "time": i.time, "resumable": i.state == State::Failed && i.op.is_some(), "confirm": i.confirm, "held": held,
                 })
             })
             .collect();
@@ -127,6 +157,16 @@ impl Downloads {
     /// Laufender bzw. fortsetzbarer Download (zum Abbrechen/Fortsetzen – erst aufrufen, wenn `self` nicht mehr geliehen ist).
     pub fn operation(&self, id: u32) -> Option<ICoreWebView2DownloadOperation> {
         self.items.iter().find(|i| i.id == id).and_then(|i| i.op.clone())
+    }
+
+    /// Aus einem privaten Tab?
+    pub fn private(&self, id: u32) -> Option<bool> {
+        self.items.iter().find(|i| i.id == id).map(|i| i.private)
+    }
+
+    /// Aus einem privaten Tab? (Nach dem neuesten Download dieses Tabs.)
+    pub fn private_of_tab(&self, tab: u32) -> Option<bool> {
+        self.items.iter().find(|i| i.tab == tab).map(|i| i.private)
     }
 
     /// Fertige Datei, die es noch gibt.
@@ -205,10 +245,11 @@ pub fn watch(webview: &ICoreWebView2, tab: u32, private: bool, shared: &Shared, 
         let (Some(sender), Some(args)) = (sender, args) else { return Ok(()) };
         unsafe {
             let op = args.DownloadOperation()?;
-            args.SetHandled(true)?; // kein Download-Fenster von WebView2
             let mut path = PWSTR::null();
             args.ResultFilePath(&mut path)?;
             let path = webview2_com::take_pwstr(path);
+            let confirm = needs_confirmation(&path);
+            args.SetHandled(!confirm)?; // sonst kein Download-Fenster von WebView2
             let mut uri = PWSTR::null();
             op.Uri(&mut uri)?;
             let url = webview2_com::take_pwstr(uri);
@@ -230,7 +271,7 @@ pub fn watch(webview: &ICoreWebView2, tab: u32, private: bool, shared: &Shared, 
                 d.session = true;
                 let item = Item {
                     id, tab, name: file_name(&path), path, url, received: 0, total: total.max(0), state: State::Progress,
-                    private, time: now_ms(), op: Some(op.clone()), notified: Instant::now(),
+                    private, time: now_ms(), op: Some(op.clone()), notified: Instant::now(), confirm,
                 };
                 d.items.insert(0, item);
                 // Ältere fertige fallen hinten heraus
@@ -264,12 +305,20 @@ pub fn watch(webview: &ICoreWebView2, tab: u32, private: bool, shared: &Shared, 
                 Ok(())
             }));
             op.add_StateChanged(&state, &mut token)?;
-            notify(Change::Started { fresh });
+            notify(Change::Started { fresh, confirm });
         }
         Ok(())
     }));
     let mut token = 0;
     let _ = unsafe { wv4.add_DownloadStarting(&handler, &mut token) };
+}
+
+/// WebView2s Download-Fenster an dieser WebView öffnen – dort lässt sich ein angehaltener Download behalten.
+/// Es listet alle Downloads des Profils, nicht nur die dieser WebView.
+pub fn open_dialog(webview: &ICoreWebView2) {
+    if let Ok(wv9) = webview.cast::<ICoreWebView2_9>() {
+        let _ = unsafe { wv9.OpenDefaultDownloadDialog() };
+    }
 }
 
 /// Datei mit dem zugehörigen Programm öffnen.
