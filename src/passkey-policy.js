@@ -10,7 +10,7 @@
   const get = navigator.credentials.get;
   navigator.credentials.get = function(options) {
     if (options?.publicKey && options.mediation === 'conditional') {
-      return Promise.reject(new DOMException('Inline passkey suggestions are disabled in Glass.', 'NotSupportedError'));
+      return Promise.reject(new DOMException('Inline passkey suggestions are disabled in Winter Browser.', 'NotSupportedError'));
     }
     return Reflect.apply(get, this, arguments);
   };

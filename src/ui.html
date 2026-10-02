@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<title>Glass UI</title>
+<title>Winter Browser</title>
 <style>
   :root {
     --chrome: 42px;   /* kommt als chromeHeight aus main.rs */
@@ -938,6 +938,7 @@
     <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false" hidden><span class="check" aria-hidden="true">✓</span>Leiste einklappen</button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
     <button id="toolbar-default" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Als Standardbrowser festlegen…</button>
+    <button id="toolbar-privacy" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Datenschutz</button>
   </div>
   <div id="mail-menu" role="menu" aria-label="Postfach" hidden>
     <button id="mail-forget" class="item" type="button" role="menuitem" title="Du bleibst dort angemeldet"></button>
@@ -964,7 +965,7 @@
   <div id="mail-hint"></div>
 
   <div id="default-hint" class="glass">
-    <span>Glass als Standardbrowser verwenden?</span>
+    <span>Winter Browser als Standardbrowser verwenden?</span>
     <button class="up-btn primary" id="dh-set">Festlegen</button>
     <button class="up-btn" id="dh-close" title="Nicht mehr fragen"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
   </div>
@@ -3022,7 +3023,7 @@
     Object.assign(mailHint.style, { left: `${pane.x}px`, top: `${pane.y}px`, width: `${pane.w}px`, height: `${pane.h}px` });
     mailHint.innerHTML = connected.length
       ? '<div><b>Keine Mail ausgewählt</b>Wähle links eine Mail aus – oder ein Postfach, um es ganz zu sehen.</div>'
-      : '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Glass sieht dein Passwort nie.</div>';
+      : '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Winter Browser sieht dein Passwort nie.</div>';
     scheduleInk();
     reportMailList();
   }
@@ -3249,6 +3250,7 @@
   });
   // Glass bei Windows anmelden und die Einstellungsseite dafür öffnen (wie „Festlegen“ im Hinweis auf dem Startbildschirm)
   $('toolbar-default').addEventListener('click', () => { closeToolbarMenu(); send('default_browser'); });
+  $('toolbar-privacy').addEventListener('click', () => { closeToolbarMenu(); send('privacy'); });
   toolbarPin.addEventListener('click', () => {
     sideCollapsedPref = !sideCollapsedPref;
     try { localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsedPref)); } catch { /* Sitzungseinstellung */ }

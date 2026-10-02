@@ -20,7 +20,7 @@ fn session() -> *mut core::ffi::c_void {
     static SESSION: OnceLock<usize> = OnceLock::new();
     *SESSION.get_or_init(|| unsafe {
         let s = WinHttpOpen(
-            wide("Glass").as_ptr(),
+            wide("WinterBrowser").as_ptr(),
             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             std::ptr::null(),
             std::ptr::null(),

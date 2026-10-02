@@ -1,9 +1,10 @@
 # Erzeugt das App-Icon: eine schillernde Farbscheibe (wahlweise in einer Glasschale), vollständig berechnet
 # (keine Bildvorlage), damit jede Größe scharf ist. Schreibt assets/icon.png (1024 px)
 # und assets/glass.ico (jede Größe einzeln gerendert).
-# Aufruf: python tools/make-icon.py
+# Mit --store außerdem die Kacheln und Logos für das Microsoft-Store-Paket nach store/Assets.
+# Aufruf: python tools/make-icon.py [--store]
 from PIL import Image
-import numpy as np, os
+import numpy as np, os, sys
 
 RIM=False   # True: Farbfläche in einer Glasschale mit leerem Abstand; False: nur die Farbfläche, so groß wie möglich
 
@@ -85,8 +86,39 @@ def render(OUT, SS=None, rim=RIM):
     out=np.dstack([np.clip(rgb,0,255),a*255]).astype(np.uint8)
     return Image.fromarray(out,'RGBA').resize((OUT,OUT),Image.LANCZOS)
 
-os.chdir(os.path.join(os.path.dirname(__file__), '..', 'assets'))
+def tile(w, h, share):
+    """Kachel mit durchsichtigem Grund; das Icon nimmt `share` der kürzeren Seite ein und sitzt in der Mitte."""
+    s=max(1, round(min(w, h)*share))
+    img=Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    img.paste(render(s), ((w-s)//2, (h-s)//2))
+    return img
+
+def store_assets():
+    # Dateinamen mit Qualifizierern (scale-, targetsize-) – store/build-msix.ps1 fasst sie mit makepri zusammen.
+    for scale in (100, 200):
+        f=scale/100
+        tile(round(44*f), round(44*f), 1.0).save(f'Square44x44Logo.scale-{scale}.png')
+        tile(round(150*f), round(150*f), 0.66).save(f'Square150x150Logo.scale-{scale}.png')
+        tile(round(310*f), round(150*f), 0.66).save(f'Wide310x150Logo.scale-{scale}.png')
+        tile(round(310*f), round(310*f), 0.66).save(f'Square310x310Logo.scale-{scale}.png')
+        tile(round(71*f), round(71*f), 0.8).save(f'Square71x71Logo.scale-{scale}.png')
+        tile(round(50*f), round(50*f), 1.0).save(f'StoreLogo.scale-{scale}.png')
+        tile(round(620*f), round(300*f), 0.5).save(f'SplashScreen.scale-{scale}.png')
+    # Taskleiste, Startmenü-Liste, Explorer: ohne Kachelhintergrund
+    for size in (16, 24, 32, 48, 256):
+        img=render(size)
+        img.save(f'Square44x44Logo.targetsize-{size}.png')
+        img.save(f'Square44x44Logo.targetsize-{size}_altform-unplated.png')
+    # Für das Partner Center (Store-Eintrag): 300×300
+    render(300).save('StoreListing300.png')
+
+root=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+os.chdir(os.path.join(root, 'assets'))
 render(1024).save('icon.png', optimize=True)
 sizes=[256,128,64,48,40,32,24,20,16]
 frames=[render(s) for s in sizes]
 frames[0].save('glass.ico', format='ICO', sizes=[(s,s) for s in sizes], append_images=frames[1:])
+if '--store' in sys.argv:
+    os.makedirs(os.path.join(root, 'store', 'Assets'), exist_ok=True)
+    os.chdir(os.path.join(root, 'store', 'Assets'))
+    store_assets()
