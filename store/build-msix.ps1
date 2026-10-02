@@ -64,6 +64,12 @@ try {
     # resources.pri: wählt aus den scale-/targetsize-Varianten der Logos die passende
     $config = Join-Path $work 'priconfig.xml'
     Invoke-Tool $makepri createconfig /cf $config /dq de-DE_en-US /pv 10.0.0 /o
+    # Eine einzige resources.pri: Die vorgegebene Aufteilung nach Skalierung (resources.scale-200.pri) gilt nur für
+    # Bundles mit Ressourcenpaketen – in einem einzelnen MSIX lädt Windows sie nicht, die 200-%-Logos fehlten dann.
+    $xml = [xml](Get-Content -Raw $config)
+    $packaging = $xml.resources.SelectSingleNode('packaging')
+    if ($packaging) { [void]$xml.resources.RemoveChild($packaging) }
+    $xml.Save($config)
     Invoke-Tool $makepri new /pr $stage /cf $config /mn (Join-Path $stage 'AppxManifest.xml') /of (Join-Path $stage 'resources.pri') /o
 
     Invoke-Tool $makeappx pack /d $stage /p $Out /o
