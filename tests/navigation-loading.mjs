@@ -32,9 +32,9 @@ const app = spawn(resolve('target/debug/glass-browser.exe'), [origin], {
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
 });
 const sockets = [];
-const watchdog = setTimeout(() => { app.kill(); process.exit(1); }, 45000);
-async function waitFor(check, label) {
-  for (let i = 0; i < 100; i++) { if (await check()) return; await delay(50); }
+const watchdog = setTimeout(() => { app.kill(); process.exit(1); }, 90000);
+async function waitFor(check, label, tries = 100) {
+  for (let i = 0; i < tries; i++) { if (await check()) return; await delay(50); }
   throw new Error(`Timed out: ${label}`);
 }
 async function connect(target) {
@@ -137,6 +137,28 @@ try {
   await waitFor(() => ui(`!document.getElementById('divider').classList.contains('dragging')`), 'focus loss ends the drag');
   await ui.call('Input.dispatchMouseEvent',{type:'mouseReleased',...nextPoint,button:'left',buttons:0,clickCount:1});
   console.log('PASS: focus loss ends a split drag.');
+
+  // Hängende Seiten (`Hang` in main.rs): Ein langsamer Server zählt nicht – die alte Seite antwortet ja weiter …
+  await command('unsplit');
+  await ui(`window.ipc.postMessage(JSON.stringify({cmd:'activate',id:testState.tabs[0].id}))`);
+  // (Die Seite selbst lässt sich währenddessen nicht per DevTools fragen – Chromium stellt das bis zum Ende zurück.)
+  const pageTargets = async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter(t => t.type === 'page' && !t.url.includes('glass.localhost')).map(t => t.id).sort();
+  const before = await pageTargets();
+  await page(`document.getElementById('next').click()`);
+  await waitFor(() => !!held, 'slow request received');
+  await delay(12000);
+  assert.ok(await loading(), 'still loading while the server is slow');
+  release();
+  await waitFor(idle, 'slow page completed');
+  assert.deepEqual(await pageTargets(), before, 'page behind a slow server keeps its WebView');
+  // … eine eingefrorene schon: Die nächste Adresse derselben Website müsste in ihren Prozess und käme nie an
+  await page.call('Runtime.evaluate', { expression: 'setTimeout(() => { for (;;) {} }, 0)' });
+  await ui(`window.ipc.postMessage(JSON.stringify({cmd:'navigate',value:${JSON.stringify(origin + '/after-hang')}}))`);
+  await waitFor(loading, 'navigation away from a frozen page starts');
+  await waitFor(async () => await idle() && (await ui(`testState.tabs[0].url`)) === origin + '/after-hang', 'frozen page replaced by the new address', 500);
+  const fresh = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.url === origin + '/after-hang');
+  assert.ok(fresh && !before.includes(fresh.id), 'the new address runs in a new WebView');
+  console.log('PASS: a slow server is waited for; a frozen page is replaced and the new address loads.');
 } finally {
   clearTimeout(watchdog);
   for (const ws of sockets) ws.close();

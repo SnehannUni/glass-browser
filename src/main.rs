@@ -63,6 +63,11 @@ const HOVER_TICK: std::time::Duration = std::time::Duration::from_millis(16);
 /// Ein `UserEvent::HoverTick` ist unterwegs – höchstens einer, auch wenn die Ereignisschleife gerade hängt.
 static HOVER_TICK_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const PROMPT_JS: &str = include_str!("prompt.js");
+/// So lange darf eine Seite nach der Antwort des Servers brauchen, bis sie zu laden beginnt – sonst hängt ihr
+/// Renderer (`Hang`). Chromium hält einen Renderer nach 5 s ohne Reaktion für eingefroren.
+const HANG_AFTER: std::time::Duration = std::time::Duration::from_secs(8);
+/// Takt der Prüfung (`check_hung`) – nur solange ein Tab lädt.
+const HANG_TICK: std::time::Duration = std::time::Duration::from_millis(2500);
 
 /// Wie ein Suchanbieter den Text bekommt.
 enum Search {
@@ -117,6 +122,12 @@ enum UserEvent {
     SleepTabs,
     /// Mausposition prüfen (siehe `poll_hover` und den Takt-Thread in `main`).
     HoverTick,
+    /// Ladende Tabs auf hängende Seiten prüfen (`check_hung`).
+    HangTick,
+    /// WebView2 meldet: Der Renderer der Seite dieses Tabs reagiert nicht mehr.
+    PageHung(u32),
+    /// Die Antwort des Servers auf die Hauptnavigation ist da (`true`) bzw. die neue Seite beginnt zu laden (`false`).
+    PageAnswered(u32, bool),
     /// Ein Download dieses Tabs hat begonnen oder ist weitergekommen (siehe downloads.rs).
     Download(u32, downloads::Change),
     /// Bild einer sichtbaren Seite für Glas über ihr (Anfrage der Oberfläche, Tab, JPEG als data:-URL).
@@ -213,6 +224,19 @@ struct Tab {
     popup: bool,
     /// Zeigt gerade den PDF-Viewer: bekommt die Lage des Wallpapers (`sync_pdf_walls`).
     pdf_viewer: bool,
+    hang: Hang,
+}
+
+/// Hängt der Renderer einer Seite (Endlosschleife, eingefroren), kommt keine Navigation derselben Website mehr durch:
+/// Die neue Seite muss in denselben Prozess, und der Tab lädt für immer. Edge fragt dann „Seite reagiert nicht“ –
+/// Glass ersetzt die WebView des Tabs durch eine frische (eigener Prozess) und lädt dort die Adresse (`check_hung`).
+/// Erkennbar ist das daran, dass die Antwort des Servers da ist, die neue Seite aber nicht zu laden beginnt.
+/// (Fragen lässt sich die alte Seite währenddessen nicht: DevTools-Befehle und ExecuteScript stellt WebView2 bis zum
+/// neuen Dokument zurück.) Ein langsamer Server zählt so nie – er hat ja noch nicht geantwortet.
+#[derive(Default)]
+struct Hang {
+    /// Seit wann die Antwort auf die laufende Hauptnavigation da ist (die neue Seite aber noch nicht lädt).
+    answered: Option<Instant>,
 }
 
 impl Tab {
@@ -244,6 +268,8 @@ struct Browser {
     /// Bildschirmposition des Zeigers bei der letzten vollständigen Prüfung. Steht er still und hat sich am
     /// Fenster nichts verschoben, spart sich `poll_hover` die Fenstersuche. `None`: beim nächsten Mal neu prüfen.
     hover_cursor: Cell<Option<(i32, i32)>>,
+    /// Ein `UserEvent::HangTick` ist bestellt (`watch_hung`).
+    hang_tick: bool,
     /// Die Oberfläche braucht einen neuen Stand (`sync_ui`) – gesammelt am Ende des Ereignisstapels.
     ui_dirty: Cell<bool>,
     /// Tabs, deren Zähler im Schutzschild neu gemeldet werden muss (gesammelt wie `ui_dirty`).
@@ -469,6 +495,66 @@ impl Browser {
         self.mail_layout();
         self.round_content_views();
         self.sync_pdf_walls();
+    }
+
+    /// Prüfung auf hängende Seiten bestellen (`check_hung`) – ein Thread pro Takt, nur solange ein Tab lädt.
+    fn watch_hung(&mut self) {
+        if std::mem::replace(&mut self.hang_tick, true) {
+            return;
+        }
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(HANG_TICK);
+            let _ = proxy.send_event(UserEvent::HangTick);
+        });
+    }
+
+    /// Tabs, deren Server längst geantwortet hat, deren neue Seite aber nicht zu laden beginnt: Der Renderer hängt.
+    fn check_hung(&mut self) {
+        let hung: Vec<u32> = self
+            .tabs
+            .iter()
+            .filter(|t| t.loading && t.hang.answered.is_some_and(|at| at.elapsed() >= HANG_AFTER))
+            .map(|t| t.id)
+            .collect();
+        for id in hung {
+            self.replace_hung(id);
+        }
+        if self.tabs.iter().any(|t| t.hang.answered.is_some()) {
+            self.watch_hung();
+        }
+    }
+
+    /// Die Seite dieses Tabs hängt: Neue WebView (neuer Renderer-Prozess) mit der Adresse, auf die der Tab wartet.
+    /// Den hängenden Prozess räumt WebView2 ab, sobald keine Seite mehr darin ist. Der Verlauf des Tabs geht dabei
+    /// verloren – sonst bliebe nur, ihn zu schließen.
+    fn replace_hung(&mut self, id: u32) {
+        let Some(i) = self.index_of(id) else { return };
+        let bounds = to_rect(self.content_area());
+        let tab = &mut self.tabs[i];
+        if !tab.loading || tab.webview.is_none() {
+            return;
+        }
+        let url = tab.url.clone();
+        tab.hang = Hang::default();
+        let old = tab.webview.take();
+        let built = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, tab.private, &url, bounds, false);
+        tab.webview = built.ok();
+        drop(old);
+        let private = tab.private;
+        if let Some(wv) = &self.tabs[i].webview {
+            self.watch_downloads(wv, id, private);
+        }
+        self.layout(); // zeigt die neue WebView, wenn der Tab zu sehen ist
+        self.sync_ui();
+    }
+
+    /// WebView2 meldet einen eingefrorenen Renderer (erst, wenn man in die Seite klickt oder tippt). Wartet der Tab
+    /// dabei auf eine Navigation, gleich ersetzen – sonst kann es eine Seite sein, die nur kurz rechnet.
+    fn page_hung(&mut self, id: u32) {
+        if self.index_of(id).is_some_and(|i| self.tabs[i].loading) {
+            self.replace_hung(id);
+        }
     }
 
     /// Legt Tabs schlafen, die seit `SLEEP_AFTER` unsichtbar sind: Skripte und Timer stehen still, der Renderer
@@ -712,7 +798,7 @@ impl Browser {
         // URL gleich mitgeben: sonst hält die Oberfläche den Tab kurz für leer und fokussiert die Suche
         let loading = url.is_some();
         let url_text = url.clone().unwrap_or_default();
-        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false, pdf_viewer: false });
+        self.tabs.push(Tab { id, title: String::new(), favicon: String::new(), page_favicon: String::new(), url: url_text, loading, private, blocked: 0, webview: None, home: false, pending_prompt: None, hidden_since: Cell::new(None), mail_view: false, popup: false, pdf_viewer: false, hang: Hang::default() });
         self.activate(self.tabs.len() - 1);
         match url {
             Some(url) => self.navigate_to(url),
@@ -915,6 +1001,15 @@ impl Browser {
         }
     }
 
+    /// WebView2s Download-Fenster an einer sichtbaren Seite desselben Profils öffnen (normal bzw. privat);
+    /// `false`, wenn gerade keine zu sehen ist.
+    fn open_download_dialog(&self, private: bool) -> bool {
+        let shown = self.panes().into_iter().map(|(i, _)| &self.tabs[i]).find(|t| t.private == private && t.shows_page());
+        let Some(wv) = shown.and_then(|t| t.webview.as_ref()) else { return false };
+        downloads::open_dialog(&wv.webview());
+        true
+    }
+
     /// Bedienung der Download-Liste; die Oberfläche nennt nur die Nummer, Pfade kennt allein Rust.
     fn download_command(&mut self, what: &str, id: Option<u32>) {
         // Erst die Liste loslassen, dann WebView2 aufrufen: Abbrechen meldet sich sofort über `refresh` zurück
@@ -923,6 +1018,21 @@ impl Browser {
         match what {
             "cancel" => { let _ = op.map(|o| unsafe { o.Cancel() }); }
             "resume" => { let _ = op.map(|o| unsafe { o.Resume() }); }
+            // Angehalten (riskanter Dateityp): Behalten geht nur in WebView2s Download-Fenster – zur Not in einem neuen Tab
+            "confirm" => {
+                let Some(private) = id.and_then(|id| self.downloads.borrow().private(id)) else { return };
+                if !self.open_download_dialog(private) {
+                    let tab = &self.tabs[self.active];
+                    if tab.private == private && tab.webview.is_none() && !tab.mail_view {
+                        self.navigate_to("about:blank".into()); // der leere Tab reicht
+                    } else {
+                        self.new_tab(Some("about:blank".into()), private);
+                    }
+                    self.open_download_dialog(private);
+                }
+                return;
+            }
+            "poll" => {} // nur neu melden (siehe `pollHeld` in ui.html)
             "open" => { if let Some(p) = path { downloads::open(&p) } }
             "show" => { if let Some(p) = path { downloads::reveal(&p) } }
             "remove" if id.is_some() => self.downloads.borrow_mut().remove(id),
@@ -1197,19 +1307,40 @@ impl Browser {
                 let _ = self.ui.evaluate_script(&format!("window.updateFailed?.({})", json!(msg)));
             }
             UserEvent::SleepTabs => self.sleep_idle_tabs(),
+            UserEvent::HangTick => {
+                self.hang_tick = false;
+                self.check_hung();
+            }
+            UserEvent::PageHung(id) => self.page_hung(id),
+            UserEvent::PageAnswered(id, answered) => {
+                if let Some(tab) = self.index_of(id).map(|i| &mut self.tabs[i]) {
+                    tab.hang.answered = (answered && tab.loading).then(Instant::now);
+                    if answered {
+                        self.watch_hung();
+                    }
+                }
+            }
             UserEvent::HoverTick => {
                 HOVER_TICK_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
                 self.poll_hover();
             }
             UserEvent::Download(id, change) => {
-                let started = matches!(change, downloads::Change::Started { .. });
-                if let downloads::Change::Started { fresh: true } = change {
-                    self.drop_download_tab(id);
+                let (mut started, mut dialog) = (false, false);
+                if let downloads::Change::Started { fresh, confirm } = change {
+                    started = true;
+                    if fresh {
+                        self.drop_download_tab(id);
+                    }
+                    // Riskanter Dateityp: WebView2 zeigt sein Download-Fenster an der WebView, aus der er kam – die ist
+                    // nach `drop_download_tab` unsichtbar. Dann eben an der Seite, die jetzt zu sehen ist.
+                    let private = self.downloads.borrow().private_of_tab(id);
+                    dialog = confirm && private.is_some_and(|p| self.open_download_dialog(p));
                 }
                 // Fertig: WebViews geschlossener Tabs gehen jetzt wirklich zu
                 let downloads = self.downloads.clone();
                 self.parked.retain(|(tab, _)| downloads.borrow().busy(*tab));
-                self.sync_downloads(started);
+                // Neben WebView2s Fenster klappt die Glas-Liste nicht noch zusätzlich auf
+                self.sync_downloads(started && !dialog);
             }
             UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
             UserEvent::MailTick => self.mail_tick(),
@@ -1334,6 +1465,7 @@ impl Browser {
                     } else if let (Some(prompt), Some(wv)) = (tab.pending_prompt.take(), &tab.webview) {
                         let _ = wv.evaluate_script(&format!("({PROMPT_JS})({})", json!(prompt)));
                     }
+                    tab.hang = Hang::default(); // auch Weiterleitungen: Die Antwort auf die neue Adresse steht noch aus
                     tab.loading = loading;
                     if !url.is_empty() {
                         tab.url = url;
@@ -1488,9 +1620,10 @@ fn build_content_webview(
             let _ = p_title.send_event(UserEvent::Title(id, title));
         })
         .with_on_page_load_handler(move |event, url| {
-            if matches!(event, PageLoadEvent::Finished) {
-                let _ = p_load.send_event(UserEvent::Load(id, false, url));
-            }
+            let _ = p_load.send_event(match event {
+                PageLoadEvent::Started => UserEvent::PageAnswered(id, false), // die neue Seite ist angekommen (`Hang`)
+                PageLoadEvent::Finished => UserEvent::Load(id, false, url),
+            });
         })
         // Popups mit Größe (z. B. „Mit Google anmelden“) als eigenes Glass-Fenster, alles andere als neuer Tab
         .with_new_window_req_handler(move |url, features| opener.request(id, private, url, features))
@@ -1531,9 +1664,16 @@ fn build_content_webview(
     }
 
     let docs = pdf::Documents::default();
-    watch_requests(&webview, ui, proxy, id, main_nav, docs.clone());
+    watch_requests(&webview, ui, proxy, id, main_nav.clone(), docs.clone());
     let (core, first) = (webview.webview(), windows::core::HSTRING::from(url));
-    pdf::intercept(&webview.webview(), docs, move || {
+    let p_answer = proxy.clone();
+    let answered = move |doc: &str| {
+        // DevTools nennt die Adresse ohne #Fragment
+        if main_nav.borrow().split('#').next() == Some(doc) {
+            let _ = p_answer.send_event(UserEvent::PageAnswered(id, true));
+        }
+    };
+    pdf::intercept(&webview.webview(), docs, answered, move || {
         let _ = unsafe { core.Navigate(&first) };
     });
 
@@ -1556,6 +1696,20 @@ fn build_content_webview(
         Ok(())
     }));
     let _ = unsafe { webview.controller().add_GotFocus(&handler, &mut token) };
+
+    // Renderer der Seite eingefroren (siehe `Hang`)
+    let p_hung = proxy.clone();
+    let handler = webview2_com::ProcessFailedEventHandler::create(Box::new(move |_, args| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::*;
+        let Some(args) = args else { return Ok(()) };
+        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+        unsafe { args.ProcessFailedKind(&mut kind)? };
+        if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
+            let _ = p_hung.send_event(UserEvent::PageHung(id));
+        }
+        Ok(())
+    }));
+    let _ = unsafe { webview.webview().add_ProcessFailed(&handler, &mut token) };
     Ok(webview)
 }
 
@@ -1993,7 +2147,7 @@ fn main() -> wry::Result<()> {
         fullscreen: false, was_maximized: false, overlay: Vec::new(), split: None, hover: None, update: None,
         chrome_hidden: false, chrome_left: false, chrome_collapsed: false, chrome_slide: None, animation_rate: 1.0,
         mail, downloads, parked: Vec::new(), opener, popups: Vec::new(),
-        hover_cursor: Cell::new(None), ui_dirty: Cell::new(false), blocked_dirty: Vec::new(),
+        hover_cursor: Cell::new(None), ui_dirty: Cell::new(false), blocked_dirty: Vec::new(), hang_tick: false,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
     let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
