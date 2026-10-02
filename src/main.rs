@@ -915,6 +915,15 @@ impl Browser {
         }
     }
 
+    /// WebView2s Download-Fenster an einer sichtbaren Seite desselben Profils öffnen (normal bzw. privat);
+    /// `false`, wenn gerade keine zu sehen ist.
+    fn open_download_dialog(&self, private: bool) -> bool {
+        let shown = self.panes().into_iter().map(|(i, _)| &self.tabs[i]).find(|t| t.private == private && t.shows_page());
+        let Some(wv) = shown.and_then(|t| t.webview.as_ref()) else { return false };
+        downloads::open_dialog(&wv.webview());
+        true
+    }
+
     /// Bedienung der Download-Liste; die Oberfläche nennt nur die Nummer, Pfade kennt allein Rust.
     fn download_command(&mut self, what: &str, id: Option<u32>) {
         // Erst die Liste loslassen, dann WebView2 aufrufen: Abbrechen meldet sich sofort über `refresh` zurück
@@ -923,6 +932,21 @@ impl Browser {
         match what {
             "cancel" => { let _ = op.map(|o| unsafe { o.Cancel() }); }
             "resume" => { let _ = op.map(|o| unsafe { o.Resume() }); }
+            // Angehalten (riskanter Dateityp): Behalten geht nur in WebView2s Download-Fenster – zur Not in einem neuen Tab
+            "confirm" => {
+                let Some(private) = id.and_then(|id| self.downloads.borrow().private(id)) else { return };
+                if !self.open_download_dialog(private) {
+                    let tab = &self.tabs[self.active];
+                    if tab.private == private && tab.webview.is_none() && !tab.mail_view {
+                        self.navigate_to("about:blank".into()); // der leere Tab reicht
+                    } else {
+                        self.new_tab(Some("about:blank".into()), private);
+                    }
+                    self.open_download_dialog(private);
+                }
+                return;
+            }
+            "poll" => {} // nur neu melden (siehe `pollHeld` in ui.html)
             "open" => { if let Some(p) = path { downloads::open(&p) } }
             "show" => { if let Some(p) = path { downloads::reveal(&p) } }
             "remove" if id.is_some() => self.downloads.borrow_mut().remove(id),
@@ -1202,14 +1226,22 @@ impl Browser {
                 self.poll_hover();
             }
             UserEvent::Download(id, change) => {
-                let started = matches!(change, downloads::Change::Started { .. });
-                if let downloads::Change::Started { fresh: true } = change {
-                    self.drop_download_tab(id);
+                let (mut started, mut dialog) = (false, false);
+                if let downloads::Change::Started { fresh, confirm } = change {
+                    started = true;
+                    if fresh {
+                        self.drop_download_tab(id);
+                    }
+                    // Riskanter Dateityp: WebView2 zeigt sein Download-Fenster an der WebView, aus der er kam – die ist
+                    // nach `drop_download_tab` unsichtbar. Dann eben an der Seite, die jetzt zu sehen ist.
+                    let private = self.downloads.borrow().private_of_tab(id);
+                    dialog = confirm && private.is_some_and(|p| self.open_download_dialog(p));
                 }
                 // Fertig: WebViews geschlossener Tabs gehen jetzt wirklich zu
                 let downloads = self.downloads.clone();
                 self.parked.retain(|(tab, _)| downloads.borrow().busy(*tab));
-                self.sync_downloads(started);
+                // Neben WebView2s Fenster klappt die Glas-Liste nicht noch zusätzlich auf
+                self.sync_downloads(started && !dialog);
             }
             UserEvent::MailReport(id, source, raw) => self.mail_report(id, &source, &raw),
             UserEvent::MailTick => self.mail_tick(),

@@ -1,5 +1,6 @@
 // Downloads end to end: the button appears only after a download, progress ring, glass list, cancel, popup tabs close
-// again, history survives a restart while the button stays hidden until the next download.
+// again, history survives a restart while the button stays hidden until the next download. A program (.exe) that WebView2
+// holds back until it is kept shows as waiting and opens WebView2's own download window.
 // Run after `cargo build`, using Node 22+ on Windows. No npm dependencies.
 // The files land in the real Downloads folder (WebView2's default); the test deletes the ones it created.
 import assert from 'node:assert/strict';
@@ -14,7 +15,8 @@ const profile = await mkdtemp(resolve('target/downloads-smoke/profile-'));
 const tag = `glass-download-test-${Date.now().toString(36)}`;
 const fixture = `<!doctype html><title>Downloads</title>
   <a id="slow" href="/slow.bin">slow</a> <a id="nolen" href="/nolen.zip">nolen</a>
-  <a id="cancel" href="/cancel.bin">cancel</a> <a id="popup" href="/popup.pdf" target="_blank">popup</a>`;
+  <a id="cancel" href="/cancel.bin">cancel</a> <a id="popup" href="/popup.pdf" target="_blank">popup</a>
+  <a id="exe" href="/${tag}-tool.exe">exe</a>`;
 const attach = (name, extra = {}) => ({ 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${tag}-${name}"`, ...extra });
 // Schickt `total` Bytes in Stücken von `chunk` alle `every` ms
 function trickle(res, total, chunk, every) {
@@ -32,6 +34,8 @@ const server = createServer((req, res) => {
   if (path === '/nolen.zip') { res.writeHead(200, attach('nolen.zip')); trickle(res, 300_000, 100_000, 300); return; }
   if (path === '/cancel.bin') { res.writeHead(200, attach('cancel.bin', { 'Content-Length': 5_000_000 })); trickle(res, 5_000_000, 20_000, 200); return; }
   if (/^\/popup\d?\.pdf$/.test(path)) { res.writeHead(200, attach(path.slice(1), { 'Content-Length': 2048 })); res.end(Buffer.alloc(2048, 1)); return; }
+  // Ohne Content-Disposition, wie ein Programm-Link: WebView2 hält es an („Dateityp kann Ihr Gerät beschädigen“)
+  if (path === `/${tag}-tool.exe`) { res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': 4096 }); res.end(Buffer.alloc(4096, 3)); return; }
   if (path === '/favicon.ico') { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }); res.end(fixture);
 });
@@ -94,7 +98,7 @@ async function attach2(match, label) {
   await waitFor(async () => (target = (await targets()).find(t => t.type === 'page' && match(t.url))), label);
   return connect(target);
 }
-const rows = `[...document.querySelectorAll('#dls .dl')].map(r => ({ name: r.querySelector('.fv-title').textContent, cls: r.className, meta: r.querySelector('.dl-sub').textContent }))`;
+const rows = `[...document.querySelectorAll('#dls .dl')].map(r => ({ name: r.querySelector('.fv-title').textContent, cls: r.className, meta: r.querySelector('.dl-sub').textContent, visible: getComputedStyle(r).opacity !== '0' }))`;
 const created = new Set(); // tatsächliche Pfade (der Downloads-Ordner kann verlegt sein)
 const saved = async () => {
   const list = JSON.parse(await readFile(resolve(profile, 'GlassBrowser/downloads.json'), 'utf8').catch(() => '[]'));
@@ -115,6 +119,8 @@ try {
   await waitFor(() => ui(`!document.getElementById('btn-dls').hidden && document.getElementById('btn-dls').classList.contains('busy')`), 'symbol busy');
   await ui(`document.getElementById('btn-dls').click()`);
   await waitFor(async () => (await ui(rows)).some(r => r.cls.includes('progress') && / von /.test(r.meta)), 'progress row');
+  // Früher bekam die Zeile die Klasse der Ladeleiste (`.progress`, unsichtbar) – laufende Downloads waren eine leere Lücke
+  assert.ok((await ui(rows)).filter(r => r.cls.includes('progress')).every(r => r.visible), 'running row visible');
   await waitFor(() => ui(`parseFloat(document.querySelector('#btn-dls .dl-ring circle').style.strokeDashoffset) < 95`), 'ring fills');
   await waitFor(async () => (await ui(rows)).some(r => r.name === `${tag}-slow.bin` && r.cls.includes('done')), 'slow done', 300);
   assert.equal(await ui(`document.getElementById('btn-dls').classList.contains('busy')`), false, 'ring gone after completion');
@@ -128,8 +134,19 @@ try {
   // 3. Abbrechen: Eintrag verschwindet
   await page.click('#cancel');
   await waitFor(async () => (await ui(rows)).some(r => r.name === `${tag}-cancel.bin` && r.cls.includes('progress')), 'cancel running');
-  await ui(`[...document.querySelectorAll('#dls .dl.progress')].find(r => r.textContent.includes('cancel.bin')).querySelector('.rm').click()`);
+  await ui(`[...document.querySelectorAll('#dls .dl.dl-progress')].find(r => r.textContent.includes('cancel.bin')).querySelector('.rm').click()`);
   await waitFor(async () => !(await ui(rows)).some(r => r.name.includes('cancel.bin')), 'canceled row removed');
+
+  // 3b. Programm: WebView2 hält es an, bis man es behält – Glass zeigt das an und lässt WebView2s Fenster offen
+  await page.click('#exe');
+  const exeRow = async () => (await ui(rows)).find(r => r.name === `${tag}-tool.exe`);
+  await waitFor(async () => (await exeRow())?.cls.includes('dl-held'), 'exe waits for confirmation', 200);
+  const held = await exeRow();
+  assert.ok(held.visible && /Bestätigung/.test(held.meta), `held row shown: ${JSON.stringify(held)}`);
+  const hub = await attach2(u => u.startsWith('edge://downloads-hub'), 'WebView2 download window');
+  await waitFor(() => hub(`document.body.innerHTML.length > 0`), 'download window rendered');
+  await ui(`[...document.querySelectorAll('#dls .dl')].find(r => r.textContent.includes('tool.exe')).querySelector('.rm').click()`);
+  await waitFor(async () => !(await exeRow()), 'held exe canceled');
 
   // 4. Download aus einem neuen Tab: der Tab schließt wieder, die Seite bleibt
   const tabs = `document.querySelectorAll('#tabs .tab').length`;
@@ -150,8 +167,8 @@ try {
   const after = await received();
   assert.ok(after && after !== before, `download continues after closing its tab (${before} → ${after})`);
   await ui(`document.getElementById('dls').classList.contains('open') || document.getElementById('btn-dls').click()`);
-  await waitFor(() => ui(`!!document.querySelector('#dls .dl.progress .rm')`), 'cancel button');
-  await ui(`document.querySelector('#dls .dl.progress .rm').click()`);
+  await waitFor(() => ui(`!!document.querySelector('#dls .dl.dl-progress .rm')`), 'cancel button');
+  await ui(`document.querySelector('#dls .dl.dl-progress .rm').click()`);
   await waitFor(async () => !(await ui(rows)).some(r => r.name.includes('cancel.bin')), 'parked download canceled');
 
   const list = await saved();
@@ -184,6 +201,6 @@ try {
   server.close();
   // Nur die eigenen Testdateien entfernen
   const home = process.env.USERPROFILE;
-  for (const name of ['slow.bin', 'nolen.zip', 'popup.pdf', 'popup2.pdf', 'cancel.bin']) created.add(resolve(home, 'Downloads', `${tag}-${name}`));
+  for (const name of ['slow.bin', 'nolen.zip', 'popup.pdf', 'popup2.pdf', 'cancel.bin', 'tool.exe']) created.add(resolve(home, 'Downloads', `${tag}-${name}`));
   for (const path of created) await rm(path, { force: true });
 }
