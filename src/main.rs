@@ -1411,8 +1411,8 @@ impl Browser {
                 }
             }
             UserEvent::OpenUrls(urls) => {
-                for url in urls {
-                    self.new_tab(Some(resolve_input(&url)), false);
+                for url in urls.iter().filter_map(|u| resolve_input(u)) {
+                    self.new_tab(Some(url), false);
                 }
                 self.window.set_minimized(false);
                 self.window.set_focus();
@@ -1909,18 +1909,55 @@ fn as_url(input: &str) -> Option<String> {
     None
 }
 
-/// Adresse oder, wenn es keine ist, Google-Suche (für Adressen auf der Kommandozeile).
-/// Eine vorhandene Datei (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) wird zur file://-Adresse.
-fn resolve_input(input: &str) -> String {
+/// Was Glass beim Start öffnen soll. Links und Dateien startet Windows mit `--single-argument <Adresse>`
+/// (default_browser.rs): Alles danach ist genau eine Adresse – auch wenn sie Anführungszeichen enthält, mit denen
+/// eine fremde App sonst weitere Argumente wie `--wait-pid` anhängen könnte. Nach einem Update wartet `update::startup`
+/// zuerst auf die alte Instanz – beide dürfen WebView2 nicht gleichzeitig öffnen.
+fn launch_args() -> Vec<String> {
+    const SINGLE: &str = " --single-argument ";
+    let raw = unsafe {
+        let line = windows_sys::Win32::System::Environment::GetCommandLineW();
+        let len = (0..).take_while(|&i| *line.add(i) != 0).count();
+        String::from_utf16_lossy(std::slice::from_raw_parts(line, len))
+    };
+    match raw.find(SINGLE) {
+        Some(i) => {
+            update::startup(Vec::new()); // nur aufräumen
+            let url = raw[i + SINGLE.len()..].trim();
+            (!url.is_empty()).then(|| url.to_owned()).into_iter().collect()
+        }
+        None => update::startup(std::env::args().skip(1).collect()),
+    }
+}
+
+/// Netzwerkpfad (`\\server\freigabe`, `file://server/…`)? Schon das Nachsehen, ob es die Datei gibt, meldet Windows
+/// dort mit dem Benutzerkonto an (NTLM) – ein Link von außen darf das nicht auslösen.
+fn network_path(input: &str) -> bool {
+    let s = input.trim().replace('/', "\\").to_ascii_lowercase();
+    let local_drive = |p: &str| p.as_bytes().get(1) == Some(&b':') && p.as_bytes()[0].is_ascii_alphabetic();
+    s.starts_with(r"\\") || s.strip_prefix("file:").is_some_and(|rest| !local_drive(rest.trim_start_matches('\\')))
+}
+
+/// Adresse von außen (Aufruf, andere Instanz) → URL, sonst Google-Suche. Andere Apps bestimmen sie: also nur
+/// Webadressen und Dateien auf lokalen Laufwerken (`Browser.exe C:\Vertrag.pdf`, „Öffnen mit“) – keine data:-,
+/// javascript:- oder Netzwerkadressen.
+fn resolve_input(input: &str) -> Option<String> {
+    if network_path(input) {
+        return None;
+    }
     let path = std::path::Path::new(input.trim());
     if path.is_file() {
-        if let Ok(full) = std::fs::canonicalize(path) {
-            // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse
-            let full = full.to_string_lossy().trim_start_matches(r"\\?\").to_owned();
-            return pdf::file_url(std::path::Path::new(&full));
-        }
+        let full = std::fs::canonicalize(path).ok()?;
+        // canonicalize liefert \\?\C:\… – das Präfix gehört nicht in die Adresse (\\?\UNC\… ist ein Netzwerkpfad)
+        let full = full.to_string_lossy().strip_prefix(r"\\?\").filter(|p| !p.starts_with("UNC\\"))?.to_owned();
+        return Some(pdf::file_url(std::path::Path::new(&full)));
     }
-    as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())))
+    if input.trim() == "about:blank" {
+        return Some("about:blank".into());
+    }
+    let url = as_url(input).unwrap_or_else(|| format!("https://www.google.com/search?q={}", url_encode(input.trim())));
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("file:///")).then_some(url)
 }
 
 fn url_encode(s: &str) -> String {
@@ -2035,11 +2072,11 @@ fn style_frame(window: &Window) {
 
 
 fn main() -> wry::Result<()> {
-    // Nach einem Update zuerst auf die alte Instanz warten – beide dürfen WebView2 nicht gleichzeitig öffnen.
-    let args = update::startup(std::env::args().skip(1).collect());
+    let args = launch_args();
     // Dateien mit vollem Pfad: Das offene Glass hat ein anderes Arbeitsverzeichnis
     let args: Vec<String> = args
         .into_iter()
+        .filter(|a| !network_path(a))
         .map(|a| match std::path::absolute(&a) {
             Ok(path) if path.is_file() => path.display().to_string(),
             _ => a,
@@ -2056,9 +2093,10 @@ fn main() -> wry::Result<()> {
         let p_open = proxy.clone();
         listener.listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
     }
-    // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf).
+    // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf) – nicht eine
+    // Kopie, die jemand aus „Downloads“ startet: Die würde sonst zum Programm für alle Links.
     // Die Store-Version braucht das nicht: Ihr Paketmanifest meldet sie an.
-    if !cfg!(feature = "store") && update::current_build().is_some() {
+    if !cfg!(feature = "store") && update::current_build().is_some() && default_browser::installed() {
         std::thread::spawn(default_browser::register);
     }
 
@@ -2184,7 +2222,7 @@ fn main() -> wry::Result<()> {
         hover_cursor: Cell::new(None), ui_dirty: Cell::new(false), blocked_dirty: Vec::new(), hang_tick: false,
     };
     // `glass-browser.exe https://a.de b.de` öffnet jede Adresse in einem eigenen Tab.
-    let start_urls: Vec<String> = args.iter().map(|a| resolve_input(a)).collect();
+    let start_urls: Vec<String> = args.iter().filter_map(|a| resolve_input(a)).collect();
     if start_urls.is_empty() {
         browser.new_tab(None, false);
     }
@@ -2257,4 +2295,25 @@ fn main() -> wry::Result<()> {
             _ => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{network_path, resolve_input};
+
+    #[test]
+    fn links_from_other_apps_are_web_addresses_or_local_files() {
+        for input in [r"\\server\share\a.pdf", "//server/share/a.pdf", "file://server/share/a.pdf", "file:////server/a.pdf", r"file:\\server\a"] {
+            assert!(network_path(input), "{input}");
+            assert_eq!(resolve_input(input), None, "{input}");
+        }
+        assert!(!network_path("file:///C:/Users/a.pdf") && !network_path(r"C:\a.pdf") && !network_path("https://a.de"));
+        for input in ["data:text/html,<h1>Bank</h1>", "javascript://%0aalert(1)", "ms-settings://x", "about:settings"] {
+            assert_eq!(resolve_input(input), None, "{input}");
+        }
+        assert_eq!(resolve_input("github.com").as_deref(), Some("https://github.com"));
+        assert_eq!(resolve_input("about:blank").as_deref(), Some("about:blank"));
+        assert!(resolve_input("rust borrow checker").unwrap().starts_with("https://www.google.com/search?q="));
+        assert_eq!(resolve_input("file:///C:/Docs/x.html").as_deref(), Some("file:///C:/Docs/x.html"));
+    }
 }

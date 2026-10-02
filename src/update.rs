@@ -108,11 +108,12 @@ pub fn install(release: &Release) -> Result<(), String> {
 pub fn startup(args: Vec<String>) -> Vec<String> {
     let mut rest = Vec::new();
     let mut updated = false;
-    let mut it = args.into_iter();
-    while let Some(arg) = it.next() {
-        if arg == "--wait-pid" {
+    let mut it = args.into_iter().enumerate();
+    while let Some((i, arg)) = it.next() {
+        // Nur so, wie `install` die neue Version startet: als erstes Argument
+        if i == 0 && arg == "--wait-pid" {
             updated = true;
-            if let Some(pid) = it.next().and_then(|p| p.parse().ok()) {
+            if let Some(pid) = it.next().and_then(|(_, p)| p.parse().ok()) {
                 wait_for(pid);
             }
         } else {

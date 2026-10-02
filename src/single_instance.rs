@@ -1,13 +1,79 @@
 //! Links aus anderen Apps im schon offenen Glass öffnen statt in einem zweiten Fenster.
 //! Die erste Instanz belegt gleich beim Start eine Named Pipe und lauscht daran; eine weitere, die mit Adressen
 //! gestartet wird, schickt sie dorthin (eine pro Zeile) und beendet sich.
+//!
+//! Named Pipes gelten für den ganzen Rechner: Die Pipe lässt nur das eigene Benutzerkonto zu, und wer Adressen
+//! schickt, prüft vorher, dass am anderen Ende wirklich ein Prozess desselben Kontos sitzt – sonst könnte ein anderes
+//! Konto die Pipe zuerst belegen, alle Links abgreifen und sich (Impersonation) als dieser Benutzer ausgeben.
 
 use std::io::Write;
+use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
 use windows_sys::Win32::{
-    Foundation::{GetLastError, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE},
-    Storage::FileSystem::{ReadFile, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_INBOUND},
-    System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT},
+    Foundation::{CloseHandle, GetLastError, LocalFree, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE},
+    Security::{
+        Authorization::{ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        EqualSid, GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    },
+    Storage::FileSystem::{ReadFile, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_INBOUND, SECURITY_IDENTIFICATION},
+    System::{
+        Pipes::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT},
+        Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION},
+    },
 };
+
+/// So viel nimmt die Pipe pro Anfrage an, und so viele Tabs öffnet eine Anfrage höchstens.
+const MAX_BYTES: usize = 64 * 1024;
+const MAX_URLS: usize = 20;
+
+/// Benutzer-SID eines Prozesses (Inhalt von `TOKEN_USER`, mit der SID dahinter).
+fn process_user(process: HANDLE) -> Option<Vec<u8>> {
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; 256];
+        let mut len = 0;
+        let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), buf.len() as u32, &mut len) != 0;
+        CloseHandle(token);
+        ok.then_some(buf)
+    }
+}
+
+fn sid_of(user: &[u8]) -> *mut core::ffi::c_void {
+    unsafe { (*(user.as_ptr() as *const TOKEN_USER)).User.Sid }
+}
+
+/// Läuft der Prozess `pid` unter demselben Benutzerkonto wie Glass?
+fn same_user(pid: u32) -> bool {
+    unsafe {
+        let Some(me) = process_user(GetCurrentProcess()) else { return false };
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return false;
+        }
+        let other = process_user(process);
+        CloseHandle(process);
+        other.is_some_and(|other| EqualSid(sid_of(&me), sid_of(&other)) != 0)
+    }
+}
+
+/// Zugriff nur für das eigene Benutzerkonto (SDDL `D:P(A;;GA;;;<SID>)`); `None`, wenn sich das nicht bauen lässt.
+fn own_user_only() -> Option<*mut core::ffi::c_void> {
+    unsafe {
+        let me = process_user(GetCurrentProcess())?;
+        let mut text = std::ptr::null_mut();
+        if ConvertSidToStringSidW(sid_of(&me), &mut text) == 0 {
+            return None;
+        }
+        let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+        LocalFree(text.cast());
+        let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})").encode_utf16().chain([0]).collect();
+        let mut sd = std::ptr::null_mut();
+        (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) != 0).then_some(sd)
+    }
+}
 
 /// Eine Pipe je Datenordner (je Benutzer, und Store- und GitHub-Version getrennt) – Named Pipes gelten für den
 /// ganzen Rechner. Testinstanzen mit eigenem `LOCALAPPDATA` laufen so getrennt neben dem offenen Browser.
@@ -28,6 +94,8 @@ pub fn claim() -> Option<Listener> {
 
 fn claim_name(name: &str) -> Option<Listener> {
     let name: Vec<u16> = name.encode_utf16().chain([0]).collect();
+    let descriptor = own_user_only()?;
+    let attributes = SECURITY_ATTRIBUTES { nLength: size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: descriptor, bInheritHandle: 0 };
     let pipe = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
@@ -37,9 +105,10 @@ fn claim_name(name: &str) -> Option<Listener> {
             0,
             64 * 1024,
             0,
-            std::ptr::null(),
+            &attributes,
         )
     };
+    unsafe { LocalFree(descriptor) };
     (pipe != INVALID_HANDLE_VALUE).then(|| Listener(pipe as isize))
 }
 
@@ -53,10 +122,15 @@ fn forward_to(name: &str, args: &[String]) -> bool {
         return false;
     }
     for _ in 0..40 {
-        match std::fs::OpenOptions::new().write(true).open(name) {
+        // SECURITY_IDENTIFICATION: Die Gegenseite darf sehen, wer schreibt, aber nicht in seinem Namen handeln
+        match std::fs::OpenOptions::new().write(true).security_qos_flags(SECURITY_IDENTIFICATION).open(name) {
             Ok(mut pipe) => {
+                let mut pid = 0;
+                if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) } == 0 || !same_user(pid) {
+                    return false; // fremde Pipe: nichts verraten, selbst starten
+                }
                 // Die andere Instanz darf ihr Fenster nach vorne holen (das darf sonst nur, wer gerade vorne ist).
-                unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(u32::MAX) };
+                unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) };
                 return pipe.write_all(args.join("\n").as_bytes()).is_ok();
             }
             // Gerade bedient sie eine andere Anfrage
@@ -82,14 +156,15 @@ impl Listener {
                     loop {
                         let mut read = 0;
                         let ok = unsafe { ReadFile(pipe, buf.as_mut_ptr(), buf.len() as u32, &mut read, std::ptr::null_mut()) != 0 };
-                        if !ok || read == 0 {
+                        if !ok || read == 0 || data.len() + read as usize > MAX_BYTES {
                             break;
                         }
                         data.extend_from_slice(&buf[..read as usize]);
                     }
                 }
                 unsafe { DisconnectNamedPipe(pipe) };
-                let args: Vec<String> = String::from_utf8_lossy(&data).lines().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect();
+                let args: Vec<String> =
+                    String::from_utf8_lossy(&data).lines().filter(|l| !l.trim().is_empty()).take(MAX_URLS).map(str::to_owned).collect();
                 if !args.is_empty() {
                     on_args(args);
                 }

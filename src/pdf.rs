@@ -196,7 +196,9 @@ pub fn file_url(path: &Path) -> String {
 pub fn pdf_path_from_file_url(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file:///")?;
     let path = percent_decode(rest.split(['?', '#']).next().unwrap_or_default()).replace('/', "\\");
-    path.to_ascii_lowercase().ends_with(".pdf").then(|| PathBuf::from(path))
+    // Nur lokale Laufwerke (C:\…): Bei file:////server/… meldete schon das Lesen Windows dort mit dem Konto an
+    let local = path.as_bytes().get(1) == Some(&b':') && path.as_bytes()[0].is_ascii_alphabetic();
+    (local && path.to_ascii_lowercase().ends_with(".pdf")).then(|| PathBuf::from(path))
 }
 
 // ---------- Abfangen von PDFs aus dem Netz ----------
