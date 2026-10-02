@@ -46,21 +46,23 @@
       </uap:VisualElements>
 
       <Extensions>
-        <!-- Links: so erscheint der Browser unter „Standard-Apps“ (ersetzt die Registry-Einträge aus default_browser.rs) -->
+        <!-- Links: so erscheint der Browser unter „Standard-Apps“ (ersetzt die Registry-Einträge aus default_browser.rs).
+             Wie dort: Alles nach dem Schalter single-argument ist genau eine Adresse (main.rs, launch_args) – ein Link mit
+             Anführungszeichen kann so keine weiteren Startparameter einschleusen. -->
         <uap3:Extension Category="windows.protocol">
-          <uap3:Protocol Name="http" Parameters="&quot;%1&quot;">
+          <uap3:Protocol Name="http" Parameters="--single-argument %1">
             <uap:DisplayName>Winter Browser</uap:DisplayName>
           </uap3:Protocol>
         </uap3:Extension>
         <uap3:Extension Category="windows.protocol">
-          <uap3:Protocol Name="https" Parameters="&quot;%1&quot;">
+          <uap3:Protocol Name="https" Parameters="--single-argument %1">
             <uap:DisplayName>Winter Browser</uap:DisplayName>
           </uap3:Protocol>
         </uap3:Extension>
 
         <!-- Webseiten und PDFs (öffnen im eigenen PDF-Viewer) -->
         <uap3:Extension Category="windows.fileTypeAssociation">
-          <uap3:FileTypeAssociation Name="htmlfile" Parameters="&quot;%1&quot;">
+          <uap3:FileTypeAssociation Name="htmlfile" Parameters="--single-argument %1">
             <uap:DisplayName>Winter Browser HTML-Dokument</uap:DisplayName>
             <uap:SupportedFileTypes>
               <uap:FileType>.htm</uap:FileType>
@@ -70,7 +72,7 @@
           </uap3:FileTypeAssociation>
         </uap3:Extension>
         <uap3:Extension Category="windows.fileTypeAssociation">
-          <uap3:FileTypeAssociation Name="pdffile" Parameters="&quot;%1&quot;">
+          <uap3:FileTypeAssociation Name="pdffile" Parameters="--single-argument %1">
             <uap:DisplayName>Winter Browser PDF-Dokument</uap:DisplayName>
             <uap:SupportedFileTypes>
               <uap:FileType>.pdf</uap:FileType>

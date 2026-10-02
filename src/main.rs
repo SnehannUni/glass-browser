@@ -1616,29 +1616,6 @@ fn build_content_webview(
         .with_initialization_script(include_str!("passkey-policy.js"))
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("mail-content.js"))
-        .with_ipc_handler(move |req| {
-            // Nachrichten kann jede Seite schicken (window.ipc) – übergroße gar nicht erst lesen
-            if req.body().len() > 1024 * 1024 {
-                return;
-            }
-            let body = req.body().clone();
-            // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
-            let event = if body.starts_with('{') {
-                let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
-                if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
-                    UserEvent::PageFavicon(id, req.uri().to_string(), icon.to_owned())
-                } else if msg.get("mail").is_some() {
-                    UserEvent::MailReport(id, req.uri().to_string(), body)
-                } else if msg.get("autofill").is_some() {
-                    UserEvent::AutofillRequest(id, req.uri().to_string(), body)
-                } else if msg.get("pdf").is_some() {
-                    // window.ipc kann jede Seite benutzen – Dateidialog und Fensterlage nur für den PDF-Viewer
-                    if !ipc_docs.is_viewer(&req.uri().to_string()) { return; }
-                    if msg["pdf"] == "open" { UserEvent::PdfOpen } else { UserEvent::PdfViewer(id) }
-                } else { UserEvent::Cosmetic(id, body) }
-            } else { UserEvent::Content(id, body) };
-            let _ = p_ipc.send_event(event);
-        })
         .with_navigation_handler(move |url| {
             // Ein Postfach zeigt keine Adresse: Fremde Seiten (etwa per window.opener.location aus einem Popup) öffnen
             // sich als gewöhnlicher Tab, wo man sieht, wo man ist – sonst stünde eine Phishing-Seite rechts in der
@@ -1672,6 +1649,30 @@ fn build_content_webview(
         .with_new_window_req_handler(move |url, features| opener.request(id, private, url, features))
         .build_as_child(window)?;
     gestures.watch_gestures(&webview.webview());
+    // Nachrichten der Seite (window.ipc) selbst empfangen statt über wry: wry liest dabei die Adresse der Seite als
+    // http::Uri ein und bricht bei `file:///…` (eine lokal geöffnete HTML-Datei) das ganze Programm ab.
+    page_messages(&webview.webview(), move |source, body| {
+        // Nachrichten kann jede Seite schicken (window.ipc) – übergroße gar nicht verarbeiten
+        if body.len() > 1024 * 1024 {
+            return;
+        }
+        // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
+        let event = if body.starts_with('{') {
+            let msg = serde_json::from_str::<Value>(&body).unwrap_or_default();
+            if let Some(icon) = msg.get("favicon").and_then(Value::as_str) {
+                UserEvent::PageFavicon(id, source, icon.to_owned())
+            } else if msg.get("mail").is_some() {
+                UserEvent::MailReport(id, source, body)
+            } else if msg.get("autofill").is_some() {
+                UserEvent::AutofillRequest(id, source, body)
+            } else if msg.get("pdf").is_some() {
+                // window.ipc kann jede Seite benutzen – Dateidialog und Fensterlage nur für den PDF-Viewer
+                if !ipc_docs.is_viewer(&source) { return; }
+                if msg["pdf"] == "open" { UserEvent::PdfOpen } else { UserEvent::PdfViewer(id) }
+            } else { UserEvent::Cosmetic(id, body) }
+        } else { UserEvent::Content(id, body) };
+        let _ = p_ipc.send_event(event);
+    })?;
 
     if !private {
         let proxy = proxy.clone();
@@ -1758,6 +1759,30 @@ fn build_content_webview(
 
 /// Werbeblocker: jede Anfrage der Seite (auch aus iframes und Service Workern) läuft durch die Filter-Engine;
 /// gesperrte bekommen sofort eine leere 403-Antwort und gehen gar nicht erst ins Netz.
+/// Text-Nachrichten einer Seite (`window.ipc.postMessage`) mit der Adresse, von der sie kommen – als Text, wie
+/// WebView2 sie meldet (auch `file:///…`, das sich nicht als http::Uri lesen lässt).
+fn page_messages(
+    web: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+    on_message: impl Fn(String, String) + 'static,
+) -> windows::core::Result<()> {
+    use windows::core::PWSTR;
+    let handler = webview2_com::WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        let mut source = PWSTR::null();
+        unsafe { args.Source(&mut source)? };
+        let source = webview2_com::take_pwstr(source);
+        let mut body = PWSTR::null();
+        // window.ipc schickt nur Text; anderes (postMessage mit Objekten) gar nicht annehmen
+        if unsafe { args.TryGetWebMessageAsString(&mut body) }.is_err() {
+            return Ok(());
+        }
+        on_message(source, webview2_com::take_pwstr(body));
+        Ok(())
+    }));
+    let mut token = 0;
+    unsafe { web.add_WebMessageReceived(&handler, &mut token) }
+}
+
 fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEvent>, id: u32, main_nav: Rc<RefCell<String>>, docs: pdf::Documents) {
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
     use windows::core::{Interface, PWSTR};
@@ -1936,11 +1961,18 @@ fn launch_args() -> Vec<String> {
     match raw.find(SINGLE) {
         Some(i) => {
             update::startup(Vec::new()); // nur aufräumen
-            let url = raw[i + SINGLE.len()..].trim();
-            (!url.is_empty()).then(|| url.to_owned()).into_iter().collect()
+            single_argument(&raw[i + SINGLE.len()..]).into_iter().collect()
         }
         None => update::startup(std::env::args().skip(1).collect()),
     }
+}
+
+/// Die eine Adresse nach `--single-argument`. Windows übergibt sie ohne Anführungszeichen; andere Programme setzen
+/// einen Pfad mit Leerzeichen in welche – eine Adresse steht selbst nie in Anführungszeichen.
+fn single_argument(rest: &str) -> Option<String> {
+    let url = rest.trim();
+    let url = url.strip_prefix('"').and_then(|u| u.strip_suffix('"')).unwrap_or(url);
+    (!url.is_empty()).then(|| url.to_owned())
 }
 
 /// Netzwerkpfad (`\\server\freigabe`, `file://server/…`)? Schon das Nachsehen, ob es die Datei gibt, meldet Windows
@@ -2312,7 +2344,18 @@ fn main() -> wry::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{network_path, resolve_input};
+    use super::{network_path, resolve_input, single_argument};
+
+    #[test]
+    fn single_argument_is_one_address_with_or_without_quotes() {
+        // So übergibt Windows Links und Dateien (Registry `--single-argument %1`, Store-Manifest)
+        assert_eq!(single_argument(r" C:\Docs\Lokale Seite.html").as_deref(), Some(r"C:\Docs\Lokale Seite.html"));
+        assert_eq!(single_argument(r#""C:\Docs\Lokale Seite.html" "#).as_deref(), Some(r"C:\Docs\Lokale Seite.html"));
+        // Anführungszeichen mitten in einem Link bleiben Teil der Adresse und werden kein zweites Argument
+        assert_eq!(single_argument(r#"https://a.de/?q="x" --wait-pid 1"#).as_deref(), Some(r#"https://a.de/?q="x" --wait-pid 1"#));
+        assert_eq!(single_argument("  "), None);
+        assert_eq!(single_argument(r#""""#), None);
+    }
 
     #[test]
     fn links_from_other_apps_are_web_addresses_or_local_files() {
