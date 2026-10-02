@@ -996,6 +996,7 @@ impl Browser {
             },
             "back" => self.go_back(),
             "forward" => self.go_forward(),
+            "reload" if self.mail_view_active() => self.mail_reload(),
             "reload" => {
                 if let Some(wv) = &self.tabs[self.active].webview {
                     let _ = wv.reload();

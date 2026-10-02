@@ -347,6 +347,18 @@ try {
   assert.equal(await mailBadge(1102), '2', 'and later mails still count');
   await evaluate(`window.mailState({ boxes: [] })`);
   console.log('PASS: mail badge shows only new mails since the last visit.');
+  // Mail view: a reload button at the top right of the list (only there); it spins while a mailbox loads
+  const mailReload = `document.querySelector('.mv-reload')`;
+  assert.ok(!(await evaluate(`${mailReload}?.offsetWidth`)), 'no mail reload button outside the mail view');
+  const mailReloadState = await evaluate(`(() => { const s = structuredClone(testState); s.tabs.push({ id: 9, title: 'Mail', url: '', page: false, mail: true }); s.active = 9; s.mailView = { x: 4, y: 42, w: 1272, h: 774, pane: { x: 424, y: 42, w: 852, h: 774 } }; render(s);
+    window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: true, unread: 0, loading: true, list: [] }] });
+    const b = ${mailReload}, r = b.getBoundingClientRect(), list = document.getElementById('mailview').getBoundingClientRect();
+    const from = messages.length; b.click();
+    const out = { shown: r.width > 0, inList: b.closest('#mailview .mv-head') !== null, topRight: list.right - r.right < 20 && r.top - list.top < 20, busy: b.classList.contains('busy'), sent: messages.slice(from).map((m) => m.cmd) };
+    window.mailState({ boxes: [{ key: 'gmail', name: 'Gmail', connected: false, list: [] }] }); out.unconnected = ${mailReload}.getBoundingClientRect().width > 0;
+    window.mailState({ boxes: [] }); render(structuredClone(testState)); return out; })()`);
+  assert.deepEqual(mailReloadState, { shown: true, inList: true, topRight: true, busy: true, sent: ['reload'], unconnected: true });
+  console.log('PASS: the mail list has a reload button at its top right.');
   // Mouse side buttons over the interface act like the back and forward buttons
   const sideButtons = await evaluate(`(() => { const from = messages.length; for (const button of [3, 4]) document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button }));
     return messages.slice(from).map((m) => m.cmd); })()`);
