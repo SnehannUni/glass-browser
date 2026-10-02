@@ -5,6 +5,7 @@ mod suggest;
 mod update;
 mod window_frame;
 mod autofill;
+mod paths;
 mod favicon;
 mod resize_preview;
 mod mail;
@@ -1088,7 +1089,7 @@ impl Browser {
             }
             // Hinweis auf dem Startbildschirm: anmelden und die Windows-Einstellung dafür öffnen
             "default_browser" => {
-                default_browser::register();
+                if !cfg!(feature = "store") { default_browser::register(); }
                 default_browser::open_settings();
             }
             // Mail-Knopf und Mail-Ansicht: Postfach (oder eine Mail darin) rechts zeigen, Postfach trennen
@@ -1106,6 +1107,8 @@ impl Browser {
                 }
             }
             "new_tab" => self.new_tab(None, false),
+            // Datenschutzerklärung (auch die Adresse, die im Microsoft Store hinterlegt ist)
+            "privacy" => self.new_tab(Some("https://github.com/SnehannUni/glass-browser/blob/main/PRIVACY.md".into()), false),
             // Schutzschild im Adressfeld: Werbeblocker für die Seite des aktiven Tabs an/aus, dann neu laden
             "adblock_toggle" => {
                 let url = self.tabs[self.active].url.clone();
@@ -2022,14 +2025,15 @@ fn main() -> wry::Result<()> {
         listener.listen(move |urls| { let _ = p_open.send_event(UserEvent::OpenUrls(urls)); });
     }
     // Installierte Versionen melden sich bei Windows als Browser an (lokale Builds erst über den Knopf).
-    if update::current_build().is_some() {
+    // Die Store-Version braucht das nicht: Ihr Paketmanifest meldet sie an.
+    if !cfg!(feature = "store") && update::current_build().is_some() {
         std::thread::spawn(default_browser::register);
     }
 
     // Icon aus der Exe (Ressource 1, eingebettet von build.rs) – Windows wählt je Stelle die passende Größe
     let icon = |px: u32| Icon::from_resource(1, Some(tao::dpi::PhysicalSize::new(px, px))).ok();
     let window = WindowBuilder::new()
-        .with_title("Glass")
+        .with_title("Winter Browser")
         .with_window_icon(icon(32))
         .with_taskbar_icon(icon(256))
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 820.0))
@@ -2043,9 +2047,7 @@ fn main() -> wry::Result<()> {
         .expect("Fenster konnte nicht erstellt werden");
     style_frame(&window);
 
-    let data_dir = std::env::var_os("LOCALAPPDATA")
-        .map(|p| std::path::PathBuf::from(p).join("GlassBrowser"))
-        .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"));
+    let data_dir = paths::data_dir();
     blocker::init(data_dir.clone());
     let mail = mail::Mail::new(&data_dir);
     let downloads = downloads::Downloads::load(&data_dir);

@@ -1,7 +1,11 @@
-# Glass
+# Winter Browser
 
-Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieben in Rust mit
+(früher „Glass“) Ein schlanker Browser für Windows im Stil von Apples Liquid Glass – geschrieben in Rust mit
 [tao](https://github.com/tauri-apps/tao), [wry](https://github.com/tauri-apps/wry) und WebView2.
+
+Installieren: kostenlos aus dem Microsoft Store (Einreichung und Paket: [store/README.md](store/README.md)) oder als
+`Browser.exe` aus den [GitHub-Releases](https://github.com/SnehannUni/glass-browser/releases) mit eigenem Auto-Update.
+Datenschutz: [PRIVACY.md](PRIVACY.md).
 
 ## Funktionen
 
@@ -53,7 +57,8 @@ Adressen lassen sich direkt mitgeben: `glass-browser.exe https://example.com git
 | `assets/icon.png` | Logo: schillernde Farbscheibe (mit `RIM = True` in einer Glasschale), vollständig berechnet von `tools/make-icon.py`, das auch `assets/glass.ico` erzeugt (jede Größe einzeln gerendert) |
 | `build.rs` | bettet das Icon, die Programminfos und PDF.js in die Exe ein |
 
-Browserdaten, Filterlisten, die Ausnahmeliste des Werbeblockers und gespeicherte Unterschriften (`signatures.json`) liegen unter `%LOCALAPPDATA%\GlassBrowser`.
+Browserdaten, Filterlisten, die Ausnahmeliste des Werbeblockers und gespeicherte Unterschriften (`signatures.json`) liegen unter `%LOCALAPPDATA%\GlassBrowser`
+(Store-Version: `%LOCALAPPDATA%\Packages\<Paket>\LocalState\GlassBrowser`, siehe `src/paths.rs`).
 
 ## Mail
 

@@ -18,6 +18,8 @@ pub struct Pending {
 
 pub fn start(proxy: EventLoopProxy<UserEvent>) -> mpsc::Sender<Value> {
     let (tx, rx) = mpsc::channel::<Value>();
+    // Die Store-Version liefert die iCloud-Anbindung (node.exe und Skripte) nicht mit; Anfragen laufen ins Leere.
+    if cfg!(feature = "store") { return tx; }
     std::thread::spawn(move || {
         let root = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("icloud")));
         let Some(root) = root else { return };

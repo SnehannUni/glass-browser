@@ -152,7 +152,7 @@ impl Popup {
         );
         let icon = |px: u32| Icon::from_resource(1, Some(PhysicalSize::new(px, px))).ok();
         let window = WindowBuilder::new()
-            .with_title("Glass")
+            .with_title("Winter Browser")
             .with_window_icon(icon(32))
             .with_inner_size(LogicalSize::new(logical.0, logical.1))
             .with_min_inner_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
@@ -240,7 +240,7 @@ impl Popup {
 
     pub fn set_title(&mut self, title: String) {
         self.title = title;
-        self.window.set_title(if self.title.is_empty() { "Glass" } else { &self.title });
+        self.window.set_title(if self.title.is_empty() { "Winter Browser" } else { &self.title });
         self.sync();
     }
 

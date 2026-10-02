@@ -9,10 +9,10 @@ use windows_sys::Win32::{
     System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT},
 };
 
-/// Eine Pipe je Datenordner (`%LOCALAPPDATA%`, also je Benutzer) – Named Pipes gelten für den ganzen Rechner.
-/// Testinstanzen mit eigenem `LOCALAPPDATA` laufen so getrennt neben dem offenen Glass.
+/// Eine Pipe je Datenordner (je Benutzer, und Store- und GitHub-Version getrennt) – Named Pipes gelten für den
+/// ganzen Rechner. Testinstanzen mit eigenem `LOCALAPPDATA` laufen so getrennt neben dem offenen Browser.
 fn pipe_name() -> String {
-    let dir = std::env::var("LOCALAPPDATA").unwrap_or_default().to_lowercase();
+    let dir = crate::paths::data_dir().display().to_string().to_lowercase();
     let hash = dir.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3)); // FNV-1a
     format!(r"\\.\pipe\GlassBrowser-{hash:016x}")
 }

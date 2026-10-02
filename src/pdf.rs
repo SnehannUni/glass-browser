@@ -619,10 +619,7 @@ fn save_signatures(body: &[u8]) -> bool {
 const MAX_SIGNATURES: usize = 4 << 20;
 
 fn signatures_file() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(|p| PathBuf::from(p).join("GlassBrowser"))
-        .unwrap_or_else(|| std::env::temp_dir().join("GlassBrowser"))
-        .join("signatures.json")
+    crate::paths::data_dir().join("signatures.json")
 }
 
 /// Dateiname für den Tab-Titel: aus `Content-Disposition`, sonst der letzte Teil der Adresse.
