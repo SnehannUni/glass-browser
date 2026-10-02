@@ -43,6 +43,14 @@ try {
     Copy-Item (Join-Path $root 'LICENSE') $stage
     $licenses = Join-Path $root 'THIRD_PARTY_LICENSES.html'
     if (Test-Path $licenses) { Copy-Item $licenses $stage }
+    # Lizenzen der eingebetteten JavaScript-Bibliotheken und Schriften (PDF.js, pdf-lib, fontkit, Foxit, Liberation …)
+    $vendor = (Resolve-Path (Join-Path $root 'src\pdf\vendor')).Path
+    Get-ChildItem $vendor -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|NOTICE)' } | ForEach-Object {
+        $rel = $_.DirectoryName.Substring($vendor.Length).Trim('\')
+        $dir = Join-Path $stage (Join-Path 'licenses' $(if ($rel) { $rel } else { 'pdf.js' }))
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        Copy-Item $_.FullName $dir
+    }
     Copy-Item (Join-Path $PSScriptRoot 'Assets\*.png') (Join-Path $stage 'Assets') -Exclude 'StoreListing*'
 
     $escape = { param($s) [Security.SecurityElement]::Escape($s) }

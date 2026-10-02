@@ -23,11 +23,16 @@ spricht er nur mit diesen Diensten:
 | Dienst | Wann | Was übertragen wird |
 |---|---|---|
 | Google-Suchvorschläge (`suggestqueries.google.com`) | während du in die Adress-/Suchleiste tippst | der eingegebene Text |
-| Google-Favicon-Dienst (`www.google.com/s2/favicons`) | für die Symbole der Suchmaschinen auf dem Startbildschirm | der Domainname der jeweiligen Suchmaschine |
+| Google-Favicon-Dienst (`www.google.com/s2/favicons`) | für die Symbole der Suchmaschinen und von Outlook | der Domainname der Suchmaschine bzw. `outlook.live.com` |
+| `ssl.gstatic.com` (Google) und `www.icloud.com` (Apple) | für die Symbole von Gmail und iCloud Mail in der Mail-Ansicht | nur der Abruf des Symbols |
 | Filterlisten des Werbeblockers (`easylist.to`, `ublockorigin.github.io`) | höchstens alle 4 Tage | nur der Abruf der öffentlichen Listen |
 | GitHub (`api.github.com`) – **nur die Version von GitHub, nicht die Store-Version** | beim Start und alle 6 Stunden | Abfrage, ob es ein Update gibt |
 
 Dabei sehen diese Dienste wie jeder Webserver deine IP-Adresse. Es gelten deren Datenschutzbestimmungen.
+
+Webseiten zeigt der Browser mit Microsoft Edge WebView2 an, einem Bestandteil von Windows. WebView2 kann je nach deinen
+Windows-Einstellungen für Diagnosedaten Daten an Microsoft senden; dafür gilt die Datenschutzerklärung von Microsoft
+(<https://privacy.microsoft.com>). Der Browser selbst schaltet dafür nichts zusätzlich ein.
 
 ## Mail-Ansicht
 Die Mail-Ansicht zeigt die normalen Webseiten von iCloud Mail, Outlook und Gmail. Du meldest dich dort direkt beim
@@ -71,11 +76,16 @@ The browser contains no telemetry, analytics or ads. Apart from the websites you
 | Service | When | What is sent |
 |---|---|---|
 | Google search suggestions (`suggestqueries.google.com`) | while you type into the address/search bar | the typed text |
-| Google favicon service (`www.google.com/s2/favicons`) | for the search engine icons on the start screen | the domain name of each search engine |
+| Google favicon service (`www.google.com/s2/favicons`) | for the search engine icons and the Outlook icon | the domain name of the search engine or `outlook.live.com` |
+| `ssl.gstatic.com` (Google) and `www.icloud.com` (Apple) | for the Gmail and iCloud Mail icons in the mail view | only the download of the icon |
 | Ad blocker filter lists (`easylist.to`, `ublockorigin.github.io`) | at most every 4 days | only the download of the public lists |
 | GitHub (`api.github.com`) – **GitHub version only, not the Store version** | at startup and every 6 hours | a check for updates |
 
 Like any web server, these services see your IP address. Their own privacy policies apply.
+
+The browser renders web pages with Microsoft Edge WebView2, a component of Windows. Depending on your Windows diagnostic
+data settings, WebView2 may send data to Microsoft; Microsoft's privacy statement applies (<https://privacy.microsoft.com>).
+The browser itself does not enable anything additional for this.
 
 ## Mail view
 The mail view shows the regular web pages of iCloud Mail, Outlook and Gmail. You sign in directly with the provider;
