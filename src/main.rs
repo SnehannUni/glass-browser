@@ -3,6 +3,7 @@
 mod blocker;
 mod suggest;
 mod update;
+mod signature;
 mod window_frame;
 mod autofill;
 mod paths;
@@ -116,7 +117,7 @@ enum UserEvent {
     /// Eine Webseite fragt nach CSS zum Ausblenden von Werbeflächen (JSON aus content.js).
     Cosmetic(u32, String),
     /// Auf GitHub gibt es eine neuere Version (Build-Nummer, Änderungen, Download-Adresse).
-    UpdateAvailable(u32, String, String),
+    UpdateAvailable(update::Release),
     /// Update installiert (Glass beendet sich, die neue Version startet) oder Fehlermeldung.
     UpdateDone(Result<(), String>),
     /// Regelmäßiger Anstoß, lange unsichtbare Tabs schlafen zu legen.
@@ -276,8 +277,8 @@ struct Browser {
     /// Tabs, deren Zähler im Schutzschild neu gemeldet werden muss (gesammelt wie `ui_dirty`).
     blocked_dirty: Vec<u32>,
     split: Option<Split>,
-    /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adresse) – wird im Modal angeboten.
-    update: Option<(u32, String, String)>,
+    /// Gefundenes Update (Build-Nummer, Änderungen, Download-Adressen) – wird im Modal angeboten.
+    update: Option<update::Release>,
     /// Die Oberfläche hat die Leiste ausgeblendet: Webseiten reichen dann bis an den Rand.
     chrome_hidden: bool,
     /// Die Leiste steht links statt oben (Einstellung der Oberfläche, dort gespeichert).
@@ -1045,7 +1046,7 @@ impl Browser {
 
     /// Update-Modal anzeigen (die Oberfläche merkt sich selbst, welche Version schon weggeklickt wurde).
     fn show_update(&self) {
-        if let Some((build, notes, _)) = &self.update {
+        if let Some(update::Release { build, notes, .. }) = &self.update {
             let info = json!({ "build": build, "current": update::current_build(), "notes": notes });
             let _ = self.ui.evaluate_script(&format!("window.showUpdate?.({info})"));
         }
@@ -1099,10 +1100,10 @@ impl Browser {
             "mail_list" => self.mail_list_width(msg["value"].as_f64()),
             // Update-Modal: „Jetzt installieren“ – Download und Austausch laufen im Hintergrund
             "update_install" => {
-                if let Some((_, _, url)) = self.update.clone() {
+                if let Some(release) = self.update.clone() {
                     let proxy = self.proxy.clone();
                     std::thread::spawn(move || {
-                        let _ = proxy.send_event(UserEvent::UpdateDone(update::install(&url)));
+                        let _ = proxy.send_event(UserEvent::UpdateDone(update::install(&release)));
                     });
                 }
             }
@@ -1300,8 +1301,8 @@ impl Browser {
                     let _ = self.ui.evaluate_script("window.pageMoved?.()");
                 }
             }
-            UserEvent::UpdateAvailable(build, notes, url) => {
-                self.update = Some((build, notes, url));
+            UserEvent::UpdateAvailable(release) => {
+                self.update = Some(release);
                 self.show_update();
             }
             // Erfolgreich: beenden, die neue Version wartet schon darauf
@@ -2093,7 +2094,7 @@ fn main() -> wry::Result<()> {
             loop {
                 if let Some(r) = update::check().filter(|r| r.build > offered) {
                     offered = r.build;
-                    let _ = p_update.send_event(UserEvent::UpdateAvailable(r.build, r.notes, r.url));
+                    let _ = p_update.send_event(UserEvent::UpdateAvailable(r));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
             }
