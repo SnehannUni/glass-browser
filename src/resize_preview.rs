@@ -5,7 +5,7 @@ use windows::Win32::{
     System::Com::{StructuredStorage::CreateStreamOnHGlobal, STREAM_SEEK_SET},
 };
 
-// Bild einer Seite für Glas über ihr (page_shot, Zwischenablage), nur im Arbeitsspeicher (auch bei privaten Tabs).
+// Bild einer Seite für Glas über ihr (page_shot), nur im Arbeitsspeicher (auch bei privaten Tabs).
 pub fn capture(web: &ICoreWebView2, done: impl Fn(String) + 'static) -> windows::core::Result<()> {
     let stream = unsafe { CreateStreamOnHGlobal(HGLOBAL::default(), true)? };
     let output = stream.clone();

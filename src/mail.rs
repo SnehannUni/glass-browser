@@ -545,7 +545,7 @@ impl Browser {
         let id = self.next_id;
         self.next_id += 1;
         let bounds = to_rect(hidden_bounds(self.mail_pane(self.content_area())));
-        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, id, false, &start, bounds, false) else { return };
+        let Ok(webview) = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, id, false, &start, bounds, false) else { return };
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
         deny_notifications(&webview);
         self.watch_downloads(&webview, id, false); // Anhänge laufen über dieselbe Download-Liste
