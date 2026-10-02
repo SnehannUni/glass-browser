@@ -1058,11 +1058,29 @@
     }
     el.dataset.lensSize = `${w}x${h}`;
     const { radius, bezel } = lensShape(el, w, h);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(w, h);
-    const d = img.data;
+    const token = ++lensSeq;
+    el.dataset.lensToken = token;
+    lensMap(w, h, radius, bezel).then((map) => {
+      if (el.dataset.lensToken !== String(token)) return; // inzwischen neu vermessen
+      // Erst dekodieren: sonst wendet Chromium den Filter mit noch leerer Karte an (= keine Brechung)
+      const probe = new Image();
+      probe.src = map;
+      probe.decode().catch(() => {}).then(() => {
+        if (el.dataset.lensToken !== String(token)) return;
+        installLens(el, map, w, h, token, radius, bezel);
+        // feImage lädt seine Karte intern noch einmal; ein zweiter Anstoß stellt sicher, dass sie greift
+        setTimeout(() => {
+          if (el.dataset.lensToken !== String(token)) return;
+          const again = ++lensSeq;
+          el.dataset.lensToken = again;
+          installLens(el, map, w, h, again, radius, bezel);
+        }, 150);
+      });
+    });
+  }
+  // Rot = Verschiebung in x, Grün = in y (128 = keine) – in `d`, die Pixel eines ImageData von w × h.
+  // Läuft im Worker unten (als Quelltext dorthin kopiert) und nur ersatzweise hier.
+  function drawLensMap(d, w, h, radius, bezel) {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const px = x + .5 - w / 2, py = y + .5 - h / 2;
@@ -1082,24 +1100,52 @@
         d[i + 2] = 128; d[i + 3] = 255;
       }
     }
+  }
+  // Die Karte als PNG zu kodieren (toDataURL) kostete auf dem Hauptthread ~150 ms pro Seitenaufruf – das macht
+  // jetzt ein Worker. Dieselben Maße kommen oft wieder (Tabs, Adressfeld, Knöpfe): Fertige Karten bleiben im Cache.
+  const lensMaps = new Map(), lensJobs = new Map();
+  let lensWorker = null, lensJobSeq = 0;
+  function lensMapHere({ w, h, radius, bezel }) {
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'), img = ctx.createImageData(w, h);
+    drawLensMap(img.data, w, h, radius, bezel);
     ctx.putImageData(img, 0, 0);
-    const map = canvas.toDataURL();
-    const token = ++lensSeq;
-    el.dataset.lensToken = token;
-    // Erst dekodieren: sonst wendet Chromium den Filter mit noch leerer Karte an (= keine Brechung)
-    const probe = new Image();
-    probe.src = map;
-    probe.decode().catch(() => {}).then(() => {
-      if (el.dataset.lensToken !== String(token)) return; // inzwischen neu vermessen
-      installLens(el, map, w, h, token, radius, bezel);
-      // feImage lädt seine Karte intern noch einmal; ein zweiter Anstoß stellt sicher, dass sie greift
-      setTimeout(() => {
-        if (el.dataset.lensToken !== String(token)) return;
-        const again = ++lensSeq;
-        el.dataset.lensToken = again;
-        installLens(el, map, w, h, again, radius, bezel);
-      }, 150);
-    });
+    return canvas.toDataURL();
+  }
+  try {
+    lensWorker = new Worker(URL.createObjectURL(new Blob([`${drawLensMap}
+      onmessage = ({ data: job }) => {
+        const canvas = new OffscreenCanvas(job.w, job.h), ctx = canvas.getContext('2d'), img = ctx.createImageData(job.w, job.h);
+        drawLensMap(img.data, job.w, job.h, job.radius, job.bezel);
+        ctx.putImageData(img, 0, 0);
+        canvas.convertToBlob().then((blob) => new FileReaderSync().readAsDataURL(blob)).catch(() => null)
+          .then((map) => postMessage({ id: job.id, map }));
+      };`], { type: 'text/javascript' })));
+    lensWorker.onmessage = ({ data }) => {
+      const job = lensJobs.get(data.id);
+      lensJobs.delete(data.id);
+      job?.resolve(data.map || lensMapHere(job));
+    };
+    // Kein Worker (oder er stürzt ab): Karten wie früher hier rechnen
+    lensWorker.onerror = () => {
+      lensWorker = null;
+      lensJobs.forEach((job) => job.resolve(lensMapHere(job)));
+      lensJobs.clear();
+    };
+  } catch { lensWorker = null; }
+  function lensMap(w, h, radius, bezel) {
+    const key = `${w}x${h}/${radius}/${bezel}`;
+    let map = lensMaps.get(key);
+    if (!map) {
+      const job = { id: ++lensJobSeq, w, h, radius, bezel };
+      map = lensWorker
+        ? new Promise((resolve) => { lensJobs.set(job.id, { ...job, resolve }); lensWorker.postMessage(job); })
+        : Promise.resolve(lensMapHere(job));
+      lensMaps.set(key, map);
+      if (lensMaps.size > 64) lensMaps.delete(lensMaps.keys().next().value);
+    }
+    return map;
   }
   function lensShape(el, w, h) {
     const radius = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2);
@@ -1204,16 +1250,7 @@
   });
   function updateLight() {
     lightFrame = 0;
-    if (!pointer) return;
-    for (const el of document.querySelectorAll('.glass')) {
-      const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) continue;
-      const dx = pointer.x - (r.left + r.width / 2), dy = pointer.y - (r.top + r.height / 2);
-      const len = Math.hypot(dx, dy) || 1;
-      el.style.setProperty('--lx', (-dx / len).toFixed(3));
-      el.style.setProperty('--ly', (-dy / len).toFixed(3));
-      window.GlassRim.move(el, pointer.x, pointer.y);
-    }
+    if (pointer) window.GlassRim.moveAll(document.querySelectorAll('.glass'), pointer.x, pointer.y);
   }
 
   // ---------- Wallpaper hinter dem Glas ----------
@@ -1239,6 +1276,7 @@
     ctx.filter = `blur(${4 * dpr}px) saturate(1.05) brightness(.72)`;
     ctx.drawImage(wallImg, (W - iw) / 2 - pad, (H - ih) / 2 - pad, iw + 2 * pad, ih + 2 * pad);
     wall.classList.add('ready');
+    bakeInk();
     scheduleInk();
   }
   function placeWall() {
@@ -1261,24 +1299,44 @@
   probe.width = 24; probe.height = 8;
   const probeCtx = probe.getContext('2d', { willReadFrequently: true });
   const linear = (v) => (v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+  const inkChannel = new Float32Array(256).map((_, v) => linear((v * .82 * .92 + 255 * .08) / 255));
+  // Leuchtdichte des Wallpapers, so wie das Glas es zeigt, auf ¼ verkleinert – einmal pro gebackenem Wallpaper
+  // ausgelesen. Vorher holte jede Messung das große Canvas von der GPU zurück: alle Flächen bei jeder
+  // Fensterbewegung, ~80 ms beim Öffnen einer Seite.
+  let inkMap = null;
+  function bakeInk() {
+    const w = Math.max(1, Math.round(geo.mw / 4)), h = Math.max(1, Math.round(geo.mh / 4));
+    const small = Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const ctx = small.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(wall, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data, lum = new Float32Array(w * h);
+    for (let i = 0; i < lum.length; i++) lum[i] = .2126 * inkChannel[d[4 * i]] + .7152 * inkChannel[d[4 * i + 1]] + .0722 * inkChannel[d[4 * i + 2]];
+    inkMap = { w, h, lum };
+  }
+  function wallLuminance(r) {
+    const c = wall.getBoundingClientRect();
+    if (!c.width || !inkMap) return null;
+    const { w, h, lum } = inkMap, sx = w / c.width, sy = h / c.height;
+    const x0 = Math.max(0, Math.floor((r.left - c.left) * sx)), x1 = Math.min(w, Math.ceil((r.right - c.left) * sx));
+    const y0 = Math.max(0, Math.floor((r.top - c.top) * sy)), y1 = Math.min(h, Math.ceil((r.bottom - c.top) * sy));
+    if (x1 <= x0 || y1 <= y0) return null;
+    let sum = 0;
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) sum += lum[y * w + x];
+    return sum / ((x1 - x0) * (y1 - y0));
+  }
   // Mittlere relative Leuchtdichte hinter dem Element – so, wie das Glas sie zeigt (abgedunkelt, leicht aufgehellt)
   function backdropLuminance(el) {
     const r = el.getBoundingClientRect();
     // Liegt das Glas über einer Webseite, steht dahinter deren Bild (coverPage) statt des Wallpapers
     const page = pageBehind(el, r);
-    const [source, c, width] = page
-      ? [page.img, { left: page.x, top: page.y, width: page.w }, page.img.naturalWidth]
-      : [wall, wall.getBoundingClientRect(), wall.width];
-    if (!r.width || !r.height || !c.width || (!page && !wall.classList.contains('ready'))) return null;
-    const k = width / c.width;
+    if (!page) return r.width && r.height ? wallLuminance(r) : null;
+    if (!r.width || !r.height || !page.w) return null;
+    const k = page.img.naturalWidth / page.w;
     probeCtx.clearRect(0, 0, probe.width, probe.height);
-    probeCtx.drawImage(source, (r.left - c.left) * k, (r.top - c.top) * k, r.width * k, r.height * k, 0, 0, probe.width, probe.height);
+    probeCtx.drawImage(page.img, (r.left - page.x) * k, (r.top - page.y) * k, r.width * k, r.height * k, 0, 0, probe.width, probe.height);
     const d = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
     let sum = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      const [R, G, B] = [d[i], d[i + 1], d[i + 2]].map((v) => linear((v * .82 * .92 + 255 * .08) / 255));
-      sum += .2126 * R + .7152 * G + .0722 * B;
-    }
+    for (let i = 0; i < d.length; i += 4) sum += .2126 * inkChannel[d[i]] + .7152 * inkChannel[d[i + 1]] + .0722 * inkChannel[d[i + 2]];
     return sum / (d.length / 4);
   }
   // Ab etwa 0,2 ist dunkle Schrift kontrastreicher als weiße; Umschaltpunkte auseinander, damit nichts flackert
