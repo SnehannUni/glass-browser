@@ -221,7 +221,7 @@ impl Popup {
         let p_ui = proxy.clone();
         let bar = WebViewBuilder::new()
             .with_environment(ui.environment())
-            .with_html(POPUP_HTML)
+            .with_html(crate::i18n::localize_page(POPUP_HTML))
             .with_transparent(true)
             .with_bounds(crate::full_bounds(&window))
             .with_default_context_menus(false)

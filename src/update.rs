@@ -7,6 +7,7 @@
 //! `Browser.old.exe`, die neue nimmt ihren Platz ein und startet – sie wartet, bis die alte beendet ist,
 //! weil beide sonst gleichzeitig denselben WebView2-Datenordner öffnen würden.
 
+use crate::i18n::tr;
 use std::path::PathBuf;
 
 const API_HOST: &str = "api.github.com";
@@ -62,7 +63,7 @@ fn paths() -> std::io::Result<(PathBuf, PathBuf, PathBuf)> {
 /// Datei aus einem Release laden (GitHub leitet auf seinen Datei-Server um; WinHTTP folgt der Umleitung selbst).
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let rest = url.strip_prefix("https://github.com/").ok_or("Ungültige Download-Adresse")?;
-    crate::suggest::https_get("github.com", &format!("/{rest}")).ok_or_else(|| "Download fehlgeschlagen".into())
+    crate::suggest::https_get("github.com", &format!("/{rest}")).ok_or_else(|| tr("Download fehlgeschlagen", "Download failed").into())
 }
 
 /// Stammt die Exe von uns und gehört sie zu genau diesem Build? (Siehe `signature.rs`.)
@@ -78,28 +79,28 @@ fn verify(build: u32, exe: &[u8], signature: &[u8]) -> bool {
 /// Neue Exe laden, Signatur prüfen, an die Stelle der laufenden setzen und starten.
 /// Danach muss sich Glass beenden (die neue Instanz wartet darauf).
 pub fn install(release: &Release) -> Result<(), String> {
-    if current_build().is_none() { return Err("Auto-Updates sind in Entwickler-Builds deaktiviert.".into()); }
+    if current_build().is_none() { return Err(tr("Auto-Updates sind in Entwickler-Builds deaktiviert.", "Auto-updates are disabled in developer builds.").into()); }
     let signature = download(&release.signature_url)?;
     let bytes = download(&release.url)?;
     if bytes.len() < 1_000_000 || !bytes.starts_with(b"MZ") {
-        return Err("Die heruntergeladene Datei ist keine gültige Browser.exe".into());
+        return Err(tr("Die heruntergeladene Datei ist keine gültige Browser.exe", "The downloaded file is not a valid Browser.exe").into());
     }
     if !verify(release.build, &bytes, &signature) {
-        return Err("Die Signatur des Updates stimmt nicht – es wird nicht installiert.".into());
+        return Err(tr("Die Signatur des Updates stimmt nicht – es wird nicht installiert.", "The update's signature does not match – it will not be installed.").into());
     }
     let (exe, old, new) = paths().map_err(|e| e.to_string())?;
-    std::fs::write(&new, &bytes).map_err(|e| format!("Konnte das Update nicht speichern: {e}"))?;
+    std::fs::write(&new, &bytes).map_err(|e| format!("{}: {e}", tr("Konnte das Update nicht speichern", "Could not save the update")))?;
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old).map_err(|e| format!("Konnte den Browser nicht ersetzen: {e}"))?;
+    std::fs::rename(&exe, &old).map_err(|e| format!("{}: {e}", tr("Konnte den Browser nicht ersetzen", "Could not replace the browser")))?;
     if let Err(e) = std::fs::rename(&new, &exe) {
         let _ = std::fs::rename(&old, &exe); // alte Version wiederherstellen
-        return Err(format!("Konnte den Browser nicht ersetzen: {e}"));
+        return Err(format!("{}: {e}", tr("Konnte den Browser nicht ersetzen", "Could not replace the browser")));
     }
     std::process::Command::new(&exe)
         .arg("--wait-pid")
         .arg(std::process::id().to_string())
         .spawn()
-        .map_err(|e| format!("Konnte die neue Version nicht starten: {e}"))?;
+        .map_err(|e| format!("{}: {e}", tr("Konnte die neue Version nicht starten", "Could not start the new version")))?;
     Ok(())
 }
 

@@ -1,5 +1,7 @@
 // Seiten gestalten wie in Acrobat: Wasserzeichen, Kopf- und Fußzeile, Seitenzahlen – als echter Seiteninhalt
 // (pdf-lib drawText), auf allen oder ausgewählten Seiten. Gedrehte Seiten bekommen alles in Leserichtung.
+import { t, EN, LOCALE, percent } from './en.mjs';
+
 const $ = (id) => document.getElementById(id);
 const MARGIN = 28;
 const WM_COLORS = ['#8e8e93', '#d62f2f', '#1f5fd6', '#1e8a4c'];
@@ -52,10 +54,12 @@ export async function decorate(lib, bytes, options) {
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
   const pages = pdf.getPages();
   const targets = parsePages(options.pages || '', pages.length);
-  const fill = (s, i) => s.replaceAll('{seite}', String(i + (options.start ?? 1)))
-    .replaceAll('{seiten}', String(pages.length + (options.start ?? 1) - 1))
-    .replaceAll('{datum}', new Date().toLocaleDateString('de-DE'))
-    .replaceAll('{datei}', options.fileName || '');
+  // Platzhalter deutsch und englisch – gilt beides, egal in welcher Sprache die Oberfläche ist
+  const start = options.start ?? 1, date = new Date().toLocaleDateString(LOCALE);
+  const fill = (s, i) => s.replace(/\{(seiten|seite|pages|page|datum|date|datei|file)\}/g, (_, key) => String({
+    seite: i + start, page: i + start, seiten: pages.length + start - 1, pages: pages.length + start - 1,
+    datum: date, date, datei: options.fileName || '', file: options.fileName || '',
+  }[key]));
   if (options.kind === 'watermark') {
     const font = await pdf.embedFont(StandardFonts.HelveticaBold);
     const { text, size, opacity, angle, color } = options;
@@ -98,9 +102,11 @@ export function initDesign(app) {
   }
   for (const input of dialog.querySelectorAll('input[type=range]')) {
     const out = input.parentElement.querySelector('output');
-    const show = () => { out.textContent = input.id === 'wm-opacity' ? `${input.value} %` : input.id === 'wm-angle' ? `${input.value}°` : input.value; };
+    const show = () => { out.textContent = input.id === 'wm-opacity' ? percent(input.value) : input.id === 'wm-angle' ? `${input.value}°` : input.value; };
     input.addEventListener('input', show);
   }
+  // Englisch: Formate der Seitenzahlen mit {page}/{pages} (Texte der Auswahl übersetzt viewer.mjs mit dem Rest)
+  if (EN) for (const option of $('num-format').options) option.value = t(option.value);
   for (const b of dialog.querySelectorAll('#design-tabs button')) {
     b.onclick = () => {
       tab = b.dataset.tab;
@@ -131,12 +137,12 @@ export function initDesign(app) {
     if (o.kind === 'watermark' && !o.text) { $('wm-text').focus(); return; }
     if (o.kind === 'header' && !Object.values(o.slots).some((s) => s.trim())) { dialog.querySelector('[data-slot]').focus(); return; }
     close();
-    const label = { watermark: 'Wasserzeichen hinzugefügt', header: 'Kopf- und Fußzeile hinzugefügt', numbers: 'Seitenzahlen hinzugefügt' }[o.kind];
+    const label = t({ watermark: 'Wasserzeichen hinzugefügt', header: 'Kopf- und Fußzeile hinzugefügt', numbers: 'Seitenzahlen hinzugefügt' }[o.kind]);
     await app.applyChange(label, (bytes, lib) => {
       try {
         return decorate(lib, bytes, o);
       } catch (err) {
-        app.toast('Ein Zeichen lässt sich in der Standardschrift nicht darstellen.');
+        app.toast(t('Ein Zeichen lässt sich in der Standardschrift nicht darstellen.'));
         throw err;
       }
     });

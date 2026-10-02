@@ -49,7 +49,7 @@ pub fn start(proxy: EventLoopProxy<UserEvent>) -> mpsc::Sender<Value> {
             });
             let reply = result.unwrap_or_else(|| {
                 if let Some((mut child, _, _)) = process.take() { let _ = child.kill(); let _ = child.wait(); }
-                json!({ "id": request["id"], "error": "iCloud-Anbindung nicht verfügbar. Lokales Setup prüfen." })
+                json!({ "id": request["id"], "error": crate::i18n::tr("iCloud-Anbindung nicht verfügbar. Lokales Setup prüfen.", "iCloud connection unavailable. Check the local setup.") })
             });
             if proxy.send_event(UserEvent::AutofillReply(reply)).is_err() { break; }
         }

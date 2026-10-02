@@ -7,6 +7,7 @@ mod signature;
 mod window_frame;
 mod autofill;
 mod paths;
+mod i18n;
 mod favicon;
 mod resize_preview;
 mod mail;
@@ -1156,7 +1157,11 @@ impl Browser {
             "prev_tab" => self.cycle(-1),
             "navigate" if !value.trim().is_empty() => match (as_url(value), search_engine(msg["engine"].as_str().unwrap_or_default())) {
                 (Some(url), _) => self.navigate_to(url),
-                (None, Search::Query(prefix)) => self.navigate_to(format!("{prefix}{}", url_encode(value.trim()))),
+                (None, Search::Query(prefix)) => {
+                    // Englische Oberfläche: der internationale Amazon-Shop statt amazon.de
+                    let prefix = if msg["engine"] == "amazon" { i18n::tr(prefix, "https://www.amazon.com/s?k=") } else { prefix };
+                    self.navigate_to(format!("{prefix}{}", url_encode(value.trim())))
+                }
                 // Seite öffnen und den Prompt eintippen, sobald sie geladen ist (siehe UserEvent::Load)
                 (None, Search::Typed(home)) => {
                     self.navigate_to((*home).to_owned());
@@ -1894,7 +1899,7 @@ fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf
         } else {
             CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?.cast().ok()?
         };
-        let filters = [COMDLG_FILTERSPEC { pszName: w!("PDF-Dokument"), pszSpec: w!("*.pdf") }];
+        let filters = [COMDLG_FILTERSPEC { pszName: w!("PDF"), pszSpec: w!("*.pdf") }];
         dialog.SetFileTypes(&filters).ok()?;
         dialog.SetDefaultExtension(w!("pdf")).ok()?;
         let mut options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
@@ -2068,6 +2073,8 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
         "/glass-rim.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("glass-rim.js"))),
         "/group-hover.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("group-hover.js"))),
         "/animation-debug.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("animation-debug.js"))),
+        // Englische Texte der Oberfläche (ui.html übersetzt sich damit selbst, wenn `<html lang="en">` ist)
+        "/ui-en.js" => ("text/javascript; charset=utf-8", Cow::Borrowed(include_bytes!("ui-en.js"))),
         "/wallpaper" => match wallpaper() {
             Some(bytes) => {
                 let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
@@ -2075,7 +2082,10 @@ fn serve_ui(request: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::bo
             }
             None => ("text/plain", Cow::Borrowed(b"")),
         },
-        _ => ("text/html; charset=utf-8", Cow::Borrowed(UI_HTML.as_bytes())),
+        _ => {
+            static PAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            ("text/html; charset=utf-8", Cow::Borrowed(PAGE.get_or_init(|| i18n::localize_page(UI_HTML)).as_bytes()))
+        }
     };
     wry::http::Response::builder()
         .header(wry::http::header::CONTENT_TYPE, mime)

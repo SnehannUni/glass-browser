@@ -4,6 +4,7 @@
 //! Alles unter HKCU, also ohne Admin-Rechte. Die Store-Version meldet sich stattdessen über ihr Paketmanifest an
 //! (store/AppxManifest.xml) und schreibt nichts in die Registry.
 
+use crate::i18n::tr;
 use windows_sys::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ};
 
 /// Name unter `RegisteredApplications` – so heißt der Browser auch in `ms-settings:defaultapps?registeredAppUser=`.
@@ -66,7 +67,7 @@ pub fn register() {
     let icon = format!("{exe},0");
 
     // Dokumenttypen: Links und HTML-Dateien bzw. PDFs (öffnen im eigenen PDF-Viewer)
-    for (id, name) in [(PROG_ID, "Winter Browser HTML-Dokument"), (PDF_PROG_ID, "Winter Browser PDF-Dokument")] {
+    for (id, name) in [(PROG_ID, tr("Winter Browser HTML-Dokument", "Winter Browser HTML Document")), (PDF_PROG_ID, tr("Winter Browser PDF-Dokument", "Winter Browser PDF Document"))] {
         let prog = format!(r"Software\Classes\{id}");
         write(&prog, "", name);
         write(&format!(r"{prog}\DefaultIcon"), "", &icon);
@@ -81,7 +82,7 @@ pub fn register() {
     write(&format!(r"{CLIENT}\shell\open\command"), "", &format!("\"{exe}\""));
     let caps = format!(r"{CLIENT}\Capabilities");
     write(&caps, "ApplicationName", NAME);
-    write(&caps, "ApplicationDescription", "Ein schneller, klarer Browser");
+    write(&caps, "ApplicationDescription", tr("Ein schneller, klarer Browser", "A fast, clean browser"));
     write(&caps, "ApplicationIcon", &icon);
     write(&format!(r"{caps}\StartMenu"), "StartMenuInternet", APP);
     for scheme in ["http", "https"] {

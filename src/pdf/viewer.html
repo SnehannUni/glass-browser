@@ -1,14 +1,15 @@
 <!doctype html>
 <!-- Glass-PDF-Viewer. pdf.rs setzt {{TITLE}} (Dateiname), {{DOC}} (einmalige Adresse der PDF-Bytes),
      {{WALL}} (geheime Adresse des Wallpapers), {{API}} (geheime Adresse für Unterschriften, Speichern, Verschlüsseln)
-     und {{FILE}} (Schlüssel der Datei auf der Festplatte, leer bei PDFs aus dem Netz) ein. -->
-<html lang="de">
+     {{FILE}} (Schlüssel der Datei auf der Festplatte, leer bei PDFs aus dem Netz) und {{LANG}} (de oder en) ein.
+     Die Texte hier sind deutsch; auf Englisch übersetzt en.mjs sie beim Start. -->
+<html lang="{{LANG}}">
 <head>
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
 <link rel="stylesheet" href="http://glass-pdf.localhost/pdf_viewer.css">
 <link rel="stylesheet" href="http://glass-pdf.localhost/viewer.css">
-<!-- Deutsche Texte für die Werkzeuge von PDF.js (GenericL10n liest diese Liste) -->
+<!-- Deutsche Texte für die Werkzeuge von PDF.js (GenericL10n liest diese Liste; Englisch bringt PDF.js selbst mit) -->
 <link rel="resource" type="application/l10n" href="http://glass-pdf.localhost/l10n/locale.json">
 <script type="module" src="http://glass-pdf.localhost/viewer.mjs"></script>
 </head>

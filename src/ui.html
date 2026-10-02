@@ -993,11 +993,36 @@
 <script src="/glass-rim.js"></script>
 <script src="/group-hover.js"></script>
 <script src="/animation-debug.js"></script>
+<script src="/ui-en.js"></script>
 <script src="/autofill-ui.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const send = (cmd, extra = {}) => window.ipc.postMessage(JSON.stringify({ cmd, ...extra }));
+
+  // ---------- Sprache (Rust setzt <html lang>, siehe i18n.rs) ----------
+  // Der deutsche Text im Quelltext ist zugleich der Schlüssel; die englischen stehen in ui-en.js. Fehlt einer, bleibt
+  // es deutsch. `{name}` wird aus `vars` eingesetzt.
+  const LANG = document.documentElement.lang === 'en' ? 'en' : 'de';
+  const LOCALE = LANG === 'de' ? 'de-DE' : 'en-US';
+  const t = (de, vars) => {
+    const text = (LANG === 'en' && window.UI_EN?.[de]) || de;
+    return vars ? text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)) : text;
+  };
+  // Feste Texte im HTML einmal beim Start übersetzen: Textknoten und die sichtbaren Attribute (Leerraum drumherum bleibt)
+  if (LANG === 'en') {
+    const swap = (text) => {
+      const key = text.trim();
+      return key && window.UI_EN?.[key] ? text.replace(key, () => window.UI_EN[key]) : text;
+    };
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement?.closest('script, style') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    for (let n; (n = walker.nextNode());) n.nodeValue = swap(n.nodeValue);
+    for (const attr of ['title', 'aria-label', 'placeholder', 'alt']) {
+      document.body.querySelectorAll(`[${attr}]`).forEach((el) => el.setAttribute(attr, swap(el.getAttribute(attr))));
+    }
+  }
 
   const ICON = {
     reload: '<path d="M13.2 8a5.2 5.2 0 1 1-1.52-3.68"/><path d="M13.2 2.6v3h-3"/>',
@@ -1364,7 +1389,7 @@
   function makeTab(tab) {
     const el = document.createElement('div');
     el.className = 'tab';
-    el.innerHTML = `<button class="close" title="Tab schließen (Strg+W)">${svg('close')}</button>
+    el.innerHTML = `<button class="close" title="${t('Tab schließen (Strg+W)')}">${svg('close')}</button>
                     <span class="tab-label"><span class="fav"></span><span class="title"></span></span>`;
     el.dataset.id = tab.id;
     draggable(el, () => tab.id, () => send('activate', { id: tab.id }));
@@ -1557,7 +1582,7 @@
       el.classList.toggle('paired', !!split && [split.left, split.right].includes(tab.id));
       el.classList.toggle('pair-left', grouped?.left === tab.id);
       el.classList.toggle('pair-right', grouped?.right === tab.id);
-      const title = tab.title || hostOf(tab.url) || 'Neuer Tab';
+      const title = tab.title || hostOf(tab.url) || t('Neuer Tab');
       const label = el.querySelector('.title');
       if (label.textContent !== title) { label.textContent = title; el.title = title; }
       updateFavicon(el, tab);
@@ -1633,16 +1658,17 @@
   const favicon = (domain) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
   const ENGINES = [
     // `origin`: wohin die Suche führt (wie SEARCH_ENGINES in main.rs) – dorthin wärmt warmUp() die Verbindung vor
-    { id: 'google', name: 'Google', origin: 'https://www.google.com', icon: favicon('google.com'), hint: 'Suchbegriff oder Websitename eingeben' },
-    { id: 'chatgpt', name: 'ChatGPT', origin: 'https://chatgpt.com', icon: favicon('chatgpt.com'), hint: 'ChatGPT fragen oder Website eingeben' },
-    { id: 'claude', name: 'Claude', origin: 'https://claude.ai', icon: favicon('claude.ai'), hint: 'Claude fragen oder Website eingeben' },
+    { id: 'google', name: 'Google', origin: 'https://www.google.com', icon: favicon('google.com'), hint: t('Suchbegriff oder Websitename eingeben') },
+    { id: 'chatgpt', name: 'ChatGPT', origin: 'https://chatgpt.com', icon: favicon('chatgpt.com'), hint: t('ChatGPT fragen oder Website eingeben') },
+    { id: 'claude', name: 'Claude', origin: 'https://claude.ai', icon: favicon('claude.ai'), hint: t('Claude fragen oder Website eingeben') },
     // Gemini, Kimi, Z.ai und Grok nehmen keinen Prompt über die Adresse an – Glass tippt ihn dort ein (prompt.js)
-    { id: 'gemini', name: 'Gemini', origin: 'https://gemini.google.com', icon: favicon('gemini.google.com'), hint: 'Gemini fragen oder Website eingeben' },
-    { id: 'kimi', name: 'Kimi', origin: 'https://www.kimi.ai', icon: favicon('kimi.ai'), hint: 'Kimi fragen oder Website eingeben' },
-    { id: 'zai', name: 'Z.ai', origin: 'https://chat.z.ai', icon: favicon('z.ai'), hint: 'Z.ai fragen oder Website eingeben' },
-    { id: 'grok', name: 'Grok', origin: 'https://grok.com', icon: favicon('grok.com'), hint: 'Grok fragen oder Website eingeben' },
-    { id: 'youtube', name: 'YouTube', origin: 'https://www.youtube.com', icon: favicon('youtube.com'), hint: 'Auf YouTube suchen oder Website eingeben' },
-    { id: 'amazon', name: 'Amazon', origin: 'https://www.amazon.de', icon: favicon('amazon.de'), hint: 'Auf Amazon suchen oder Website eingeben' },
+    { id: 'gemini', name: 'Gemini', origin: 'https://gemini.google.com', icon: favicon('gemini.google.com'), hint: t('Gemini fragen oder Website eingeben') },
+    { id: 'kimi', name: 'Kimi', origin: 'https://www.kimi.ai', icon: favicon('kimi.ai'), hint: t('Kimi fragen oder Website eingeben') },
+    { id: 'zai', name: 'Z.ai', origin: 'https://chat.z.ai', icon: favicon('z.ai'), hint: t('Z.ai fragen oder Website eingeben') },
+    { id: 'grok', name: 'Grok', origin: 'https://grok.com', icon: favicon('grok.com'), hint: t('Grok fragen oder Website eingeben') },
+    { id: 'youtube', name: 'YouTube', origin: 'https://www.youtube.com', icon: favicon('youtube.com'), hint: t('Auf YouTube suchen oder Website eingeben') },
+    // Amazon: auf Englisch amazon.com (wie die Suche in main.rs)
+    { id: 'amazon', name: 'Amazon', origin: LANG === 'de' ? 'https://www.amazon.de' : 'https://www.amazon.com', icon: favicon(LANG === 'de' ? 'amazon.de' : 'amazon.com'), hint: t('Auf Amazon suchen oder Website eingeben') },
   ];
   // Im Rad stehen Google und fünf weitere; welche, tauscht man per Rechtsklick auf einen Kreis (siehe setWheelEditing)
   const WHEEL_KEY = 'glass.wheel', WHEEL_DEFAULT = ['chatgpt', 'claude', 'gemini', 'kimi', 'youtube'];
@@ -1658,7 +1684,7 @@
   const engineBtn = $('btn-engine');
   function renderEngine() {
     engineBtn.replaceChildren(engineImg(engine));
-    engineBtn.title = `Suchen mit ${engine.name} – klicken zum Wechseln`;
+    engineBtn.title = t('Suchen mit {name} – klicken zum Wechseln', { name: engine.name });
   }
   function setEngine(e) {
     engine = e;
@@ -1678,15 +1704,15 @@
     const url = tab?.url || '';
     const query = searchQuery(url);
     const { hint } = searchEngine();
-    const placeholder = tab?.private ? `Privat: ${hint}` : hint;
+    const placeholder = tab?.private ? t('Privat: {hint}', { hint }) : hint;
     input.placeholder = placeholder;
-    address.title = editing() || document.body.classList.contains('start') ? '' : 'Suchen oder Adresse eingeben (Strg+L)';
+    address.title = editing() || document.body.classList.contains('start') ? '' : t('Suchen oder Adresse eingeben (Strg+L)');
     if (!editing()) input.value = query || url;
     renderSlot(tab);
     address.classList.toggle('loading', !!tab?.loading);
     const reload = $('btn-reload');
     reload.innerHTML = svg(tab?.loading ? 'stop' : 'reload');
-    reload.title = tab?.loading ? 'Laden stoppen' : 'Neu laden (F5)';
+    reload.title = t(tab?.loading ? 'Laden stoppen' : 'Neu laden (F5)');
     reload.style.visibility = tab?.page ? 'visible' : 'hidden';
     $('btn-back').disabled = !(tab?.page || tab?.mail); // aus der Mail-Ansicht führt Zurück zum Startbildschirm
     $('btn-fwd').disabled = !(tab?.page || tab?.home);
@@ -1699,7 +1725,7 @@
   $('addr-close').innerHTML = svg('close');
   let slotTab = null;
   function renderSlot(tab) {
-    const title = tab ? tab.title || hostOf(tab.url) || 'Neuer Tab' : '';
+    const title = tab ? tab.title || hostOf(tab.url) || t('Neuer Tab') : '';
     const label = slot.querySelector('.title');
     if (label.textContent !== title) label.textContent = title;
     if (tab) updateFavicon(slot, tab);
@@ -1729,8 +1755,10 @@
     shield.classList.toggle('off', !tab.adblock);
     shield.innerHTML = svg(tab.adblock ? 'shield' : 'shieldOff') + (tab.adblock && tab.blocked ? `<span>${tab.blocked}</span>` : '');
     shield.title = tab.adblock
-      ? `Werbeblocker: ${tab.blocked} ${tab.blocked === 1 ? 'Anfrage' : 'Anfragen'} blockiert – klicken, um ihn auf ${host} auszuschalten`
-      : `Werbeblocker ist auf ${host} aus – klicken zum Einschalten`;
+      ? (tab.blocked === 1
+        ? t('Werbeblocker: 1 Anfrage blockiert – klicken, um ihn auf {host} auszuschalten', { host })
+        : t('Werbeblocker: {n} Anfragen blockiert – klicken, um ihn auf {host} auszuschalten', { n: tab.blocked, host }))
+      : t('Werbeblocker ist auf {host} aus – klicken zum Einschalten', { host });
   }
   shield.addEventListener('click', () => send('adblock_toggle'));
   // Rust meldet jede Sperre einzeln; nur den Zähler auffrischen statt alles neu zu zeichnen
@@ -2027,7 +2055,7 @@
     const arc = `M${x1} ${y1}A${TURN_BEND} ${TURN_BEND} 0 0 ${side > 0 ? 1 : 0} ${x2} ${y2}`;
     const box = TURN_R + 20, wrap = document.createElement('div');
     wrap.innerHTML = `<svg class="turn ${side > 0 ? 'next' : 'prev'}" viewBox="${-box} ${-box} ${2 * box} ${2 * box}" `
-      + `style="width:${2 * box}px;height:${2 * box}px"><title>${side > 0 ? 'Im Uhrzeigersinn drehen' : 'Gegen den Uhrzeigersinn drehen'}</title>`
+      + `style="width:${2 * box}px;height:${2 * box}px"><title>${t(side > 0 ? 'Im Uhrzeigersinn drehen' : 'Gegen den Uhrzeigersinn drehen')}</title>`
       + `<path class="hit" d="${arc}"/><path d="${arc}${head}"/></svg>`;
     const turn = wrap.firstElementChild;
     turn.addEventListener('pointerdown', (ev) => {
@@ -2294,7 +2322,7 @@
       if (item.kind === 'history') {
         const rm = document.createElement('button');
         rm.className = 'rm';
-        rm.title = 'Aus dem Verlauf entfernen';
+        rm.title = t('Aus dem Verlauf entfernen');
         rm.innerHTML = svg('close');
         rm.addEventListener('pointerdown', (e) => {
           e.preventDefault(); e.stopPropagation(); // Fokus bleibt im Feld, nicht suchen
@@ -2523,7 +2551,7 @@
     star.hidden = !tab?.page;
     star.classList.toggle('on', on);
     star.innerHTML = svg(on ? 'starFill' : 'star');
-    star.title = on ? 'Aus den Favoriten entfernen' : 'Zu den Favoriten hinzufügen';
+    star.title = t(on ? 'Aus den Favoriten entfernen' : 'Zu den Favoriten hinzufügen');
   }
   star.addEventListener('click', () => {
     const tab = activeTab();
@@ -2554,7 +2582,7 @@
   function renderFavorites() {
     const head = document.createElement('div');
     head.className = 'fv-head';
-    head.textContent = 'Favoriten';
+    head.textContent = t('Favoriten');
     const rows = favorites.map((f) => {
       const row = document.createElement('div');
       row.className = 'fv';
@@ -2570,7 +2598,7 @@
       }
       const rm = document.createElement('button');
       rm.className = 'rm';
-      rm.title = 'Aus den Favoriten entfernen';
+      rm.title = t('Aus den Favoriten entfernen');
       rm.innerHTML = svg('close');
       rm.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2586,7 +2614,7 @@
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'fv-empty';
-      empty.textContent = 'Noch keine Favoriten. Tippe auf den Stern in der Adresszeile, um eine Seite zu speichern.';
+      empty.textContent = t('Noch keine Favoriten. Tippe auf den Stern in der Adresszeile, um eine Seite zu speichern.');
       rows.push(empty);
     }
     favPanel.replaceChildren(head, ...rows);
@@ -2652,13 +2680,13 @@
   function bytes(n) {
     if (n < 1024) return `${n} B`;
     const [v, unit] = n < 1024 ** 2 ? [n / 1024, 'KB'] : n < 1024 ** 3 ? [n / 1024 ** 2, 'MB'] : [n / 1024 ** 3, 'GB'];
-    return `${v.toLocaleString('de-DE', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${unit}`;
+    return `${v.toLocaleString(LOCALE, { maximumFractionDigits: v < 10 ? 1 : 0 })} ${unit}`;
   }
   // „12,3 von 40 MB“ – die Einheit nur einmal, wenn beide gleich wären
   function progressText(d) {
     if (!d.total) return bytes(d.received);
     const [a, b] = [bytes(d.received), bytes(d.total)];
-    return a.split(' ')[1] === b.split(' ')[1] ? `${a.split(' ')[0]} von ${b}` : `${a} von ${b}`;
+    return t('{a} von {b}', { a: a.split(' ')[1] === b.split(' ')[1] ? a.split(' ')[0] : a, b });
   }
   function renderDownloadButton() {
     const running = downloads.filter((d) => d.state === 'progress');
@@ -2667,7 +2695,7 @@
     dlBtn.classList.toggle('busy', running.length > 0);
     dlBtn.classList.toggle('vague', running.length > 0 && !known);
     dlBtn.querySelector('circle').style.strokeDashoffset = known ? String(100 - Math.min(100, (got / all) * 100)) : '75';
-    dlBtn.title = running.length ? `Downloads – ${running.length === 1 ? running[0].name : `${running.length} laufen`}` : 'Downloads';
+    dlBtn.title = running.length ? `Downloads – ${running.length === 1 ? running[0].name : t('{n} laufen', { n: running.length })}` : 'Downloads';
   }
   function downloadRow(d) {
     const row = document.createElement('div');
@@ -2678,7 +2706,7 @@
     row.querySelector('.fv-title').textContent = d.name;
     const sub = row.querySelector('.dl-sub');
     // Ganz angekommen, aber WebView2 hält ihn an (riskanter Dateityp): Behalten geht nur in dessen Download-Fenster
-    if (d.held) sub.textContent = 'Wartet auf Bestätigung – klicken';
+    if (d.held) sub.textContent = t('Wartet auf Bestätigung – klicken');
     else if (d.state === 'progress') {
       sub.textContent = progressText(d);
       const bar = document.createElement('span');
@@ -2686,13 +2714,13 @@
       bar.innerHTML = '<i></i>';
       bar.firstChild.style.width = d.total ? `${Math.min(100, (d.received / d.total) * 100)}%` : '';
       row.querySelector('.fv-text').append(bar);
-    } else if (d.state === 'failed') sub.textContent = d.resumable ? 'Unterbrochen – zum Fortsetzen klicken' : 'Fehlgeschlagen';
-    else if (d.state === 'missing') sub.textContent = 'Datei nicht mehr vorhanden';
+    } else if (d.state === 'failed') sub.textContent = t(d.resumable ? 'Unterbrochen – zum Fortsetzen klicken' : 'Fehlgeschlagen');
+    else if (d.state === 'missing') sub.textContent = t('Datei nicht mehr vorhanden');
     else sub.textContent = [bytes(d.received || d.total), hostOf(d.url), mailTime(d.time)].filter(Boolean).join(' · ');
     const action = (icon, title, what) => {
       const btn = document.createElement('button');
       btn.className = 'rm';
-      btn.title = title;
+      btn.title = t(title);
       btn.innerHTML = svg(icon);
       btn.addEventListener('click', (e) => { e.stopPropagation(); dlCmd(what, d.id); });
       row.append(btn);
@@ -2714,7 +2742,7 @@
     if (downloads.some((d) => d.state !== 'progress')) {
       const clear = document.createElement('button');
       clear.className = 'dl-clear';
-      clear.textContent = 'Liste leeren';
+      clear.textContent = t('Liste leeren');
       clear.addEventListener('click', () => dlCmd('clear'));
       head.append(clear);
     }
@@ -2722,7 +2750,7 @@
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'fv-empty';
-      empty.textContent = 'Noch keine Downloads.';
+      empty.textContent = t('Noch keine Downloads.');
       rows.push(empty);
     }
     dlPanel.replaceChildren(head, ...rows);
@@ -2840,12 +2868,14 @@
     const fresh = mail.boxes.reduce((sum, b) => sum + freshMail(b), 0);
     const total = mail.boxes.reduce((sum, b) => sum + (b.connected && b.unread ? b.unread : 0), 0);
     mailBtn.querySelector('.mail-badge').textContent = fresh ? plural(fresh) : '';
-    mailBtn.title = !total ? 'Mail' : `Mail – ${fresh ? `${fresh.toLocaleString('de-DE')} neu, ` : ''}${total.toLocaleString('de-DE')} ungelesen`;
+    mailBtn.title = !total ? 'Mail'
+      : fresh ? t('Mail – {fresh} neu, {total} ungelesen', { fresh: fresh.toLocaleString(LOCALE), total: total.toLocaleString(LOCALE) })
+      : t('Mail – {total} ungelesen', { total: total.toLocaleString(LOCALE) });
   }
   const mailReload = document.createElement('button');
   mailReload.type = 'button';
   mailReload.className = 'mv-reload';
-  mailReload.title = 'Postfächer neu laden (F5)';
+  mailReload.title = t('Postfächer neu laden (F5)');
   mailReload.innerHTML = svg('reload');
   mailReload.addEventListener('click', () => send('reload'));
   window.mailState = (next) => {
@@ -2880,10 +2910,10 @@
     const d = new Date(ms), now = new Date();
     const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
     const days = Math.round((day(now) - day(d)) / 864e5);
-    if (days <= 0) return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    if (days === 1) return 'Gestern';
-    if (days < 7) return d.toLocaleDateString('de-DE', { weekday: 'short' });
-    return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+    if (days <= 0) return d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+    if (days === 1) return t('Gestern');
+    if (days < 7) return d.toLocaleDateString(LOCALE, { weekday: 'short' });
+    return d.toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
   }
   function chip(label, { sel = false, off = false, cls = '', title = '', onClick }) {
     const el = document.createElement('button');
@@ -2902,7 +2932,7 @@
   function openMailMenu(e, b) {
     e.preventDefault();
     mailMenuKey = b.key;
-    mailForget.textContent = `${b.name} trennen`;
+    mailForget.textContent = t('{name} trennen', { name: b.name });
     mailMenu.hidden = false;
     const x = Math.max(4, Math.min(e.clientX, innerWidth - mailMenu.offsetWidth - 4));
     const y = Math.max(4, Math.min(e.clientY, innerHeight - mailMenu.offsetHeight - 4));
@@ -2941,7 +2971,7 @@
     const head = document.createElement('div');
     head.className = 'mv-head';
     head.innerHTML = '<h1>Mail</h1><span class="sub"></span>';
-    head.querySelector('.sub').textContent = unread ? `${unread.toLocaleString('de-DE')} ungelesen` : '';
+    head.querySelector('.sub').textContent = unread ? t('{n} ungelesen', { n: unread.toLocaleString(LOCALE) }) : '';
     head.append(mailReload);
 
     // Filter: alle, nur ungelesene, einzelne Postfächer (zeigt es auch rechts); „+ Gmail“ verbindet
@@ -2949,16 +2979,17 @@
     chips.className = 'ml-boxes';
     if (connected.length) {
       chips.append(
-        chip('Alle', { cls: 'filter', sel: mailFilter === 'all', onClick: () => { mailFilter = 'all'; renderMailView(); } }),
-        chip('Ungelesen', { cls: 'filter', sel: mailFilter === 'unread', onClick: () => { mailFilter = mailFilter === 'unread' ? 'all' : 'unread'; renderMailView(); } }),
+        chip(t('Alle'), { cls: 'filter', sel: mailFilter === 'all', onClick: () => { mailFilter = 'all'; renderMailView(); } }),
+        chip(t('Ungelesen'), { cls: 'filter', sel: mailFilter === 'unread', onClick: () => { mailFilter = mailFilter === 'unread' ? 'all' : 'unread'; renderMailView(); } }),
       );
     }
     for (const b of mail.boxes) {
       const el = chip(b.name, {
         sel: mailFilter === b.key, off: !b.connected, cls: b.signedOut ? 'out' : '',
-        title: !b.connected ? `${b.name} verbinden – rechts erscheint die Anmeldung`
-          : b.signedOut ? `${b.name}: nicht angemeldet – klicken, um dich rechts anzumelden`
-          : `${b.name}${b.unread ? ` – ${b.unread.toLocaleString('de-DE')} ungelesen` : ''} – nur ${b.name} zeigen, rechts das Postfach (Rechtsklick: trennen)`,
+        title: !b.connected ? t('{name} verbinden – rechts erscheint die Anmeldung', { name: b.name })
+          : b.signedOut ? t('{name}: nicht angemeldet – klicken, um dich rechts anzumelden', { name: b.name })
+          : b.unread ? t('{name} – {n} ungelesen – nur {name} zeigen, rechts das Postfach (Rechtsklick: trennen)', { name: b.name, n: b.unread.toLocaleString(LOCALE) })
+          : t('{name} – nur {name} zeigen, rechts das Postfach (Rechtsklick: trennen)', { name: b.name }),
         onClick: () => { mailFilter = b.key; mailSelected = null; send('mail_show', { value: b.key }); renderMailView(); },
       });
       el.prepend(mailIcon(b));
@@ -2992,7 +3023,7 @@
       const row = document.createElement('div');
       const id = `${m.box.key}:${m.key}`;
       row.className = `ml${m.unread ? ' unread' : ''}${id === mailSelected ? ' sel' : ''}`;
-      row.title = `${m.box.name}: ${m.subject || '(kein Betreff)'}`;
+      row.title = `${m.box.name}: ${m.subject || t('(kein Betreff)')}`;
       const dot = document.createElement('span');
       dot.className = 'dot';
       const from = document.createElement('span');
@@ -3004,7 +3035,7 @@
       const line = document.createElement('div');
       line.className = 'line';
       const subject = document.createElement('b');
-      subject.textContent = m.subject || '(kein Betreff)';
+      subject.textContent = m.subject || t('(kein Betreff)');
       line.append(subject);
       if (m.snippet) { const snip = document.createElement('span'); snip.textContent = ` – ${m.snippet}`; line.append(snip); }
       row.append(dot, mailIcon(m.box), from, time, line);
@@ -3019,10 +3050,10 @@
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'fv-empty';
-      empty.textContent = !connected.length ? 'Tippe oben auf ein Postfach und melde dich rechts an. Danach stehen hier die Mails aus allen Postfächern zusammen.'
+      empty.textContent = t(!connected.length ? 'Tippe oben auf ein Postfach und melde dich rechts an. Danach stehen hier die Mails aus allen Postfächern zusammen.'
         : mailFilter === 'unread' ? 'Keine ungelesenen Mails in den geladenen Posteingängen.'
         : connected.some((b) => b.list?.length) ? 'Hier ist gerade nichts.'
-        : 'Die Postfächer laden – gleich erscheinen hier die neuesten Mails. Falls rechts eine Anmeldung steht, melde dich dort an.';
+        : 'Die Postfächer laden – gleich erscheinen hier die neuesten Mails. Falls rechts eine Anmeldung steht, melde dich dort an.');
       list.append(empty);
     }
     const scroll = mailView.querySelector('.mv-list')?.scrollTop || 0;
@@ -3034,8 +3065,8 @@
     mailHint.classList.toggle('on', !shown);
     Object.assign(mailHint.style, { left: `${pane.x}px`, top: `${pane.y}px`, width: `${pane.w}px`, height: `${pane.h}px` });
     mailHint.innerHTML = connected.length
-      ? '<div><b>Keine Mail ausgewählt</b>Wähle links eine Mail aus – oder ein Postfach, um es ganz zu sehen.</div>'
-      : '<div><b>Deine Postfächer an einem Ort</b>Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Winter Browser sieht dein Passwort nie.</div>';
+      ? `<div><b>${t('Keine Mail ausgewählt')}</b>${t('Wähle links eine Mail aus – oder ein Postfach, um es ganz zu sehen.')}</div>`
+      : `<div><b>${t('Deine Postfächer an einem Ort')}</b>${t('Wähle links ein Postfach, um es zu verbinden. Die Anmeldung läuft direkt bei Apple bzw. Google – Winter Browser sieht dein Passwort nie.')}</div>`;
     scheduleInk();
     reportMailList();
   }
@@ -3067,11 +3098,11 @@
   window.showUpdate = ({ build, current, notes }) => {
     if (build <= upDismissed || upBox.classList.contains('open')) return;
     input.blur(); closeSuggest(); closeFavorites();
-    $('up-version').textContent = `Build ${build} ist da – du hast Build ${current}.`;
+    $('up-version').textContent = t('Build {build} ist da – du hast Build {current}.', { build, current });
     // Aus der Commit-Nachricht nur die ersten Zeilen (Mitautoren-Zeilen weglassen)
     $('up-notes').textContent = notes.split('\n').filter((l) => !/^co-authored-by/i.test(l.trim())).join('\n').trim().slice(0, 600);
     $('up-error').textContent = '';
-    upInstall.disabled = false; upInstall.textContent = 'Jetzt installieren';
+    upInstall.disabled = false; upInstall.textContent = t('Jetzt installieren');
     upBox.classList.add('open');
     document.body.classList.add('modal');
     requestAnimationFrame(reportUpdateOverlay);
@@ -3081,13 +3112,13 @@
   $('up-later').addEventListener('click', () => { upDismissed = Number(upBox.dataset.build) || 0; closeUpdate(); });
   upInstall.addEventListener('click', () => {
     upInstall.disabled = true;
-    upInstall.innerHTML = '<span class="spinner"></span>Wird installiert …';
+    upInstall.innerHTML = `<span class="spinner"></span>${t('Wird installiert …')}`;
     $('up-error').textContent = '';
     send('update_install');
   });
   window.updateFailed = (msg) => {
-    upInstall.disabled = false; upInstall.textContent = 'Erneut versuchen';
-    $('up-error').textContent = `Update fehlgeschlagen: ${msg}`;
+    upInstall.disabled = false; upInstall.textContent = t('Erneut versuchen');
+    $('up-error').textContent = t('Update fehlgeschlagen: {msg}', { msg });
     requestAnimationFrame(reportUpdateOverlay);
   };
   addEventListener('resize', () => { if (upBox.classList.contains('open')) reportUpdateOverlay(); });
@@ -3409,13 +3440,13 @@
     layoutSide();
     document.body.classList.toggle('inactive', !state.focused);
     document.body.classList.toggle('maximized', !!state.maximized);
-    $('win-max').title = state.maximized ? 'Wiederherstellen' : 'Maximieren';
+    $('win-max').title = t(state.maximized ? 'Wiederherstellen' : 'Maximieren');
     const hasPage = !!activeTab()?.page; // Rust meldet, ob der Tab eine Webseite hat (die URL kann leer sein)
     // Ein leerer Tab wird per Knopf umgeschaltet (Rust: "private_tab"), sonst öffnet er einen neuen privaten Tab
     const isPrivate = !!activeTab()?.private, empty = !hasPage && !activeTab()?.url && !activeTab()?.mail;
     document.body.classList.toggle('private', isPrivate);
-    privateBtn.title = empty && isPrivate ? 'Privates Surfen beenden'
-      : `${empty ? 'Privat surfen' : 'Neuer privater Tab'} (Strg+Umschalt+N)`;
+    privateBtn.title = t(empty && isPrivate ? 'Privates Surfen beenden'
+      : empty ? 'Privat surfen (Strg+Umschalt+N)' : 'Neuer privater Tab (Strg+Umschalt+N)');
     document.body.classList.toggle('has-page', hasPage);
     document.body.classList.toggle('home-back', !!activeTab()?.home);
     setStartMode(empty);

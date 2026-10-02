@@ -2,6 +2,7 @@
 // wird aus dem Content-Stream entfernt (nicht nur überdeckt), Anmerkungen dort ebenso. Liegt ein Bild oder ein
 // eingebettetes Objekt darunter, wird die ganze Seite sicherheitshalber als Bild neu geschrieben.
 import { readPage, removeGlyphs, saveContent, intersects } from './content.mjs';
+import { t } from './en.mjs';
 
 const $ = (id) => document.getElementById(id);
 
@@ -64,7 +65,7 @@ export function initRedact(app) {
 
   function update() {
     const n = marks.length;
-    count.textContent = n ? `${n} ${n === 1 ? 'Bereich' : 'Bereiche'} markiert` : 'Noch nichts markiert';
+    count.textContent = !n ? t('Noch nichts markiert') : n === 1 ? t('1 Bereich markiert') : t('{n} Bereiche markiert', { n });
     applyButton.disabled = clearButton.disabled = !n;
   }
   function render(n, layer) {
@@ -74,7 +75,7 @@ export function initRedact(app) {
       const el = document.createElement('div');
       el.className = 'redact-mark';
       Object.assign(el.style, g.rectStyle(m.rect));
-      const x = Object.assign(document.createElement('button'), { className: 'remove', title: 'Markierung entfernen' });
+      const x = Object.assign(document.createElement('button'), { className: 'remove', title: t('Markierung entfernen') });
       x.innerHTML = '<svg><use href="#i-close"/></svg>';
       x.onpointerdown = (e) => e.stopPropagation();
       x.onclick = () => { marks = marks.filter((o) => o !== m); app.refreshLayers(n); update(); };
@@ -151,7 +152,7 @@ export function initRedact(app) {
     if (!marks.length) return;
     const todo = marks.slice();
     let rasterized = [];
-    const ok = await app.applyChange(`${todo.length === 1 ? 'Bereich' : `${todo.length} Bereiche`} geschwärzt`, async (bytes, lib) => {
+    const ok = await app.applyChange(todo.length === 1 ? t('Bereich geschwärzt') : t('{n} Bereiche geschwärzt', { n: todo.length }), async (bytes, lib) => {
       const result = await redactBytes(lib, bytes, todo, renderPage(bytes));
       rasterized = result.rasterized;
       return result.bytes;
@@ -161,7 +162,7 @@ export function initRedact(app) {
       update();
       app.refreshLayers();
       if (rasterized.length) {
-        app.toast(`Seite ${rasterized.join(', ')} enthielt Bilder unter einem Balken und wurde als Bild gespeichert.`);
+        app.toast(t('Seite {pages} enthielt Bilder unter einem Balken und wurde als Bild gespeichert.', { pages: rasterized.join(', ') }));
       }
     }
   };

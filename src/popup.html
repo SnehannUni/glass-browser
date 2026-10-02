@@ -69,6 +69,10 @@
 (() => {
   const send = (cmd, value = '') => window.ipc.postMessage(JSON.stringify({ cmd, value }));
   const $ = (id) => document.getElementById(id);
+  // Sprache setzt popup.rs (<html lang>); Deutsch steht im Quelltext, Englisch hier
+  const EN = { 'Schließen': 'Close', 'Sichere Verbindung': 'Secure connection', 'Nicht sicher': 'Not secure' };
+  const t = (de) => (document.documentElement.lang === 'en' && EN[de]) || de;
+  $('close').title = t('Schließen');
 
   // Zustand aus popup.rs: Adresse, Titel, Fokus, maximiert
   window.popupState = (s) => {
@@ -84,7 +88,7 @@
     document.title = (s.url && s.title) || host;
     $('lock').classList.toggle('open', !secure);
     $('lock').querySelector('.shackle').setAttribute('d', secure ? 'M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7' : 'M5.3 7V5.2a2.7 2.7 0 0 1 5.3-.7');
-    $('lock').setAttribute('aria-label', secure ? 'Sichere Verbindung' : 'Nicht sicher');
+    $('lock').setAttribute('aria-label', t(secure ? 'Sichere Verbindung' : 'Nicht sicher'));
     $('where').title = s.url || '';
     document.body.classList.toggle('inactive', !s.focused);
     document.documentElement.classList.toggle('maximized', !!s.maximized);

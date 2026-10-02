@@ -21,7 +21,7 @@ const port = probe.address().port;
 await new Promise(r => probe.close(r));
 let exited = null;
 const app = spawn(resolve('target/debug/glass-browser.exe'), ['--single-argument', page], {
-  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
+  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile, GLASS_LANG: 'de',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
 });
 app.on('exit', (code) => { exited = code; });

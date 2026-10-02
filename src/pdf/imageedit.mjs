@@ -5,6 +5,7 @@
 import { readPage, saveContent, quadBounds } from './content.mjs';
 import { prepareImage, isImageFile } from './images.mjs';
 import { dropUnused } from './compress.mjs';
+import { t } from './en.mjs';
 
 const $ = (id) => document.getElementById(id);
 const mul = (a, b) => [
@@ -43,7 +44,7 @@ export async function editImage(lib, bytes, index, target, edit) {
   const content = await readPage(lib, pdf, index);
   const images = content.objects.filter((o) => o.kind === 'image');
   const obj = images.find((o) => o.op === target.op && near(o.quad, target.quad)) || images.find((o) => near(o.quad, target.quad));
-  if (!obj) throw userError('Das Bild wurde auf der Seite nicht mehr gefunden.');
+  if (!obj) throw userError(t('Das Bild wurde auf der Seite nicht mehr gefunden.'));
   const draw = content.ops[obj.op];
   const nums = (m) => m.map((v) => ({ t: 'num', v }));
   let replacement;
@@ -233,10 +234,10 @@ export function initImageEdit(app) {
     drag = null;
     if (!rect) return;
     if (kind === 'move' && Math.hypot(...delta) > .5) {
-      change('Bild verschoben', image, { matrix: [1, 0, 0, 1, delta[0], delta[1]] }, rect);
+      change(t('Bild verschoben'), image, { matrix: [1, 0, 0, 1, delta[0], delta[1]] }, rect);
     } else if (kind === 'resize' && Math.abs(scale - 1) > .005) {
       const [ax, ay] = anchor;
-      change('Bildgröße geändert', image, { matrix: [scale, 0, 0, scale, ax - scale * ax, ay - scale * ay] }, rect);
+      change(t('Bildgröße geändert'), image, { matrix: [scale, 0, 0, scale, ax - scale * ax, ay - scale * ay] }, rect);
     } else {
       app.refreshLayers(image.page);
     }
@@ -256,7 +257,7 @@ export function initImageEdit(app) {
     if (!ok) { pending = null; app.refreshLayers(image.page); }
     return ok;
   }
-  const remove = () => selected && change('Bild gelöscht', selected, { remove: true });
+  const remove = () => selected && change(t('Bild gelöscht'), selected, { remove: true });
   async function replace(file) {
     if (!selected || !file) return;
     const image = selected;
@@ -264,10 +265,10 @@ export function initImageEdit(app) {
     try {
       prepared = await prepareImage(file);
     } catch (err) {
-      app.toast(err.userMessage || 'Das Bild ließ sich nicht lesen.');
+      app.toast(err.userMessage || t('Das Bild ließ sich nicht lesen.'));
       return;
     }
-    return change('Bild ersetzt', image, { replace: prepared });
+    return change(t('Bild ersetzt'), image, { replace: prepared });
   }
   $('image-delete').onclick = remove;
   $('image-replace').onclick = () => { fileInput.value = ''; fileInput.click(); };

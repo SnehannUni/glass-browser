@@ -16,6 +16,7 @@ Datenschutz: [PRIVACY.md](PRIVACY.md).
 - **Startbildschirm** mit großer Such-Kapsel, Google-Vorschlägen und lokalem Suchverlauf
 - **Tabs** – ziehen zum Sortieren, geteilte Ansicht (zwei Seiten nebeneinander), Favoriten
 - **Private Tabs** (Strg+Umschalt+N) – InPrivate-Profil nur im Arbeitsspeicher, strenger Tracking-Schutz
+- **Deutsch und Englisch** – richtet sich nach der Windows-Sprache (Deutsch bei deutschem Windows, sonst Englisch); `GLASS_LANG=de` bzw. `en` erzwingt eine. Rust-Texte in `src/i18n.rs`, die Oberfläche übersetzt sich mit `src/ui-en.js`, der PDF-Viewer mit `src/pdf/en.mjs` (die Werkzeuge von PDF.js bringen ihr Englisch selbst mit)
 - **Werbeblocker** – Brave-Filter-Engine mit EasyList, EasyPrivacy, EasyList Germany und uBlock-Listen;
   blendet Werbeflächen aus und lässt sich pro Website abschalten
 - **Mail an einem Ort** – Briefumschlag rechts oben auf dem Startbildschirm: iCloud Mail, Outlook und Gmail in einer Ansicht, links die neuesten

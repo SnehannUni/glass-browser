@@ -28,7 +28,7 @@ await new Promise(r => portProbe.listen(0, '127.0.0.1', r));
 const port = portProbe.address().port;
 await new Promise(r => portProbe.close(r));
 const app = spawn(resolve('target/debug/glass-browser.exe'), [origin], {
-  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
+  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile, GLASS_LANG: 'de',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
 });
 const sockets = [];
