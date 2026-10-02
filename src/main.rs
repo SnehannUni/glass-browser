@@ -910,7 +910,7 @@ impl Browser {
                 let _ = self.tabs[self.active].webview.as_ref().map(|wv| wv.focus());
             }
             None => {
-                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, tab.id, tab.private, &url, bounds, true);
+                let wv = build_content_webview(&self.window, &self.ui, &self.proxy, &self.opener, tab.id, tab.private, &url, bounds, true, false);
                 tab.webview = wv.ok();
                 let (id, private) = (tab.id, tab.private);
                 if let Some(wv) = &self.tabs[self.active].webview {
@@ -1430,8 +1430,9 @@ impl Browser {
             UserEvent::Cosmetic(id, raw) => {
                 let Some(wv) = self.tab_mut(id).and_then(|t| t.webview.as_ref()) else { return true };
                 let msg: Value = serde_json::from_str(&raw).unwrap_or_default();
+                // Die Listen schickt die Seite selbst: begrenzt, damit sie Glass nicht mit Millionen Namen ausbremst
                 let list = |k: &str| -> Vec<String> {
-                    msg[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+                    msg[k].as_array().map(|a| a.iter().take(5000).filter_map(|v| v.as_str().filter(|s| s.len() <= 256).map(str::to_owned)).collect()).unwrap_or_default()
                 };
                 let url = msg["url"].as_str().unwrap_or_default();
                 let css = blocker::hide_css(url, &list("classes"), &list("ids"), msg["first"].as_bool().unwrap_or(false));
@@ -1590,6 +1591,7 @@ fn build_content_webview(
     url: &str,
     bounds: Rect,
     visible: bool,
+    mailbox: bool,
 ) -> wry::Result<WebView> {
     let (p_ipc, p_title, p_load, p_nav) = (proxy.clone(), proxy.clone(), proxy.clone(), proxy.clone());
     let (opener, gestures) = (opener.clone(), opener.clone());
@@ -1615,6 +1617,10 @@ fn build_content_webview(
         .with_initialization_script(include_str!("autofill-content.js"))
         .with_initialization_script(include_str!("mail-content.js"))
         .with_ipc_handler(move |req| {
+            // Nachrichten kann jede Seite schicken (window.ipc) – übergroße gar nicht erst lesen
+            if req.body().len() > 1024 * 1024 {
+                return;
+            }
             let body = req.body().clone();
             // JSON = Frage nach Ausblend-Regeln, sonst ein Tastenkürzel
             let event = if body.starts_with('{') {
@@ -1634,6 +1640,13 @@ fn build_content_webview(
             let _ = p_ipc.send_event(event);
         })
         .with_navigation_handler(move |url| {
+            // Ein Postfach zeigt keine Adresse: Fremde Seiten (etwa per window.opener.location aus einem Popup) öffnen
+            // sich als gewöhnlicher Tab, wo man sieht, wo man ist – sonst stünde eine Phishing-Seite rechts in der
+            // Mail-Ansicht, und Glass böte daneben auch noch „klicken, um dich anzumelden“ an.
+            if mailbox && !mail::mailbox_may_show(&url) {
+                let _ = p_nav.send_event(UserEvent::NewWindow(id, url, false));
+                return false;
+            }
             // PDF von der Festplatte: statt des Edge-Viewers unser Viewer (der auch dorthin speichern kann)
             if let Some(path) = pdf::pdf_path_from_file_url(&url) {
                 let _ = p_nav.send_event(UserEvent::OpenPdfFile(id, path));
