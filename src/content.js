@@ -64,6 +64,16 @@
   window.addEventListener('mouseup', () => { grab = null; }, true);
   window.addEventListener('dblclick', (e) => { if (grabbable(e)) window.ipc.postMessage('window_maximize'); }, true);
 
+  // ---------- Scrollen melden ----------
+  // Liegt Glas der Oberfläche über der Seite (Favoriten, Vorschläge …), zeigt es ein Bild von ihr – nach dem Scrollen
+  // muss es neu. Höchstens alle 50 ms eine Meldung, die letzte kommt erst nach der letzten Bewegung (auch Scrollbereiche
+  // in der Seite zählen).
+  let scrollTimer = 0;
+  document.addEventListener('scroll', () => {
+    if (scrollTimer || document.visibilityState !== 'visible') return;
+    scrollTimer = setTimeout(() => { scrollTimer = 0; window.ipc.postMessage('scrolled'); }, 50);
+  }, { capture: true, passive: true });
+
   // ---------- Werbeblocker ----------
   // Ausblend-Regeln: seitenspezifische sofort, allgemeine passend zu den Klassen und IDs der Seite.
   // Eigenes Stylesheet statt <style>: greift auch bei strenger Content-Security-Policy, und ein ungültiger

@@ -461,8 +461,8 @@
     from { clip-path: inset(-40px -40px 100% -40px); }
     to { clip-path: inset(-40px); }
   }
-  /* Vorschläge und Favoriten heben sich deutlich ab – über einer Webseite fällt der Schatten auf deren Bild
-     (#page-shot, SHADOW_ROOM im Skript deckt ihn ab) */
+  /* Vorschläge und Favoriten heben sich deutlich ab. Über einer Webseite ist das Loch nur so groß wie die Fläche selbst:
+     Dort liegt die echte Seite über dem Schatten (ein Schattenrand zeigte sonst unverwischt das Bild der Seite) */
   :is(#suggest, #favs, #dls) {
     box-shadow: inset 0 -10px 18px -14px rgba(255, 255, 255, .08), 0 14px 36px -10px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .22);
     /* Schriftfarbe hier neu setzen: geerbt käme sie fertig (weiß) vom body, .ink-dark griffe dann nicht */
@@ -471,7 +471,7 @@
   /* Bild der Webseite unter Glas, das über ihr liegt (pageShot): unter allem außer dem Wallpaper, die echte Seite
      liegt ohnehin darüber – sichtbar ist es nur in deren Aussparungen */
   #page-shot { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
-  #page-shot > div { position: absolute; border-radius: var(--pane-radius); background-size: 100% 100%; }
+  #page-shot > img { position: absolute; display: block; border-radius: var(--pane-radius); }
   .sg {
     display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 8px; border-radius: 12px;
     color: var(--label-2); white-space: nowrap; overflow: hidden;
@@ -2303,10 +2303,12 @@
   // ---------- Glas über der Webseite: Seitenbild und Schatten ----------
   // Die Webseite ist ein eigenes Fenster über der Oberfläche. Wo Vorschläge oder Favoriten über ihr liegen, spart
   // Rust sie aus (overlay) – durch das Loch sähe man nur das Wallpaper. Deshalb liegt dort ein Bild der Seite, das
-  // die Unschärfe des Glases verwischt. Ist es da, wird das Loch um SHADOW_ROOM größer: Der Schatten fällt auf die Seite.
+  // die Unschärfe des Glases verwischt. Das Loch ist nur so groß wie die Glasfläche: Daneben sähe man das Bild
+  // unverwischt – jede Abweichung von der echten Seite (ein Video läuft weiter, die Seite scrollt) stünde dort als
+  // Schicht hinter dem Glas.
   // Das Bild liegt, sobald es da ist, schon ganz unter der Seite (unsichtbar, die echte Seite liegt darüber): Öffnet
   // sich das Loch, ist es längst dekodiert und gezeichnet – sonst blitzte dort kurz das Wallpaper auf.
-  const SHADOW_ROOM = 40, SHOT_WAIT = 250, pageShot = $('page-shot');
+  const SHOT_WAIT = 250, pageShot = $('page-shot');
   let shot = null, shotSeq = 0, covered = null, dropTimer = 0;
   const shotReady = () => !!shot && shot.panes.every((p) => shot.images.has(p.id));
   function requestPageShot() {
@@ -2316,20 +2318,56 @@
     shot = { token: ++shotSeq, panes, images: new Map() };
     send('page_shot', { token: shot.token });
   }
+  // Solange ein Loch offen ist, ändert sich die Seite darunter weiter (Videos, Animationen, Scrollen – auch in Frames):
+  // Das Bild wird laufend erneuert, SHOT_REFRESH nach dem letzten. Scrollt die Seite (Rust meldet es nur, solange ein
+  // Loch offen ist), gleich. Das alte bleibt liegen, bis das neue dekodiert ist – sonst blitzte das Wallpaper.
+  // Nur eine Aufnahme zur Zeit; kommt währenddessen Scrollen dazu, folgt danach sofort noch eine.
+  const SHOT_REFRESH = 120;
+  let refreshTimer = 0;
+  function refreshShot() {
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
+    if (!covered || !shotReady()) return;
+    if (shot.next) { shot.again = true; return; }
+    const panes = (state.panes || []).filter((p) => hasPage(p.id));
+    if (!panes.length) return;
+    shot.next = { token: ++shotSeq, panes, images: new Map() };
+    send('page_shot', { token: shot.next.token });
+  }
+  const refreshShotSoon = () => { if (!refreshTimer) refreshTimer = setTimeout(refreshShot, SHOT_REFRESH); };
+  window.pageMoved = refreshShot;
+  const shotFor = (token) => shot?.token === token ? shot : shot?.next?.token === token ? shot.next : null;
+  // Die neuen Bilder (schon dekodiert, siehe pageShot) über die alten legen; die alten erst entfernen, wenn die neuen
+  // sicher gezeichnet sind (zwei Bilder später) – ein Bild ohne Foto zeigte im Loch kurz das Wallpaper.
+  function paintShot() {
+    const parts = shot.panes.map((p) => {
+      const img = shot.images.get(p.id);
+      Object.assign(img.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
+      return img;
+    });
+    const old = [...pageShot.children].filter((el) => !parts.includes(el));
+    pageShot.append(...parts);
+    if (old.length) requestAnimationFrame(() => requestAnimationFrame(() => old.forEach((el) => el.remove())));
+  }
   window.pageShot = async (token, id, image) => {
-    if (shot?.token !== token || !image) return;
+    if (!shotFor(token) || !image) return;
     const img = new Image();
     img.src = image;
     try { await img.decode(); } catch { return; }
-    if (shot?.token !== token) return;
-    shot.images.set(id, img);
-    if (!shotReady()) return;
-    pageShot.replaceChildren(...shot.panes.map((p) => {
-      const part = document.createElement('div');
-      Object.assign(part.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px`,
-        backgroundImage: `url("${shot.images.get(p.id).src}")` });
-      return part;
-    }));
+    const target = shotFor(token);
+    if (!target) return;
+    target.images.set(id, img);
+    if (!target.panes.every((p) => target.images.has(p.id))) return;
+    // Erneuertes Bild: einfach austauschen, das Loch bleibt, wie es ist
+    if (target !== shot) {
+      const again = shot.again;
+      shot = target;
+      paintShot();
+      updateInk();
+      if (again) refreshShot(); else refreshShotSoon();
+      return;
+    }
+    paintShot();
     if (covered) { coverPage(covered, covered === suggestBox ? suggestMost() : 0); updateInk(); return; }
     // Eine Liste hat auf das Bild gewartet: erst aufrollen, wenn es gezeichnet ist (ein Bild später) – sonst öffnete
     // sich das Loch schon, bevor Chromium es zeigt
@@ -2341,6 +2379,8 @@
   // Bild nicht mehr nötig – erst etwas später entfernen: Schließt sich gerade ein Loch, läge es bis dahin noch darin
   function dropShot() {
     shot = null;
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
     clearTimeout(dropTimer);
     dropTimer = setTimeout(() => { if (!shot) pageShot.replaceChildren(); }, 150);
   }
@@ -2351,7 +2391,7 @@
     const p = shot.panes.find((q) => cx >= q.x && cx <= q.x + q.w && cy >= q.y && cy <= q.y + q.h);
     return p && { ...p, img: shot.images.get(p.id) };
   }
-  // Glasfläche `el` (offen, Lage in left/top) aus der Seite aussparen; mit fertigem Seitenbild samt Schattenrand –
+  // Glasfläche `el` (offen, Lage in left/top) aus der Seite aussparen; mit fertigem Seitenbild –
   // und gleich so hoch, wie sie höchstens wird (`most`): Wächst die Liste, muss Rust die Aussparung nicht erst
   // nachziehen (bis dahin läge die echte Seite ein, zwei Bilder lang über den neuen Zeilen). Darunter liegt ja das Bild.
   function coverPage(el, most = 0) {
@@ -2359,12 +2399,14 @@
     const ready = shotReady();
     const [x, y, w] = [parseFloat(el.style.left), parseFloat(el.style.top), el.offsetWidth];
     const h = ready ? Math.max(el.offsetHeight, most) : el.offsetHeight;
-    const m = ready ? SHADOW_ROOM : 0;
-    send('overlay', { rect: { x: x - m, y: y - m, w: w + 2 * m, h: h + 2 * m, r: 18 + m } });
+    send('overlay', { rect: { x, y, w, h, r: 18 } });
+    if (ready && !shot.next) refreshShotSoon(); // Loch offen: ab jetzt laufend erneuern
   }
   function uncoverPage() {
     if (covered) scheduleInk();
     covered = null;
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
   }
   // Neue Fenstergröße: Die Seiten liegen anders – das alte Bild passte nicht mehr
   addEventListener('resize', () => { dropShot(); if (covered) coverPage(covered); });

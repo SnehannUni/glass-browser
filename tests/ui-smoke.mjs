@@ -105,6 +105,33 @@ try {
   await key('Escape','Escape');
   assert.equal(await evaluate(`document.getElementById('toolbar-menu').hidden`), true);
   console.log('PASS: toolbar context menu verified; the toolbar always stays visible.');
+  // Glass over a page shows a picture of it. While it is open the picture keeps being renewed (videos, scrolling),
+  // one capture at a time; the old picture stays until the new one is decoded. Scrolling asks for one right away.
+  const pixel = (color) => `(() => { const c = document.createElement('canvas'); c.width = c.height = 4; const x = c.getContext('2d'); x.fillStyle = '${color}'; x.fillRect(0, 0, 4, 4); return c.toDataURL(); })()`;
+  const shotRequests = `messages.filter(m=>m.cmd==='page_shot').map(m=>m.token)`;
+  const shotImage = `document.querySelector('#page-shot > img:last-child')?.src || ''`;
+  await evaluate(`messages.length=0;render({...structuredClone(testState),panes:[{id:1,x:4,y:42,w:1272,h:774}]});document.getElementById('btn-favs').click()`);
+  const [first] = await evaluate(shotRequests);
+  await evaluate(`pageShot(${first}, 1, ${pixel('red')})`);
+  await waitFor(`document.getElementById('favs').classList.contains('open')`);
+  const red = await evaluate(shotImage);
+  assert.ok(red.includes('data:image/png'), 'picture of the page under the favorites');
+  await waitFor(`${shotRequests}.length === 2`); // renewed by itself
+  await evaluate(`pageMoved()`);
+  await delay(300);
+  const second = await evaluate(shotRequests);
+  assert.equal(second.length, 2, 'one capture at a time');
+  assert.equal(await evaluate(shotImage), red, 'the old picture stays until the new one is there');
+  await evaluate(`pageShot(${second[1]}, 1, ${pixel('blue')})`);
+  await waitFor(`${shotImage} !== ${JSON.stringify(red)}`);
+  await waitFor(`document.querySelectorAll('#page-shot > img').length === 1`); // the old one goes once the new one is drawn
+  assert.equal((await evaluate(shotRequests)).length, 3, 'scrolled meanwhile: the next picture right away');
+  await evaluate(`document.getElementById('btn-favs').click()`);
+  assert.equal(await evaluate(`document.getElementById('favs').classList.contains('open')`), false);
+  await delay(300);
+  assert.equal((await evaluate(shotRequests)).length, 3, 'no more pictures once the favorites are closed');
+  console.log('PASS: the picture under glass keeps up with the page while it is open.');
+  await evaluate(`render(structuredClone(testState))`);
   const swapped = await evaluate(`(()=>{render({...structuredClone(testState),active:2});const r={slot:document.querySelector('#addr-tab .title').textContent,listed:[...document.querySelectorAll('.tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id)};render(structuredClone(testState));return r})()`);
   assert.deepEqual(swapped, { slot: 'Second tab', listed: ['1'] }, 'previous tab returns to the list, new one moves to the field');
   const paired = await evaluate(`(async()=>{const s=structuredClone(testState);s.tabs.push({id:3,title:'Third',url:'https://example.net',page:true});s.split={left:1,right:2};render(s);await new Promise(r=>setTimeout(r,600));const d=document.querySelector('.tab.docked'),a=document.getElementById('address').getBoundingClientRect();const pair=()=>({slot:document.querySelector('#addr-tab .title').textContent,docked:d&&d.dataset.id,gap:d&&Math.round(a.right-d.getBoundingClientRect().right),listed:[...document.querySelectorAll('#tabs .tab')].filter(t=>t.offsetWidth).map(t=>t.dataset.id),lens:!document.getElementById('lens').classList.contains('off')});const r=[pair()];s.active=2;render(s);await new Promise(r=>setTimeout(r,600));r.push((({gap,...x})=>x)({...pair(),docked:document.querySelector('.tab.docked')?.dataset.id}));render(structuredClone(testState));await new Promise(r=>setTimeout(r,50));r.push(document.querySelectorAll('.tab.docked').length);return r})()`);

@@ -1115,7 +1115,7 @@ impl Browser {
                 let cmd = msg["cmd"].as_str().unwrap_or_default().to_owned();
                 return self.command(&cmd, &msg);
             }
-            // Webseiten dürfen nur Tastenkürzel und die Seitentasten der Maus melden, sonst nichts steuern.
+            // Webseiten dürfen nur Tastenkürzel, die Seitentasten der Maus und „gescrollt“ melden, sonst nichts steuern.
             UserEvent::Content(from, cmd) => {
                 // Leiste links oder oben ausgeblendet: Oben fehlt die Titelleiste – leere Stellen am oberen Rand der
                 // Webseite ersetzen sie (content.js meldet nur Ziehen bzw. Doppelklick dort, wo nichts anklickbar ist)
@@ -1139,6 +1139,10 @@ impl Browser {
                 }
                 if matches!(cmd.as_str(), "new_tab" | "private_tab" | "close_tab" | "next_tab" | "prev_tab" | "focus_address" | "animation_debug") {
                     return self.command(&cmd, &Value::Null);
+                }
+                // Eine sichtbare Seite hat gescrollt, während Glas über ihr liegt: Die Oberfläche braucht ein neues Bild
+                if cmd == "scrolled" && !self.overlay.is_empty() && self.panes().iter().any(|(p, _)| self.tabs[*p].id == from) {
+                    let _ = self.ui.evaluate_script("window.pageMoved?.()");
                 }
             }
             UserEvent::UpdateAvailable(build, notes, url) => {
