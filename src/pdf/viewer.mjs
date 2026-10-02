@@ -715,8 +715,6 @@ async function replaceDocument(bytes) {
 
 // ---------- Speichern, Speichern unter, Öffnen ----------
 let fileKey = document.body.dataset.file || ''; // Datei auf der Festplatte, in die Strg+S schreibt
-let savedResolve = null;
-window.__glassSaved = (result) => savedResolve?.(result);
 function download(bytes, fileName) {
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   Object.assign(document.createElement('a'), { href: url, download: fileName }).click();
@@ -730,16 +728,21 @@ async function writeFile(bytes, fileName, as) {
       if (res.ok) return { ok: true };
       throw new Error('save ' + res.status);
     }
-    const result = new Promise((done) => { savedResolve = done; });
     const res = await fetch(API + 'save-as?name=' + encodeURIComponent(fileName), { method: 'POST', body: bytes });
     if (res.status !== 202) throw new Error('save-as ' + res.status);
-    return await result;
+    // Glass zeigt den Dialog; das Ergebnis liegt bereit, sobald er zu ist (204 = noch offen)
+    const ticket = await res.text();
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 250));
+      const poll = await fetch(API + 'saved/' + ticket);
+      if (poll.status === 204) continue;
+      if (!poll.ok) throw new Error('saved ' + poll.status);
+      return await poll.json();
+    }
   } catch (err) {
     console.warn(err);
     download(bytes, fileName);
     return { ok: true, downloaded: true };
-  } finally {
-    savedResolve = null;
   }
 }
 let saving = false;

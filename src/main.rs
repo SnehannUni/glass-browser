@@ -150,8 +150,8 @@ enum UserEvent {
     PdfViewer(u32),
     /// Ein PDF von der Festplatte (file://-Adresse, Kommandozeile): im Viewer zeigen, damit Strg+S dorthin speichert.
     OpenPdfFile(u32, std::path::PathBuf),
-    /// Der PDF-Viewer möchte „Speichern unter“ (Tab, Ticket aus `pdf::post`).
-    PdfSaveAs(u32, String),
+    /// Der PDF-Viewer möchte „Speichern unter“ (Ticket aus `pdf::post`).
+    PdfSaveAs(String),
     /// Strg+O im PDF-Viewer: Datei auswählen und in einem neuen Tab öffnen.
     PdfOpen,
     /// Der PDF-Viewer hat ein neues PDF gebaut (etwa aus Bildern): in einem neuen Tab zeigen (Adresse aus `pdf::post`).
@@ -1362,16 +1362,14 @@ impl Browser {
                     let _ = wv.load_url(&pdf::local_url(&path));
                 }
             }
-            UserEvent::PdfSaveAs(id, ticket) => {
+            UserEvent::PdfSaveAs(ticket) => {
                 let hwnd = self.window.hwnd() as isize;
                 // Tests (tests/pdf-editor.mjs) speichern ohne Dialog in einen festen Ordner
-                let result = pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
-                    Some(dir) => Some(std::path::PathBuf::from(dir).join(name)),
+                // Das Ergebnis holt der Viewer selbst ab (pdf.rs, `saved/`)
+                pdf::finish_save_as(&ticket, |name| match std::env::var_os("GLASS_TEST_SAVE_DIR") {
+                    Some(dir) => Some(std::path::PathBuf::from(dir).join(std::path::Path::new(name).file_name()?)),
                     None => file_dialog(hwnd, true, name),
                 });
-                if let Some(wv) = self.index_of(id).and_then(|i| self.tabs[i].webview.as_ref()) {
-                    let _ = wv.evaluate_script(&format!("window.__glassSaved?.({result})"));
-                }
             }
             UserEvent::PdfOpen => {
                 if let Some(path) = file_dialog(self.window.hwnd() as isize, false, "") {
@@ -1573,6 +1571,9 @@ fn build_content_webview(
     // Ziel der laufenden Hauptnavigation: diese Anfrage darf der Werbeblocker nie sperren (iframes schon).
     let main_nav = Rc::new(RefCell::new(url.to_owned()));
     let nav = main_nav.clone();
+    // PDFs dieses Tabs (Viewer, Speichern …); die IPC prüft damit, ob eine Nachricht wirklich vom Viewer kommt
+    let docs = pdf::Documents::default();
+    let ipc_docs = docs.clone();
     // Alle Tabs teilen die WebView2-Umgebung der UI: ein Browser-, GPU- und Netzwerkprozess für alles.
     // Private Tabs laufen darin im InPrivate-Profil: Cookies, Cache, Verlauf und Logins liegen nur im
     // Arbeitsspeicher, sind von den normalen Tabs getrennt und verschwinden mit dem letzten privaten Tab.
@@ -1599,10 +1600,10 @@ fn build_content_webview(
                     UserEvent::MailReport(id, req.uri().to_string(), body)
                 } else if msg.get("autofill").is_some() {
                     UserEvent::AutofillRequest(id, req.uri().to_string(), body)
-                } else if msg["pdf"] == "open" {
-                    UserEvent::PdfOpen
                 } else if msg.get("pdf").is_some() {
-                    UserEvent::PdfViewer(id)
+                    // window.ipc kann jede Seite benutzen – Dateidialog und Fensterlage nur für den PDF-Viewer
+                    if !ipc_docs.is_viewer(&req.uri().to_string()) { return; }
+                    if msg["pdf"] == "open" { UserEvent::PdfOpen } else { UserEvent::PdfViewer(id) }
                 } else { UserEvent::Cosmetic(id, body) }
             } else { UserEvent::Content(id, body) };
             let _ = p_ipc.send_event(event);
@@ -1667,7 +1668,6 @@ fn build_content_webview(
         };
     }
 
-    let docs = pdf::Documents::default();
     watch_requests(&webview, ui, proxy, id, main_nav.clone(), docs.clone());
     let (core, first) = (webview.webview(), windows::core::HSTRING::from(url));
     let p_answer = proxy.clone();
@@ -1765,8 +1765,9 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
                     Some(pdf::Post::Reply(served)) => respond(served)?,
                     // Der Dialog kommt aus der Ereignisschleife, nicht aus diesem Rückruf
                     Some(pdf::Post::SaveAs(ticket)) => {
-                        respond(pdf::Served { status: 202, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
-                        let _ = proxy.send_event(UserEvent::PdfSaveAs(id, ticket));
+                        let body = std::borrow::Cow::Owned(ticket.clone().into_bytes());
+                        respond(pdf::Served { status: 202, mime: "text/plain", body, csp: None })?;
+                        let _ = proxy.send_event(UserEvent::PdfSaveAs(ticket));
                     }
                     Some(pdf::Post::OpenTab(url)) => {
                         respond(pdf::Served { status: 204, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None })?;
@@ -1776,11 +1777,14 @@ fn watch_requests(webview: &WebView, ui: &WebView, proxy: &EventLoopProxy<UserEv
                 }
                 return Ok(());
             }
+            let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
+            args.ResourceContext(&mut context)?;
+            if pdf::is_page(&uri) && context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT {
+                return respond(pdf::Served { status: 403, mime: "text/plain", body: std::borrow::Cow::Borrowed(b""), csp: None });
+            }
             if let Some(served) = pdf::serve(&docs, &uri, wallpaper) {
                 return respond(served);
             }
-            let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
-            args.ResourceContext(&mut context)?;
             let kind = match context {
                 // Die Seite selbst nie sperren – nur Dokumente in iframes
                 COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if *main_nav.borrow() == uri => return Ok(()),
@@ -1818,7 +1822,7 @@ fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf
     use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::{
         Common::COMDLG_FILTERSPEC, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
-        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, SIGDN_FILESYSPATH,
+        FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_STRICTFILETYPES, SIGDN_FILESYSPATH,
     };
     unsafe {
         let dialog: IFileDialog = if save {
@@ -1831,7 +1835,8 @@ fn file_dialog(hwnd: isize, save: bool, name: &str) -> Option<std::path::PathBuf
         dialog.SetDefaultExtension(w!("pdf")).ok()?;
         let mut options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
         if save {
-            options |= FOS_OVERWRITEPROMPT;
+            // Nur als .pdf speichern – auch wenn jemand im Dialog eine andere Endung eintippt
+            options |= FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES;
         }
         dialog.SetOptions(options).ok()?;
         if save && !name.is_empty() {
