@@ -52,6 +52,8 @@ try {
         Copy-Item $_.FullName $dir
     }
     Copy-Item (Join-Path $PSScriptRoot 'Assets\*.png') (Join-Path $stage 'Assets') -Exclude 'StoreListing*'
+    # Texte des Manifests je Sprache (ms-resource:…), makepri nimmt sie in resources.pri auf
+    Copy-Item -Recurse (Join-Path $PSScriptRoot 'Strings') (Join-Path $stage 'Strings')
 
     $escape = { param($s) [Security.SecurityElement]::Escape($s) }
     $manifest = (Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'AppxManifest.xml')).

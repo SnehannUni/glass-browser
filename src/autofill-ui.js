@@ -6,6 +6,8 @@
   const ARM_MS = 500;
   let armedAt = 0;
   const send = (cmd, extra = {}) => window.ipc.postMessage(JSON.stringify({ cmd, ...extra }));
+  // Englisch aus ui-en.js (wie t() in ui.html); die Meldungen in data.message übersetzt schon Rust
+  const t = (de) => (document.documentElement.lang === 'en' && window.UI_EN?.[de]) || de;
   window.hidePasswordSuggestions = () => {
     if (!panel) return;
     panel.remove(); panel = null; request = null;
@@ -19,20 +21,20 @@
     panel.className = 'glass';
     panel.id = 'password-suggestions';
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'iCloud-Passwörter');
+    panel.setAttribute('aria-label', t('iCloud-Passwörter'));
     Object.assign(panel.style, { position: 'fixed', zIndex: 25, padding: '6px', borderRadius: '14px', width: '300px', backdropFilter: 'blur(24px) brightness(.6)', backgroundColor: 'rgba(28,30,38,.92)', color: 'white' });
     const heading = document.createElement('div');
-    heading.textContent = 'iCloud-Passwörter';
+    heading.textContent = t('iCloud-Passwörter');
     Object.assign(heading.style, { padding: '6px 8px', fontSize: '11px', opacity: '.7' });
     panel.append(heading);
     if (data.message || !data.accounts?.length) {
       const text = document.createElement('div');
-      text.textContent = data.message || 'Keine passenden Passwörter';
+      text.textContent = data.message || t('Keine passenden Passwörter');
       Object.assign(text.style, { padding: '8px', maxWidth: '280px' });
       panel.append(text);
       if (data.retry) {
         const retry = document.createElement('button');
-        retry.className = 'key'; retry.textContent = 'Erneut versuchen';
+        retry.className = 'key'; retry.textContent = t('Erneut versuchen');
         retry.addEventListener('click', e => { if (e.isTrusted) send('autofill_retry', {id:request}); });
         panel.append(retry);
       }

@@ -1,6 +1,8 @@
 // Bilder als PDF-Seiten: „PDF aus Bildern“ (neues PDF in einem neuen Tab oder an dieses anhängen) und Bilder beim
 // Organisieren einfügen. JPEG und PNG gehen unverändert ins PDF; andere Formate (WebP, GIF, BMP …) und gedrehte
 // Handyfotos (EXIF) werden über ein Canvas neu kodiert.
+import { t } from './en.mjs';
+
 const $ = (id) => document.getElementById(id);
 
 export const PAGE_SIZES = { a4: [595.28, 841.89], letter: [612, 792] };
@@ -55,7 +57,7 @@ export async function prepareImage(file) {
     // Dreht laut EXIF – Breite und Höhe sind so, wie man das Foto sieht
     bitmap = await createImageBitmap(new Blob([bytes], { type: file.type || '' }));
   } catch {
-    throw Object.assign(new Error('Kein Bild'), { userMessage: `„${file.name || 'Datei'}“ ist kein Bild, das sich öffnen lässt.` });
+    throw Object.assign(new Error('Kein Bild'), { userMessage: t('„{name}“ ist kein Bild, das sich öffnen lässt.', { name: file.name || t('Datei') }) });
   }
   const { width, height } = bitmap;
   try {
@@ -139,20 +141,20 @@ export function initImages(app) {
       tile.dataset.index = i;
       tile.title = item.file.name;
       const img = Object.assign(document.createElement('img'), { src: item.url, alt: item.file.name, draggable: false });
-      const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'remove', title: 'Entfernen' });
+      const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'remove', title: t('Entfernen') });
       remove.innerHTML = '<svg><use href="#i-close"/></svg>';
       remove.onclick = () => { URL.revokeObjectURL(item.url); items.splice(i, 1); render(); };
       const number = Object.assign(document.createElement('span'), { textContent: i + 1 });
       tile.append(img, remove, number);
       return tile;
     });
-    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'image-tile add', title: 'Weitere Bilder …' });
+    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'image-tile add', title: t('Weitere Bilder …') });
     more.innerHTML = '<svg><use href="#i-plus"/></svg>';
     more.onclick = pick;
     list.replaceChildren(...tiles, more);
     const none = !items.length;
     $('images-create').disabled = $('images-append').disabled = none;
-    $('images-title').textContent = none ? 'PDF aus Bildern' : `PDF aus ${items.length === 1 ? 'einem Bild' : `${items.length} Bildern`}`;
+    $('images-title').textContent = none ? t('PDF aus Bildern') : items.length === 1 ? t('PDF aus einem Bild') : t('PDF aus {n} Bildern', { n: items.length });
   }
 
   // Reihenfolge ziehen; Dateien von außen kommen dazu
@@ -227,7 +229,7 @@ export function initImages(app) {
     try {
       return await Promise.all(items.map((item) => item.image));
     } catch (err) {
-      app.toast(err.userMessage || 'Ein Bild ließ sich nicht lesen.');
+      app.toast(err.userMessage || t('Ein Bild ließ sich nicht lesen.'));
       return null;
     }
   }
@@ -237,7 +239,7 @@ export function initImages(app) {
     e.preventDefault();
     const images = await prepared();
     if (!images?.length) return;
-    const name = items.length === 1 ? `${stem(items[0].file.name)}.pdf` : 'Bilder.pdf';
+    const name = items.length === 1 ? `${stem(items[0].file.name)}.pdf` : t('Bilder.pdf');
     const opts = options();
     close();
     try {
@@ -245,7 +247,7 @@ export function initImages(app) {
       await app.openNew(bytes, name);
     } catch (err) {
       console.error(err);
-      app.toast('Das PDF ließ sich nicht erstellen.');
+      app.toast(t('Das PDF ließ sich nicht erstellen.'));
     }
   };
   $('images-append').onclick = async () => {
@@ -253,7 +255,7 @@ export function initImages(app) {
     if (!images?.length) return;
     const opts = options(), first = app.doc.numPages + 1;
     close();
-    const ok = await app.applyChange(images.length === 1 ? 'Bild als Seite angehängt' : `${images.length} Bilder als Seiten angehängt`, async (bytes, lib) => {
+    const ok = await app.applyChange(images.length === 1 ? t('Bild als Seite angehängt') : t('{n} Bilder als Seiten angehängt', { n: images.length }), async (bytes, lib) => {
       const pdf = await lib.PDFDocument.load(bytes, { updateMetadata: false });
       await addImagePages(pdf, images, opts);
       return pdf.save({ updateFieldAppearances: false });

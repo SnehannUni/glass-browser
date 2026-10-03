@@ -77,7 +77,7 @@ pub fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
 
 /// Vorschläge für einen (bereits URL-kodierten) Suchbegriff.
 fn fetch(encoded_query: &str) -> Vec<String> {
-    let path = format!("/complete/search?client=firefox&hl=de&ie=utf-8&oe=utf-8&q={encoded_query}");
+    let path = format!("/complete/search?client=firefox&hl={}&ie=utf-8&oe=utf-8&q={encoded_query}", crate::i18n::lang().code());
     // Antwortformat: ["begriff", ["vorschlag 1", "vorschlag 2", …], …]
     https_get(HOST, &path)
         .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())

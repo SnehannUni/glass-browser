@@ -10,6 +10,7 @@ const watchdog = setTimeout(() => { console.error('UI smoke test exceeded 60 sec
 
 const html = await readFile(new URL('../src/ui.html', import.meta.url));
 const autofillUI = await readFile(new URL('../src/autofill-ui.js', import.meta.url));
+const uiEn = await readFile(new URL('../src/ui-en.js', import.meta.url));
 const groupHover = await readFile(new URL('../src/group-hover.js', import.meta.url));
 const animationDebug = await readFile(new URL('../src/animation-debug.js', import.meta.url));
 const glassRim = await readFile(new URL('../src/glass-rim.js', import.meta.url));
@@ -20,6 +21,8 @@ const server = createServer((req, res) => {
     res.setHeader('Content-Type', 'text/javascript'); res.end(groupHover);
   } else if (req.url === '/glass-rim.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(glassRim);
+  } else if (req.url === '/ui-en.js') {
+    res.setHeader('Content-Type', 'text/javascript'); res.end(uiEn);
   } else if (req.url === '/autofill-ui.js') {
     res.setHeader('Content-Type', 'text/javascript'); res.end(autofillUI);
   } else if (req.url.startsWith('/suggest')) {

@@ -4,6 +4,7 @@
 // (PieceInfo) entfernen, Objekte in Objekt-Streams bündeln. Text, Schriften, Formulare und Anmerkungen bleiben.
 import { readPage } from './content.mjs';
 import { jpegOrientation } from './images.mjs';
+import { t, EN } from './en.mjs';
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,7 +14,8 @@ export const LEVELS = {
   low: { dpi: 96, quality: .55, hint: 'Bilder höchstens 96 dpi – die kleinste Datei, für den Bildschirm.' },
 };
 
-export const formatSize = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB`);
+// Dezimalkomma nur auf Deutsch
+export const formatSize = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1).replace('.', EN ? '.' : ',')} MB`);
 
 /** Entfernt alle Objekte, die vom Dokument aus nicht mehr erreichbar sind. Liefert, wie viele es waren. */
 export function dropUnused(lib, pdf) {
@@ -239,9 +241,9 @@ export function initCompress(app) {
   const showLevel = () => {
     for (const b of buttons) b.classList.toggle('on', b.dataset.level === level);
     // Ohne Bilder ergeben alle Stufen dasselbe – dann das sagen statt der Bild-Auflösung
-    $('compress-hint').textContent = noImages
+    $('compress-hint').textContent = t(noImages
       ? 'Dieses PDF enthält keine Bilder, die sich verkleinern lassen – darum ist jede Stufe gleich groß. Kleiner wird es durch gepackte Daten und weggelassene alte Fassungen.'
-      : LEVELS[level].hint;
+      : LEVELS[level].hint);
   };
   for (const b of buttons) b.onclick = () => { level = b.dataset.level; showLevel(); };
   const close = () => { dialog.hidden = true; session = null; app.container.focus(); };
@@ -256,18 +258,20 @@ export function initCompress(app) {
     const results = {};
     let chain = Promise.resolve();
     for (const which of [level, ...Object.keys(LEVELS).filter((l) => l !== level)]) {
-      sizeLabel(which, 'wird berechnet …');
+      sizeLabel(which, t('wird berechnet …'));
       results[which] = chain = chain.then(async () => {
         if (session !== current) return null;
         try {
           const { bytes, images } = await compressBytes(await app.loadPdfLib(), current.base.slice(), LEVELS[which]);
           current.recoded = (current.recoded || 0) + images;
           const kept = bytes.length < current.base.length * .97;
-          if (session === current) sizeLabel(which, kept ? `etwa ${formatSize(bytes.length)} (−${Math.round((1 - bytes.length / current.base.length) * 100)} %)` : 'kaum kleiner');
+          if (session === current) {
+            sizeLabel(which, kept ? t('etwa {size} (−{percent} %)', { size: formatSize(bytes.length), percent: Math.round((1 - bytes.length / current.base.length) * 100) }) : t('kaum kleiner'));
+          }
           return kept ? bytes : null;
         } catch (err) {
           console.error(err);
-          if (session === current) sizeLabel(which, 'geht nicht');
+          if (session === current) sizeLabel(which, t('geht nicht'));
           return null;
         }
       });
@@ -280,24 +284,25 @@ export function initCompress(app) {
     const current = session;
     if (!current) return false;
     submit.disabled = true;
-    submit.textContent = 'Wird berechnet …';
+    submit.textContent = t('Wird berechnet …');
     try {
       let bytes = await current.results[which];
       if (session !== current) return false;
-      if (!bytes) { app.toast('Das PDF ist schon kompakt – kleiner geht es kaum.'); return false; }
+      if (!bytes) { app.toast(t('Das PDF ist schon kompakt – kleiner geht es kaum.')); return false; }
       const size = bytes.length;
       if (app.protection) bytes = await app.encryptBytes(bytes, app.protection.password);
       close();
-      const result = await app.writeFile(bytes, `${app.name.replace(/\.pdf$/i, '')} (verkleinert).pdf`, true);
+      const result = await app.writeFile(bytes, t('{stem} (verkleinert).pdf', { stem: app.name.replace(/\.pdf$/i, '') }), true);
       if (!result.ok) {
-        if (!result.cancelled) app.toast('Speichern hat nicht geklappt' + (result.error ? `: ${result.error}` : '.'));
+        if (!result.cancelled) app.toast(t('Speichern hat nicht geklappt') + (result.error ? `: ${result.error}` : '.'));
         return false;
       }
-      app.toast(`${result.name ? `„${result.name}“` : 'Verkleinerte Fassung'} gespeichert – ${formatSize(size)} statt ${formatSize(current.base.length)}`);
+      const what = result.name ? t('„{name}“', { name: result.name }) : t('Verkleinerte Fassung');
+      app.toast(t('{what} gespeichert – {size} statt {before}', { what, size: formatSize(size), before: formatSize(current.base.length) }));
       return true;
     } finally {
       submit.disabled = false;
-      submit.textContent = 'Speichern unter …';
+      submit.textContent = t('Speichern unter …');
     }
   }
   $('compress-form').onsubmit = (e) => { e.preventDefault(); save(); };
@@ -309,18 +314,18 @@ export function initCompress(app) {
       noImages = false;
       showLevel();
       const current = session = { base: null, results: {} };
-      $('compress-size').textContent = 'Größe wird ermittelt …';
+      $('compress-size').textContent = t('Größe wird ermittelt …');
       for (const which of Object.keys(LEVELS)) sizeLabel(which, '');
       dialog.hidden = false;
       dialog.querySelector('form').focus();
       try {
         current.base = await app.workingBytes();
       } catch {
-        $('compress-size').textContent = 'Das PDF ließ sich nicht lesen.';
+        $('compress-size').textContent = t('Das PDF ließ sich nicht lesen.');
         return;
       }
       if (session !== current) return;
-      $('compress-size').textContent = `Jetzt ${formatSize(current.base.length)}. Die verkleinerte Fassung wird als neue Datei gespeichert, dieses PDF bleibt unverändert.`;
+      $('compress-size').textContent = t('Jetzt {size}. Die verkleinerte Fassung wird als neue Datei gespeichert, dieses PDF bleibt unverändert.', { size: formatSize(current.base.length) });
       current.results = estimate(current);
       // Alle Stufen fertig und nirgends ein Bild neu kodiert: Hinweis statt Bild-Auflösung
       Promise.all(Object.values(current.results)).then(() => {

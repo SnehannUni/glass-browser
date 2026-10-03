@@ -1,9 +1,11 @@
 // Formularfelder anlegen wie in Acrobat („Formular vorbereiten“): Rechteck auf der Seite aufziehen, schon ist ein
 // Textfeld, Kontrollkästchen oder eine Auswahlliste da – danach direkt ausfüllbar (PDF.js zeigt AcroForm-Felder).
-const $ = (id) => document.getElementById(id);
-const LABEL = { text: 'Textfeld', checkbox: 'Kontrollkästchen', dropdown: 'Auswahlliste' };
+import { t } from './en.mjs';
 
-/** Legt ein Feld `kind` auf Seite `index` im Rechteck `rect` (PDF-Punkte) an; Name: „Textfeld 1“, „Textfeld 2“ … */
+const $ = (id) => document.getElementById(id);
+const LABEL = { text: t('Textfeld'), checkbox: t('Kontrollkästchen'), dropdown: t('Auswahlliste') };
+
+/** Legt ein Feld `kind` auf Seite `index` im Rechteck `rect` (PDF-Punkte) an; Name: „Textfeld 1“, „Textfeld 2“ … (englisch „Text field 1“) */
 export async function addField(lib, bytes, { kind, index, rect, options = [] }) {
   const { PDFDocument, rgb, StandardFonts } = lib;
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -21,7 +23,7 @@ export async function addField(lib, bytes, { kind, index, rect, options = [] }) 
     form.createCheckBox(name).addToPage(page, { ...box, width: s, height: s });
   } else if (kind === 'dropdown') {
     const field = form.createDropdown(name);
-    field.addOptions(options.length ? options : ['Auswahl']);
+    field.addOptions(options.length ? options : [t('Auswahl')]);
     field.addToPage(page, box);
   } else {
     const field = form.createTextField(name);
@@ -66,7 +68,7 @@ export function initFields(app) {
       rect = [start[0], start[1] - h, start[0] + w, start[1]];
     }
     const options = $('field-options').value.split('\n').map((s) => s.trim()).filter(Boolean);
-    await app.applyChange(`${LABEL[kind]} angelegt`, (bytes, lib) => addField(lib, bytes, { kind, index: n - 1, rect, options }));
+    await app.applyChange(t('{kind} angelegt', { kind: LABEL[kind] }), (bytes, lib) => addField(lib, bytes, { kind, index: n - 1, rect, options }));
   };
 
   return {

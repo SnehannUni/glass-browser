@@ -48,6 +48,8 @@ const OWN: &[(&str, &[u8])] = &[
     // Deutsche Texte für die Werkzeuge von PDF.js (Englisch bleibt als Rückfall eingebaut)
     ("l10n/locale.json", br#"{"de":"de.ftl"}"#),
     ("l10n/de.ftl", include_bytes!("pdf/de.ftl")),
+    // Englische Texte der eigenen Werkzeuge (die von PDF.js selbst sind auf Englisch eingebaut)
+    ("en.mjs", include_bytes!("pdf/en.mjs")),
     // Dieselben Glas-Bausteine wie die Oberfläche (ui.html)
     ("glass-lens.js", include_bytes!("glass-lens.js")),
     ("glass-rim.js", include_bytes!("glass-rim.js")),
@@ -140,6 +142,7 @@ impl Documents {
             .replace("{{WALL}}", &format!("{HOST}wallpaper/{}", self.0.wall))
             .replace("{{API}}", &format!("{HOST}api/{}/", self.0.api))
             .replace("{{FILE}}", file.unwrap_or_default())
+            .replace("{{LANG}}", crate::i18n::lang().code())
     }
 }
 
@@ -364,7 +367,7 @@ pub fn serve(docs: &Documents, uri: &str, wallpaper: impl FnOnce() -> Option<Vec
         let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let html = match std::fs::read(&file) {
             Ok(bytes) => docs.viewer(&name, bytes, Some(key)),
-            Err(_) => format!("<!doctype html><meta charset=utf-8><title>{0}</title><p style=\"font:14px system-ui;color:#ccc\">{0} lässt sich nicht lesen.</p>", escape_html(&name)),
+            Err(_) => format!("<!doctype html><meta charset=utf-8><title>{0}</title><p style=\"font:14px system-ui;color:#ccc\">{0} {1}</p>", escape_html(&name), crate::i18n::tr("lässt sich nicht lesen.", "cannot be read.")),
         };
         return Some(Served { status: 200, mime: "text/html; charset=utf-8", body: Cow::Owned(html.into_bytes()), csp: Some(viewer_csp()) });
     }
@@ -485,7 +488,7 @@ fn save_as_result(path: Option<PathBuf>, bytes: &[u8]) -> Value {
 /// Merkt sich ein neues PDF und gibt die Adresse, unter der ein Tab es zeigt.
 fn new_document(name: &str, bytes: Vec<u8>) -> String {
     let name: String = name.trim().chars().filter(|c| !matches!(c, '/' | '\\' | '?' | '#')).take(120).collect();
-    let name = if name.is_empty() { "Neues PDF.pdf".to_owned() } else { name };
+    let name = if name.is_empty() { crate::i18n::tr("Neues PDF.pdf", "New PDF.pdf").to_owned() } else { name };
     let key = token();
     NEW.with(|n| {
         let mut docs = n.borrow_mut();

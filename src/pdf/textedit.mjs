@@ -4,6 +4,7 @@
 // Schrift: der installierten, die zum Original passt (Arial, Calibri …, eingebettet als Teilmenge), sonst in der
 // passenden Standardschrift (Helvetica, Times oder Courier). Schrift, Größe, Fett, Kursiv und Farbe lassen sich ändern.
 import { readPage, removeGlyphs, saveContent, centerIn, fillColor, standardFontFor } from './content.mjs';
+import { t } from './en.mjs';
 
 const $ = (id) => document.getElementById(id);
 const STANDARD = {
@@ -25,7 +26,7 @@ export async function replaceText(lib, bytes, index, rect, text, style = null, f
   const pdf = await lib.PDFDocument.load(bytes, { updateMetadata: false });
   const content = await readPage(lib, pdf, index);
   const hits = content.glyphs.filter((g) => centerIn(g.quad, rect));
-  if (!hits.length) throw userError('Dieser Text liegt in einem eingebetteten Objekt und lässt sich hier nicht ändern.');
+  if (!hits.length) throw userError(t('Dieser Text liegt in einem eingebetteten Objekt und lässt sich hier nicht ändern.'));
   const first = hits[0];
   removeGlyphs(content, hits);
   saveContent(lib, pdf, content);
@@ -35,14 +36,14 @@ export async function replaceText(lib, bytes, index, rect, text, style = null, f
       pdf.registerFontkit(fontkit);
       font = await pdf.embedFont(style.font.bytes, { subset: true });
       const missing = [...text].find((ch) => ch.trim() && !font.embedder.font.hasGlyphForCodePoint(ch.codePointAt(0)));
-      if (missing) throw userError(`„${missing}“ gibt es in dieser Schrift nicht.`);
+      if (missing) throw userError(t('„{char}“ gibt es in dieser Schrift nicht.', { char: missing }));
     } else {
       const f = style?.font?.standard;
       font = await pdf.embedFont(f ? lib.StandardFonts[STANDARD[f][(style.font.bold ? 1 : 0) + (style.font.italic ? 2 : 0)]] : standardFontFor(lib, first.baseFont));
       try {
         font.encodeText(text);
       } catch {
-        throw userError('Ein Zeichen lässt sich in der Standardschrift nicht darstellen – eine installierte Schrift wählen.');
+        throw userError(t('Ein Zeichen lässt sich in der Standardschrift nicht darstellen – eine installierte Schrift wählen.'));
       }
     }
     content.page.drawText(text, {
@@ -94,8 +95,8 @@ export function initTextEdit(app) {
       return g;
     };
     fontSelect.replaceChildren(
-      group('Standardschriften', Object.keys(STANDARD).map((f) => [`std:${f}`, f])),
-      ...(list.length ? [group('Installiert', list.map((f) => [`sys:${f.family}`, f.family]))] : []),
+      group(t('Standardschriften'), Object.keys(STANDARD).map((f) => [`std:${f}`, f])),
+      ...(list.length ? [group(t('Installiert'), list.map((f) => [`sys:${f.family}`, f.family]))] : []),
     );
   }));
 
@@ -221,7 +222,7 @@ export function initTextEdit(app) {
           color: style.color !== initial.color ? [1, 3, 5].map((i) => parseInt(style.color.slice(i, i + 2), 16) / 255) : null,
         };
       }
-      const label = !text.trim() ? 'Text entfernt' : text === original ? 'Schrift geändert' : 'Text geändert';
+      const label = t(!text.trim() ? 'Text entfernt' : text === original ? 'Schrift geändert' : 'Text geändert');
       await app.applyChange(label, async (bytes, lib) => {
         try {
           return await replaceText(lib, bytes, n - 1, rect, text, options, fontkit);
@@ -232,7 +233,7 @@ export function initTextEdit(app) {
       });
     } catch (err) {
       console.error(err);
-      app.toast('Die Schrift ließ sich nicht laden.');
+      app.toast(t('Die Schrift ließ sich nicht laden.'));
     }
   }
 

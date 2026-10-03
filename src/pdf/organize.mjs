@@ -3,6 +3,7 @@
 // Jede Änderung baut mit PDF.js (extractPages) ein neues PDF, Anmerkungen und Formularwerte inklusive, und lädt es
 // im Viewer neu. Drehen und leere Seiten kann PDF.js nicht – das übernimmt pdf-lib.
 import { prepareImage, pdfFromImages, isImageFile } from './images.mjs';
+import { t } from './en.mjs';
 
 const $ = (id) => document.getElementById(id);
 const THUMB = 150;
@@ -71,7 +72,7 @@ export function initOrganize(app) {
   function mark() {
     for (const tile of grid.children) tile.classList.toggle('selected', selected.has(+tile.dataset.index));
     const n = selected.size, total = app.doc.numPages;
-    count.textContent = n ? `${n} von ${total} ausgewählt` : `${total} ${total === 1 ? 'Seite' : 'Seiten'}`;
+    count.textContent = n ? t('{n} von {total} ausgewählt', { n, total }) : total === 1 ? t('1 Seite') : t('{n} Seiten', { n: total });
     for (const key of ['left', 'right', 'extract']) buttons[key].disabled = !n || busy;
     // Mindestens eine Seite muss bleiben
     buttons.del.disabled = !n || n >= total || busy;
@@ -213,7 +214,7 @@ export function initOrganize(app) {
     const order = [...rest.slice(0, at), ...pages, ...rest.slice(at)];
     if (order.every((old, i) => old === i)) return;
     const n = pages.length;
-    return change(n === 1 ? 'Seite verschoben' : `${n} Seiten verschoben`, (bytes) => reorder(bytes, order), pages.map((_, k) => at + k));
+    return change(n === 1 ? t('Seite verschoben') : t('{n} Seiten verschoben', { n }), (bytes) => reorder(bytes, order), pages.map((_, k) => at + k));
   }
 
   function remove() {
@@ -222,7 +223,7 @@ export function initOrganize(app) {
     const keep = all().filter((i) => !selected.has(i));
     const n = pages.length;
     const next = Math.min(Math.min(...pages), keep.length - 1);
-    return change(n === 1 ? 'Seite gelöscht' : `${n} Seiten gelöscht`,
+    return change(n === 1 ? t('Seite gelöscht') : t('{n} Seiten gelöscht', { n }),
       (bytes) => extractFrom(bytes, [{ document: null, includePages: keep }]), [next]);
   }
 
@@ -230,7 +231,7 @@ export function initOrganize(app) {
   async function rotate(delta) {
     const pages = [...selected];
     if (!pages.length) return;
-    return change(delta > 0 ? 'Nach rechts gedreht' : 'Nach links gedreht', async (bytes, { PDFDocument, degrees }) => {
+    return change(t(delta > 0 ? 'Nach rechts gedreht' : 'Nach links gedreht'), async (bytes, { PDFDocument, degrees }) => {
       const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
       for (const i of pages) {
         const page = pdf.getPage(i);
@@ -261,7 +262,7 @@ export function initOrganize(app) {
         datas.push(await pdfFromImages(lib, images, { size, margin: 0 }));
       }
     } catch (err) {
-      app.toast(err.userMessage || 'Diese Datei lässt sich nicht einfügen.');
+      app.toast(err.userMessage || t('Diese Datei lässt sich nicht einfügen.'));
       return;
     }
     const insertAfter = before - 1;
@@ -271,12 +272,12 @@ export function initOrganize(app) {
       try {
         added += await app.withDocument(data, (d) => d.numPages);
       } catch {
-        app.toast('Diese Datei ist kein gültiges PDF.');
+        app.toast(t('Diese Datei ist kein gültiges PDF.'));
         return;
       }
     }
-    const kinds = files.every(isPdf) ? 'PDFs' : files.every(isImageFile) ? 'Bilder' : 'Dateien';
-    const label = files.length === 1 ? `„${files[0].name}“ eingefügt` : `${files.length} ${kinds} eingefügt`;
+    const kinds = files.every(isPdf) ? '{n} PDFs eingefügt' : files.every(isImageFile) ? '{n} Bilder eingefügt' : '{n} Dateien eingefügt';
+    const label = files.length === 1 ? t('„{name}“ eingefügt', { name: files[0].name }) : t(kinds, { n: files.length });
     return change(label, (bytes) => extractFrom(bytes, [
       { document: null },
       // Mehrere Dateien landen in ihrer Reihenfolge hintereinander an derselben Stelle
@@ -288,7 +289,7 @@ export function initOrganize(app) {
   async function blank() {
     const at = selected.size ? Math.max(...selected) + 1 : app.doc.numPages;
     const size = await neighbourSize(at);
-    return change('Leere Seite eingefügt', async (bytes, { PDFDocument }) => {
+    return change(t('Leere Seite eingefügt'), async (bytes, { PDFDocument }) => {
       const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
       pdf.insertPage(at, size);
       return pdf.save({ updateFieldAppearances: false });
@@ -309,11 +310,12 @@ export function initOrganize(app) {
         if (last && last[1] === i - 1) last[1] = i; else ranges.push([i, i]);
       }
       const label = ranges.map(([a, b]) => (a === b ? `${a + 1}` : `${a + 1}–${b + 1}`)).join(', ');
-      const result = await app.writeFile(bytes, `${stem} (Seite${pages.length > 1 ? 'n' : ''} ${label}).pdf`, true);
-      if (result.ok) app.toast(pages.length === 1 ? 'Seite als eigenes PDF gespeichert' : `${pages.length} Seiten als eigenes PDF gespeichert`);
+      const fileName = t(pages.length > 1 ? '{stem} (Seiten {pages}).pdf' : '{stem} (Seite {pages}).pdf', { stem, pages: label });
+      const result = await app.writeFile(bytes, fileName, true);
+      if (result.ok) app.toast(pages.length === 1 ? t('Seite als eigenes PDF gespeichert') : t('{n} Seiten als eigenes PDF gespeichert', { n: pages.length }));
     } catch (err) {
       console.error(err);
-      app.toast('Das Extrahieren hat nicht geklappt.');
+      app.toast(t('Das Extrahieren hat nicht geklappt.'));
     } finally {
       busy = false;
       mark();

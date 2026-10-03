@@ -1,6 +1,8 @@
 // Bearbeiten wie in Acrobat: Hervorheben, Text, Zeichnen, Bilder und Unterschriften.
 // Die Werkzeuge selbst sind die Editoren von PDF.js (sie schreiben echte PDF-Anmerkungen, saveDocument speichert sie);
 // hier sind Leiste, Einstellungen und der Dialog für Unterschriften – PDF.js bringt dafür nur die Schnittstelle mit.
+import { t, LOCALE, percent } from './en.mjs';
+
 const $ = (id) => document.getElementById(id);
 
 /** Farben zum Hervorheben: Name=Farbe, wie PDF.js sie erwartet (annotationEditorHighlightColors). */
@@ -98,12 +100,12 @@ export class Signatures {
   async renderEditButton(editor) {
     const button = document.createElement('button');
     button.className = 'glass-edit-signature';
-    button.title = 'Beschreibung bearbeiten';
+    button.title = t('Beschreibung bearbeiten');
     button.innerHTML = '<svg viewBox="0 0 16 16"><use href="#i-pen"/></svg>';
     button.addEventListener('click', (e) => {
       e.stopPropagation();
-      const text = prompt('Beschreibung der Unterschrift', editor.description || '');
-      if (text !== null) editor.description = text.trim() || 'Unterschrift';
+      const text = prompt(t('Beschreibung der Unterschrift'), editor.description || '');
+      if (text !== null) editor.description = text.trim() || t('Unterschrift');
     });
     return button;
   }
@@ -149,7 +151,7 @@ const dialog = (() => {
     add.disabled = !ready;
     $('sign-thickness').hidden = tab !== 'draw';
     save.disabled = !!manager && manager.list.length >= 5;
-    save.parentElement.title = save.disabled ? 'Es sind schon 5 Unterschriften gespeichert – zuerst eine entfernen.' : '';
+    save.parentElement.title = save.disabled ? t('Es sind schon 5 Unterschriften gespeichert – zuerst eine entfernen.') : '';
   }
   const point = (e) => {
     const r = pad.getBoundingClientRect();
@@ -237,13 +239,13 @@ const dialog = (() => {
     }
     if (!data) {
       add.disabled = true;
-      add.textContent = 'Nicht erkannt';
-      setTimeout(() => { add.textContent = 'Hinzufügen'; update(); }, 1500);
+      add.textContent = t('Nicht erkannt');
+      setTimeout(() => { add.textContent = t('Hinzufügen'); update(); }, 1500);
       return;
     }
     done = true;
     const target = editor, owner = manager;
-    const text = description.value.trim() || (tab === 'type' ? typeInput.value.trim() : '') || 'Unterschrift';
+    const text = description.value.trim() || (tab === 'type' ? typeInput.value.trim() : '') || t('Unterschrift');
     close();
     await owner.add(target, data, text, save.checked && !save.disabled);
   }
@@ -507,7 +509,7 @@ export function initTools(app) {
   // Drehen das Bild gedreht neu; ein neuer Bild-Editor ersetzt den alten (ein Schritt fürs Rückgängig).
   const rotatable = new Map(); // Editor-ID → { editor, n, source, w0, h0, angle } – w0/h0: ungedrehte Größe in PDF-Punkten
   const author = () => $('note-author').value.trim();
-  const today = () => new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const today = () => new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' });
   /** Stempel als Bild (dreifache Auflösung, damit er beim Zoomen scharf bleibt); Größe in PDF-Punkten. */
   function stampImage(text, color, second) {
     const scale = 3, lines = [text.toUpperCase(), ...(second ? [second] : [])];
@@ -567,9 +569,9 @@ export function initTools(app) {
     const editor = await addEditor(n, {
       annotationType: T.STAMP, bitmapUrl: URL.createObjectURL(blob), isSvg: false,
       rect: [x - w / 2, y - h / 2, x + w / 2, y + h / 2],
-      accessibilityData: { decorative: false, altText: source.kind === 'stamp' ? `Stempel: ${source.text}` : 'Bild' },
+      accessibilityData: { decorative: false, altText: source.kind === 'stamp' ? t('Stempel: {text}', { text: source.text }) : t('Bild') },
     }, { replace });
-    if (!editor) { app.toast('Die Seite ist noch nicht bereit – bitte noch einmal.'); return null; }
+    if (!editor) { app.toast(t('Die Seite ist noch nicht bereit – bitte noch einmal.')); return null; }
     rotatable.set(editor.id, { editor, n, source, w0, h0, angle });
     // Gleich ausgewählt, damit Verschieben, Größe und Drehgriff bereitstehen
     requestAnimationFrame(() => { editor._uiManager.setSelected?.(editor); syncHandles(); });
@@ -589,7 +591,7 @@ export function initTools(app) {
   }
   async function placePicture(file) {
     const bitmap = await createImageBitmap(file).catch(() => null);
-    if (!bitmap) { app.toast('Dieses Bild lässt sich nicht lesen.'); return null; }
+    if (!bitmap) { app.toast(t('Dieses Bild lässt sich nicht lesen.')); return null; }
     const n = viewer.currentPageNumber;
     const [pw, ph] = viewer.getPageView(n - 1).viewport.rawDims ? [viewer.getPageView(n - 1).viewport.rawDims.pageWidth, viewer.getPageView(n - 1).viewport.rawDims.pageHeight] : [612, 792];
     // 96 dpi → Punkte, höchstens knapp die halbe Seite
@@ -603,12 +605,13 @@ export function initTools(app) {
   document.body.append(imageInput);
   $('pick-image').onclick = () => { imageInput.value = ''; imageInput.click(); };
   imageInput.addEventListener('change', () => { if (imageInput.files[0]) placePicture(imageInput.files[0]); });
+  // Auf Englisch englische Stempel – der Text steht dann so im PDF
   const STAMPS = [
     ['Genehmigt', '#1e8a4c'], ['Geprüft', '#1f5fd6'], ['Erledigt', '#1e8a4c'],
     ['Entwurf', '#5e5ce6'], ['Vertraulich', '#d62f2f'], ['Abgelehnt', '#d62f2f'],
-  ];
+  ].map(([text, color]) => [t(text), color]);
   for (const [text, color] of STAMPS) {
-    const b = Object.assign(document.createElement('button'), { className: 'stamp', textContent: text, title: `„${text}“ einsetzen` });
+    const b = Object.assign(document.createElement('button'), { className: 'stamp', textContent: text, title: t('„{text}“ einsetzen', { text }) });
     b.style.setProperty('--stamp', color);
     b.onclick = () => placeStamp(text, color, $('stamp-date').checked);
     $('stamps').append(b);
@@ -636,7 +639,7 @@ export function initTools(app) {
     if (!el || el.querySelector(':scope > .rotate-handle')) return;
     const handle = document.createElement('div');
     handle.className = 'rotate-handle';
-    handle.title = 'Drehen (Umschalt: in 15°-Schritten)';
+    handle.title = t('Drehen (Umschalt: in 15°-Schritten)');
     handle.innerHTML = '<svg viewBox="0 0 16 16"><use href="#i-rotate-right"/></svg>';
     handle.addEventListener('pointerdown', (e) => rotate(e, el, handle));
     el.append(handle);
@@ -684,7 +687,7 @@ export function initTools(app) {
     };
     const commit = async () => {
       const current = rotatable.get(el.id) || (await adopt(el, r));
-      if (!current) { app.toast('Dieses Bild lässt sich nicht drehen.'); return; }
+      if (!current) { app.toast(t('Dieses Bild lässt sich nicht drehen.')); return; }
       // Mitte und Maßstab aus der jetzigen Lage – das Bild kann inzwischen verschoben oder skaliert sein
       const g = app.pageGeometry(current.n);
       const [x, y] = g.eventToPdf({ clientX: cx, clientY: cy });
@@ -739,7 +742,7 @@ export function initTools(app) {
     'highlight-thickness': [P.HIGHLIGHT_THICKNESS, (v) => v, (v) => v],
     'freetext-size': [P.FREETEXT_SIZE, (v) => v, (v) => v],
     'ink-thickness': [P.INK_THICKNESS, (v) => { inkThickness = v; return v; }, (v) => v],
-    'ink-opacity': [P.INK_OPACITY, (v) => { inkOpacity = v / 100; return v / 100; }, (v) => `${v} %`],
+    'ink-opacity': [P.INK_OPACITY, (v) => { inkOpacity = v / 100; return v / 100; }, percent],
   };
   for (const input of panel.querySelectorAll('input[type=range][data-param]')) {
     const [type, value, label] = sliders[input.dataset.param];
@@ -757,13 +760,13 @@ export function initTools(app) {
     for (const saved of app.signatures.list) {
       const item = document.createElement('div');
       item.className = 'saved';
-      const use = Object.assign(document.createElement('button'), { className: 'use', title: `${saved.description} einfügen` });
+      const use = Object.assign(document.createElement('button'), { className: 'use', title: t('{description} einfügen', { description: saved.description }) });
       use.append(await app.signatures.preview(saved).catch(() => document.createTextNode(saved.description)));
       use.onclick = async () => {
         await setTool('signature');
         param(P.CREATE, await app.signatures.editorData(saved));
       };
-      const remove = Object.assign(document.createElement('button'), { className: 'remove', title: 'Gespeicherte Unterschrift entfernen' });
+      const remove = Object.assign(document.createElement('button'), { className: 'remove', title: t('Gespeicherte Unterschrift entfernen') });
       remove.innerHTML = '<svg><use href="#i-close"/></svg>';
       remove.onclick = () => app.signatures.remove(saved.uuid);
       item.append(use, remove);

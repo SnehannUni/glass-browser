@@ -1,8 +1,11 @@
 // Notizen wie in Acrobat: auf die Seite heften, aufklappen, schreiben, verschieben – und alle Kommentare des
 // Dokuments in der Seitenleiste. Im PDF sind Notizen /Text-Anmerkungen; beim Öffnen übernimmt Glass sie (auch die aus
 // anderen Programmen) in die eigene Ebene, damit sie sich bearbeiten lassen, und schreibt sie beim Speichern zurück.
+import { t, LOCALE } from './en.mjs';
+
 const $ = (id) => document.getElementById(id);
 const ICON = 22; // Größe des Symbols in PDF-Punkten
+// Art der Anmerkung (annotationType von PDF.js) für die Kommentarliste; übersetzt beim Anzeigen
 const TYPE_LABEL = {
   1: 'Notiz', 3: 'Text', 4: 'Linie', 5: 'Rechteck', 6: 'Ellipse', 7: 'Vieleck', 8: 'Linienzug', 9: 'Hervorhebung',
   10: 'Unterstrichen', 11: 'Gewellt', 12: 'Durchgestrichen', 13: 'Stempel', 14: 'Einfügen', 15: 'Zeichnung', 17: 'Datei',
@@ -16,7 +19,7 @@ const parsePdfDate = (s) => {
   const m = /D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?/.exec(s || '');
   return m ? new Date(Date.UTC(+m[1], (+m[2] || 1) - 1, +m[3] || 1, +m[4] || 0, +m[5] || 0, +m[6] || 0)) : null;
 };
-const when = (d) => (d ? d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+const when = (d) => (d ? d.toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
 
 export function initNotes(app) {
   let notes = []; // { id, page, x, y (linke obere Ecke, PDF-Punkte), text, author, color, date, open }
@@ -33,7 +36,7 @@ export function initNotes(app) {
     const g = app.pageGeometry(n);
     for (const note of notes.filter((x) => x.page === n)) {
       const [left, top] = g.toPercent(note.x, note.y);
-      const pin = Object.assign(document.createElement('button'), { className: 'note-pin', title: note.text || 'Notiz' });
+      const pin = Object.assign(document.createElement('button'), { className: 'note-pin', title: note.text || t('Notiz') });
       pin.dataset.id = note.id;
       pin.style.left = `${left}%`;
       pin.style.top = `${top}%`;
@@ -54,10 +57,10 @@ export function initNotes(app) {
     el.style.right = left > 62 ? `calc(${100 - left}% + 8px)` : '';
     el.style.top = `${top}%`;
     el.style.setProperty('--note', note.color);
-    el.innerHTML = `<header><b></b><span></span><button class="close" title="Zuklappen"><svg><use href="#i-close"/></svg></button></header>
-      <textarea placeholder="Notiz schreiben …" rows="4"></textarea>
-      <footer><button class="delete" title="Notiz löschen"><svg><use href="#i-trash"/></svg>Löschen</button></footer>`;
-    el.querySelector('b').textContent = note.author || 'Notiz';
+    el.innerHTML = `<header><b></b><span></span><button class="close" title="${t('Zuklappen')}"><svg><use href="#i-close"/></svg></button></header>
+      <textarea placeholder="${t('Notiz schreiben …')}" rows="4"></textarea>
+      <footer><button class="delete" title="${t('Notiz löschen')}"><svg><use href="#i-trash"/></svg>${t('Löschen')}</button></footer>`;
+    el.querySelector('b').textContent = note.author || t('Notiz');
     el.querySelector('span').textContent = when(note.date);
     const text = el.querySelector('textarea');
     text.value = note.text;
@@ -86,7 +89,7 @@ export function initNotes(app) {
   function remove(note) {
     notes = notes.filter((x) => x !== note);
     changed(true, note.page);
-    app.toast('Notiz gelöscht', { label: 'Rückgängig', run: () => { notes.push(note); note.open = false; changed(true, note.page); } });
+    app.toast(t('Notiz gelöscht'), { label: t('Rückgängig'), run: () => { notes.push(note); note.open = false; changed(true, note.page); } });
   }
 
   // Symbol ziehen = verschieben, kurz klicken = auf/zu
@@ -137,12 +140,12 @@ export function initNotes(app) {
     const box = $('comments');
     if (box.hidden) return;
     const items = [
-      ...notes.map((n) => ({ page: n.page, y: n.y, label: 'Notiz', text: n.text, author: n.author, date: n.date, color: n.color, note: n })),
-      ...others.map((o) => ({ page: o.page, y: o.rect[3], label: TYPE_LABEL[o.type] || 'Anmerkung', text: o.text, author: o.author, date: o.date, color: o.color })),
+      ...notes.map((n) => ({ page: n.page, y: n.y, label: t('Notiz'), text: n.text, author: n.author, date: n.date, color: n.color, note: n })),
+      ...others.map((o) => ({ page: o.page, y: o.rect[3], label: t(TYPE_LABEL[o.type] || 'Anmerkung'), text: o.text, author: o.author, date: o.date, color: o.color })),
     ].sort((a, b) => a.page - b.page || b.y - a.y);
     box.replaceChildren();
     if (!items.length) {
-      const empty = Object.assign(document.createElement('p'), { className: 'empty', textContent: 'Noch keine Kommentare. Mit dem Notiz-Werkzeug (N) eine Notiz anheften.' });
+      const empty = Object.assign(document.createElement('p'), { className: 'empty', textContent: t('Noch keine Kommentare. Mit dem Notiz-Werkzeug (N) eine Notiz anheften.') });
       box.append(empty);
       return;
     }
@@ -150,7 +153,7 @@ export function initNotes(app) {
     for (const item of items) {
       if (item.page !== page) {
         page = item.page;
-        box.append(Object.assign(document.createElement('h4'), { textContent: `Seite ${page}` }));
+        box.append(Object.assign(document.createElement('h4'), { textContent: t('Seite {n}', { n: page }) }));
       }
       const b = document.createElement('button');
       b.className = 'comment';
@@ -158,7 +161,7 @@ export function initNotes(app) {
       b.innerHTML = '<span class="dot"></span><div><b></b><small></small><p></p></div>';
       b.querySelector('b').textContent = item.author ? `${item.label} · ${item.author}` : item.label;
       b.querySelector('small').textContent = when(item.date);
-      b.querySelector('p').textContent = item.text || (item.note ? 'Leere Notiz' : '');
+      b.querySelector('p').textContent = item.text || (item.note ? t('Leere Notiz') : '');
       b.onclick = () => {
         app.viewer.scrollPageIntoView({ pageNumber: item.page, destArray: [null, { name: 'XYZ' }, null, item.y + 60, null] });
         if (item.note) toggle(item.note, true);

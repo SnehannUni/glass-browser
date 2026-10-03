@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Vorlage für das Microsoft-Store-Paket. store/build-msix.ps1 ersetzt die __PLATZHALTER__:
+<!-- Vorlage für das Microsoft-Store-Paket. Sprachabhängige Texte (ms-resource:…) stehen in store/Strings/<Sprache>/Resources.resw. store/build-msix.ps1 ersetzt die __PLATZHALTER__:
      Identität und Herausgeber stammen aus dem Partner Center (App → Produktidentität), die Version aus der Build-Nummer. -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -15,7 +15,7 @@
     <DisplayName>Winter Browser</DisplayName>
     <PublisherDisplayName>__PUBLISHER_NAME__</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <Description>Ein schneller, klarer Browser mit Werbeblocker, PDF-Editor und Mail-Ansicht.</Description>
+    <Description>ms-resource:Description</Description>
   </Properties>
 
   <Dependencies>
@@ -63,7 +63,7 @@
         <!-- Webseiten und PDFs (öffnen im eigenen PDF-Viewer) -->
         <uap3:Extension Category="windows.fileTypeAssociation">
           <uap3:FileTypeAssociation Name="htmlfile" Parameters="--single-argument %1">
-            <uap:DisplayName>Winter Browser HTML-Dokument</uap:DisplayName>
+            <uap:DisplayName>ms-resource:HtmlDocument</uap:DisplayName>
             <uap:SupportedFileTypes>
               <uap:FileType>.htm</uap:FileType>
               <uap:FileType>.html</uap:FileType>
@@ -73,7 +73,7 @@
         </uap3:Extension>
         <uap3:Extension Category="windows.fileTypeAssociation">
           <uap3:FileTypeAssociation Name="pdffile" Parameters="--single-argument %1">
-            <uap:DisplayName>Winter Browser PDF-Dokument</uap:DisplayName>
+            <uap:DisplayName>ms-resource:PdfDocument</uap:DisplayName>
             <uap:SupportedFileTypes>
               <uap:FileType>.pdf</uap:FileType>
             </uap:SupportedFileTypes>

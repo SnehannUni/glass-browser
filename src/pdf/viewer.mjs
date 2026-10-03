@@ -1,8 +1,12 @@
 // Glass-PDF-Viewer: PDF.js rendert, Oberfläche und Bedienung sind eigen.
 // Läuft mit isoliertem Sandbox-Origin (pdf.rs); Skripte und Daten kommen von glass-pdf.localhost aus der Exe.
+import { t, EN, percent, translatePage } from './en.mjs';
+
 const BASE = 'http://glass-pdf.localhost/';
 const $ = (id) => document.getElementById(id);
 const name = document.body.dataset.name;
+// Englische Oberfläche: die festen Texte gleich übersetzen, noch bevor PDF.js geladen ist
+translatePage();
 
 const pdfjsLib = await import(BASE + 'pdf.min.mjs');
 globalThis.pdfjsLib = pdfjsLib; // pdf_viewer.mjs erwartet die Bibliothek global
@@ -216,7 +220,8 @@ const linkService = new PDFLinkService({ eventBus, externalLinkTarget: LinkTarge
 const findController = new PDFFindController({ eventBus, linkService });
 // Was nur der Viewer dieses Tabs darf (Unterschriften, Speichern, Verschlüsseln): geheime Adresse aus pdf.rs
 const API = document.body.dataset.api;
-// Bearbeiten (editor.mjs): die Editoren von PDF.js, deutsch beschriftet, mit eigenem Dialog für Unterschriften
+// Bearbeiten (editor.mjs): die Editoren von PDF.js, deutsch (de.ftl) oder englisch (eingebaute Texte von PDF.js)
+// beschriftet, mit eigenem Dialog für Unterschriften
 const signatures = new Signatures(pdfjsLib, API + 'signatures', () => app.onSignaturesChanged?.());
 const viewer = new PDFViewer({
   container, viewer: $('viewer'), eventBus, linkService, findController,
@@ -224,7 +229,8 @@ const viewer = new PDFViewer({
   annotationEditorMode: pdfjsLib.AnnotationEditorType.NONE,
   annotationEditorHighlightColors: HIGHLIGHT_COLORS,
   signatureManager: signatures,
-  l10n: new GenericL10n('de'),
+  // 'en-us' steht nicht in locale.json – dann nimmt GenericL10n seine eingebauten englischen Texte
+  l10n: new GenericL10n(EN ? 'en-us' : 'de'),
   imageResourcesPath: BASE + 'images/',
 });
 linkService.setViewer(viewer);
@@ -266,26 +272,26 @@ try {
   doc = await openDocument(new Uint8Array(await res.arrayBuffer()));
 } catch (err) {
   if (err.message === 'gone') {
-    showStatus('Das Dokument ist nicht mehr im Speicher.', 'error');
-    const again = Object.assign(document.createElement('button'), { textContent: 'Neu laden', className: 'again' });
+    showStatus(t('Das Dokument ist nicht mehr im Speicher.'), 'error');
+    const again = Object.assign(document.createElement('button'), { textContent: t('Neu laden'), className: 'again' });
     again.onclick = () => location.reload();
     status.append(again);
   } else {
-    showStatus(err.name === 'InvalidPDFException' ? 'Diese Datei ist kein gültiges PDF.' : 'Das PDF ließ sich nicht öffnen.', 'error');
+    showStatus(t(err.name === 'InvalidPDFException' ? 'Diese Datei ist kein gültiges PDF.' : 'Das PDF ließ sich nicht öffnen.'), 'error');
   }
   throw err;
 }
 
 function askPassword(answer, wrong) {
   const form = $('password'), input = $('password-input');
-  showStatus(wrong ? 'Falsches Passwort – noch einmal versuchen.' : 'Dieses PDF ist mit einem Passwort geschützt.', 'asking');
+  showStatus(t(wrong ? 'Falsches Passwort – noch einmal versuchen.' : 'Dieses PDF ist mit einem Passwort geschützt.'), 'asking');
   form.hidden = false;
   input.value = '';
   input.focus();
   form.onsubmit = (e) => {
     e.preventDefault();
     form.hidden = true;
-    showStatus('PDF wird geöffnet …');
+    showStatus(t('PDF wird geöffnet …'));
     answer(input.value);
   };
 }
@@ -295,7 +301,7 @@ let dirty = false, edited = false;
 function setDirty(on) {
   dirty = on;
   $('download').classList.toggle('dirty', on);
-  $('download').title = on ? 'Änderungen speichern (Strg S)' : 'Speichern (Strg S)';
+  $('download').title = t(on ? 'Änderungen speichern (Strg S)' : 'Speichern (Strg S)');
 }
 // Ungespeicherte Änderungen: vor Neu laden oder Wegnavigieren nachfragen
 addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
@@ -383,11 +389,11 @@ $('next-page').onclick = () => viewer.nextPage();
 // ---------- Zoom ----------
 const zoomValue = $('zoom-value'), fit = $('fit');
 eventBus.on('scalechanging', ({ scale, presetValue }) => {
-  zoomValue.textContent = `${Math.round(scale * 100)} %`;
+  zoomValue.textContent = percent(Math.round(scale * 100));
   // Der Knopf zeigt, wohin er als Nächstes umschaltet
   const width = presetValue === 'page-width';
   fit.querySelector('use').setAttribute('href', width ? '#i-fit-page' : '#i-fit-width');
-  fit.title = width ? 'Ganze Seite zeigen' : 'An Breite anpassen';
+  fit.title = t(width ? 'Ganze Seite zeigen' : 'An Breite anpassen');
 });
 $('zoom-in').onclick = () => viewer.increaseScale();
 $('zoom-out').onclick = () => viewer.decreaseScale();
@@ -546,7 +552,7 @@ findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeFind();
 });
 const showCount = ({ current, total }) => {
-  findCount.textContent = !findInput.value ? '' : total ? `${current} von ${total}` : 'Keine Treffer';
+  findCount.textContent = !findInput.value ? '' : total ? t('{current} von {total}', { current, total }) : t('Keine Treffer');
 };
 eventBus.on('updatefindmatchescount', ({ matchesCount }) => showCount(matchesCount));
 eventBus.on('updatefindcontrolstate', ({ state, matchesCount }) => {
@@ -558,7 +564,7 @@ eventBus.on('updatefindcontrolstate', ({ state, matchesCount }) => {
 $('theme').onclick = () => {
   const dark = document.body.classList.toggle('dark');
   $('theme').querySelector('use').setAttribute('href', dark ? '#i-sun' : '#i-moon');
-  $('theme').title = dark ? 'Helle Seiten' : 'Dunkle Seiten';
+  $('theme').title = t(dark ? 'Helle Seiten' : 'Dunkle Seiten');
   $('theme').classList.toggle('on', dark);
   scheduleInk();
 };
@@ -651,11 +657,11 @@ async function applyChange(label, make, { toastUndo = true } = {}) {
     setDirty(true);
     dispatchEvent(new CustomEvent('glass-history', { detail: 'new' }));
     // Die Meldung darf vom Ergebnis abhängen (etwa die neue Dateigröße)
-    if (label) toast(typeof label === 'function' ? label() : label, toastUndo ? { label: 'Rückgängig', run: undoChange } : null);
+    if (label) toast(typeof label === 'function' ? label() : label, toastUndo ? { label: t('Rückgängig'), run: undoChange } : null);
     return true;
   } catch (err) {
     console.error(err);
-    toast('Das hat nicht geklappt – das PDF ist unverändert.');
+    toast(t('Das hat nicht geklappt – das PDF ist unverändert.'));
     return false;
   } finally {
     changing = false;
@@ -678,14 +684,14 @@ async function travel(from, to, label, again, kind) {
     return true;
   } catch (err) {
     console.error(err);
-    toast('Das hat nicht geklappt – das PDF ist unverändert.');
+    toast(t('Das hat nicht geklappt – das PDF ist unverändert.'));
     return false;
   } finally {
     changing = false;
     document.body.classList.remove('busy');
   }
 }
-const undoChange = () => travel(history, future, 'Rückgängig gemacht', { label: 'Wiederholen', run: () => redoChange() }, 'undo');
+const undoChange = () => travel(history, future, t('Rückgängig gemacht'), { label: t('Wiederholen'), run: () => redoChange() }, 'undo');
 const redoChange = () => {
   // Inzwischen etwas Neues gemacht (Anmerkung, Notiz …): Wiederholen würde das überschreiben – wie in jedem Editor verfällt es
   if (edited && future.length) {
@@ -693,7 +699,7 @@ const redoChange = () => {
     dispatchEvent(new CustomEvent('glass-history', { detail: 'new' }));
     return Promise.resolve(false);
   }
-  return travel(future, history, 'Wiederholt', { label: 'Rückgängig', run: () => undoChange() }, 'redo');
+  return travel(future, history, t('Wiederholt'), { label: t('Rückgängig'), run: () => undoChange() }, 'redo');
 };
 
 /** Erweiterungen, die beim Öffnen Bytes übernehmen (Notizen): `async (doc) => strippedBytes | null`. */
@@ -753,15 +759,15 @@ async function save(as = false) {
     const bytes = await exportBytes();
     const result = await writeFile(bytes, name, as || !fileKey);
     if (!result.ok) {
-      if (!result.cancelled) toast('Speichern hat nicht geklappt' + (result.error ? `: ${result.error}` : '.'));
+      if (!result.cancelled) toast(t('Speichern hat nicht geklappt') + (result.error ? `: ${result.error}` : '.'));
       return;
     }
     if (result.file) fileKey = result.file;
     setDirty(false);
-    toast(result.downloaded ? 'Als Download gespeichert' : result.name ? `Gespeichert unter „${result.name}“` : 'Gespeichert');
+    toast(result.downloaded ? t('Als Download gespeichert') : result.name ? t('Gespeichert unter „{name}“', { name: result.name }) : t('Gespeichert'));
   } catch (err) {
     console.error(err);
-    toast('Speichern hat nicht geklappt.');
+    toast(t('Speichern hat nicht geklappt.'));
   } finally {
     saving = false;
   }
@@ -773,7 +779,7 @@ async function openNew(bytes, fileName) {
   try {
     const res = await fetch(API + 'open-new?name=' + encodeURIComponent(fileName), { method: 'POST', body: bytes });
     if (!res.ok) throw new Error('open-new ' + res.status);
-    toast(`„${fileName}“ ist in einem neuen Tab geöffnet`);
+    toast(t('„{name}“ ist in einem neuen Tab geöffnet', { name: fileName }));
   } catch (err) {
     console.warn(err);
     download(bytes, fileName);
@@ -848,9 +854,9 @@ for (const item of more.querySelectorAll('[data-action]')) {
 // Mit Passwort schützen (wirkt beim Speichern, wie in Acrobat)
 const protectDialog = $('protect-dialog');
 function openProtect() {
-  $('protect-state').textContent = protection
+  $('protect-state').textContent = t(protection
     ? 'Das PDF ist mit einem Passwort geschützt. Ein neues Passwort ersetzt es.'
-    : 'Wer das PDF öffnen will, braucht dann dieses Passwort.';
+    : 'Wer das PDF öffnen will, braucht dann dieses Passwort.');
   $('protect-remove').hidden = !protection;
   $('protect-password').value = $('protect-repeat').value = '';
   $('protect-error').textContent = '';
@@ -863,17 +869,17 @@ $('protect-remove').onclick = () => {
   protection = null;
   setDirty(true);
   closeProtect();
-  toast('Passwortschutz wird beim Speichern entfernt');
+  toast(t('Passwortschutz wird beim Speichern entfernt'));
 };
 $('protect-form').onsubmit = (e) => {
   e.preventDefault();
   const pw = $('protect-password').value, again = $('protect-repeat').value;
-  if (pw.length < 4) { $('protect-error').textContent = 'Mindestens 4 Zeichen.'; return; }
-  if (pw !== again) { $('protect-error').textContent = 'Die Passwörter stimmen nicht überein.'; return; }
+  if (pw.length < 4) { $('protect-error').textContent = t('Mindestens 4 Zeichen.'); return; }
+  if (pw !== again) { $('protect-error').textContent = t('Die Passwörter stimmen nicht überein.'); return; }
   protection = { password: pw, original: false };
   setDirty(true);
   closeProtect();
-  toast('Wird beim Speichern mit Passwort geschützt (AES-256)');
+  toast(t('Wird beim Speichern mit Passwort geschützt (AES-256)'));
 };
 protectDialog.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') closeProtect(); });
 protectDialog.addEventListener('pointerdown', (e) => { if (e.target === protectDialog) closeProtect(); });
@@ -1051,5 +1057,5 @@ window.addEventListener('keydown', (e) => {
 
 // Formular wie in Acrobat ankündigen: Felder lassen sich direkt ausfüllen, Speichern behält die Werte
 doc.getFieldObjects().then((fields) => {
-  if (fields && Object.keys(fields).length) toast('Formular – Felder direkt ausfüllen, dann speichern (Strg S)');
+  if (fields && Object.keys(fields).length) toast(t('Formular – Felder direkt ausfüllen, dann speichern (Strg S)'));
 }).catch(() => {});

@@ -18,7 +18,7 @@ const original = synthetic ? await readFile(adapterPath) : null;
 if (synthetic) await writeFile(adapterPath, `import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',async line=>{const q=JSON.parse(line);if(q.op==='list')await new Promise(r=>setTimeout(r,800));const data=q.op==='list'?{accounts:[{username:'synthetic-user',label:'Test account'}]}:{username:'synthetic-user',password:'synthetic-password'};process.stdout.write(JSON.stringify({id:q.id,data})+'\\n');});`);
 if (unavailable) await writeFile(adapterPath, `import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',async line=>{const q=JSON.parse(line);if(q.op==='list')await new Promise(r=>setTimeout(r,800));const data=q.op==='list'?{accounts:[{username:'synthetic-user',label:'Test account'}]}:{username:'synthetic-user',password:'synthetic-password'};process.stdout.write(JSON.stringify({id:q.id,error:"iCloud-Anbindung nicht verfügbar. Lokales Setup prüfen."})+'\\n');});`);
 const app = spawn(resolve('target/release/glass-browser.exe'), ['about:blank'], {
-  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
+  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile, GLASS_LANG: 'de',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
 });
 const sockets = [];

@@ -45,7 +45,7 @@ await new Promise(r => portProbe.listen(0, '127.0.0.1', r));
 const port = portProbe.address().port;
 await new Promise(r => portProbe.close(r));
 const app = spawn(resolve('target/debug/glass-browser.exe'), [`${origin}/Vertrag.pdf`], {
-  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile,
+  windowsHide: true, stdio: 'ignore', env: { ...process.env, LOCALAPPDATA: profile, GLASS_LANG: 'de',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`, GLASS_TEST_SAVE_DIR: saveDir },
 });
 const sockets = [];
@@ -178,7 +178,9 @@ try {
   const ink = await page(`(() => { const s = document.querySelector('.canvasWrapper svg.draw'); return s && getComputedStyle(s).stroke; })()`);
   assert.equal(ink, 'rgb(0, 0, 0)', 'pen keeps its chosen colour (black)');
   // Umfärben über die Farben in den Einstellungen rechts – an der Markierung selbst gibt es keinen Farbwähler
-  await waitFor(() => page(`!!document.querySelector('.highlightEditor.selectedEditor')`), 'new highlight selected');
+  // Erst wenn „Auswahl löschen“ da ist: der Knopf macht die Einstellungen höher, die mittig stehen – sonst
+  // verrutschen die Farben zwischen Messen und Klicken
+  await waitFor(() => page(`!!document.querySelector('.highlightEditor.selectedEditor') && !document.getElementById('delete-selected').hidden`), 'new highlight selected');
   assert.equal(await page(`[...document.querySelectorAll('.editToolbar .colorPicker')].filter(b => b.offsetWidth).length`), 0, 'no second colour picker on the highlight');
   await pressButton('#tool-options .swatches[data-param="highlight"] .swatch:nth-child(3)');
   await waitFor(() => page(`getComputedStyle(document.querySelector('.page[data-page-number="2"] .canvasWrapper svg.highlight')).fill === 'rgb(128, 235, 255)'`), 'highlight recoloured from the panel');
