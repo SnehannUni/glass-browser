@@ -2841,6 +2841,11 @@
   const mailBtn = $('btn-mail'), mailView = $('mailview'), mailHint = $('mail-hint');
   let mail = { boxes: [] };
   let mailFilter = 'all', mailSelected = null; // „all“, „unread“ oder ein Postfach
+  // In Glass geöffnete Mails gelten sofort als gelesen: Die Postfächer markieren sie erst nach einer Weile (Outlook
+  // je nach Einstellung gar nicht) und melden es noch später. Bestätigt das Postfach „gelesen“, gilt wieder seine
+  // Angabe – markiert man die Mail danach als ungelesen, kommt der Punkt zurück.
+  const mailOpened = new Set();
+  const mailUnread = (m, id) => m.unread && !mailOpened.has(id);
   const plural = (n) => (n > 999 ? '999+' : String(n));
   const inMailView = () => !!activeTab()?.mail;
   // Abzeichen zählen nur, was seit dem letzten Besuch der Mail-Ansicht neu ist – nicht alle Ungelesenen (die stehen
@@ -2880,6 +2885,7 @@
   mailReload.addEventListener('click', () => send('reload'));
   window.mailState = (next) => {
     mail = next;
+    for (const b of mail.boxes) for (const m of b.list || []) if (!m.unread) mailOpened.delete(`${b.key}:${m.key}`);
     mailReload.classList.toggle('busy', mail.boxes.some((b) => b.loading));
     updateMailSeen();
     renderMailBadge();
@@ -3015,14 +3021,14 @@
     const items = connected
       .filter((b) => mailFilter === 'all' || mailFilter === 'unread' || b.key === mailFilter)
       .flatMap((b) => (b.list || []).map((m) => ({ ...m, box: b })))
-      .filter((m) => mailFilter !== 'unread' || m.unread)
+      .filter((m) => mailFilter !== 'unread' || mailUnread(m, `${m.box.key}:${m.key}`))
       .sort((a, b) => b.time - a.time);
     const list = document.createElement('div');
     list.className = 'mv-list';
     for (const m of items) {
       const row = document.createElement('div');
       const id = `${m.box.key}:${m.key}`;
-      row.className = `ml${m.unread ? ' unread' : ''}${id === mailSelected ? ' sel' : ''}`;
+      row.className = `ml${mailUnread(m, id) ? ' unread' : ''}${id === mailSelected ? ' sel' : ''}`;
       row.title = `${m.box.name}: ${m.subject || t('(kein Betreff)')}`;
       const dot = document.createElement('span');
       dot.className = 'dot';
@@ -3041,8 +3047,10 @@
       row.append(dot, mailIcon(m.box), from, time, line);
       row.addEventListener('click', () => {
         mailSelected = id;
+        if (m.unread) mailOpened.add(id);
         list.querySelectorAll('.ml.sel').forEach((r) => r.classList.remove('sel'));
         row.classList.add('sel');
+        row.classList.remove('unread');
         send('mail_show', { value: m.box.key, item: m.key });
       });
       list.append(row);
