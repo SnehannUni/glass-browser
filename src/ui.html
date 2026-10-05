@@ -1860,7 +1860,11 @@
   address.addEventListener('submit', (e) => {
     e.preventDefault();
     const value = input.value.trim();
-    if (!value) return;
+    // Startbildschirm ohne Eingabe: Enter öffnet die Seite des gewählten Anbieters (YouTube gewählt → YouTube)
+    if (!value) {
+      if (document.body.classList.contains('start')) { send('navigate', { value: searchEngine().origin }); input.blur(); }
+      return;
+    }
     // Prompts an KI-Chats und YouTube-Suchen merken (Google-Suchen erkennt recordSearches an der Ergebnis-URL)
     const choice = searchEngine();
     if (choice.id !== 'google' && !activeTab()?.private && !looksLikeUrl(value)) remember(choice.id, value);
