@@ -7,7 +7,6 @@
   :root {
     --chrome: 42px;   /* kommt als chromeHeight aus main.rs */
     --chrome-w: 240px; /* Breite der Leiste links, kommt als chromeWidth aus main.rs */
-    --chrome-w-full: 240px; /* ausgeklappt (main.rs: SIDEBAR_WIDTH) – auch über der Seite, wenn eingeklappt */
     --margin: 4px;    /* = MARGIN in main.rs */
     --side-top: 28px; /* Leiste links: hier beginnen die Seiten, darüber der Streifen mit den Fensterknöpfen (= SIDE_TOP in main.rs) */
     --pane-radius: 4px; /* = CONTENT_RADIUS in main.rs */
@@ -767,35 +766,6 @@
   body.side-left .center.docked .address:not(.editing) {
     width: 100%; height: calc(2 * var(--toolbar-control-height)); padding-right: 5px; padding-bottom: var(--toolbar-control-height);
   }
-  /* Eingeklappt (.side-collapsed: Seiten ab 56px) zeigt die Leiste nur die Logos der Tabs (.side-slim); der aktive
-     steht mit Linse in der Liste. Maus drauf oder Strg+L: Sie klappt über der Seite voll auf (.side-flyout) –
-     die Seite bleibt, wo sie ist; Rust spart die Fläche aus ihr aus (overlay „sidebar“). */
-  /* z-index: sonst läge das Glas (#sidepanel, z-index -1) unter dem Platzhalter der Seite und dessen Kante schiene
-     durch; unter Vorschlägen (20) und Rad (11) bleibt sie */
-  body.side-flyout #toolbar { width: calc(var(--chrome-w-full) - 2 * var(--margin)); }
-  body.side-collapsed #toolbar { z-index: 8; }
-  body.side-collapsed #toolbar { transition: transform var(--chrome-slide), width .26s var(--ease); }
-  body.side-slim #toolbar { padding: 8px 6px; gap: 0; }
-  body.side-slim :is(.nav, .side.right, .side.left > .tab-new) { display: none; }
-  /* Das Suchfeld bleibt im Dokument: Auf dem Startbildschirm steht es ohnehin fest in der Mitte, auf einer Seite
-     klappt Strg+L die Leiste vorher auf (setFlyout) */
-  body.side-slim .side.left { min-height: 0; }
-  body.side-slim .center { height: 0; }
-  body.side-slim:not(.start) .center { display: none; }
-  body.side-slim #tabbar { margin-top: 0; }
-  body.side-slim .tab .tab-label { padding: 0; justify-content: center; width: 100%; }
-  body.side-slim .tab .title, body.side-slim .tab .close { display: none; }
-  body.side-slim .tab .fav, body.side-slim .tab.compact.active .fav,
-  body.side-slim.side-left .tab:is(:hover, .vh, :focus-within) .fav { display: grid; opacity: 1; }
-  /* Aufklappen: Erst wächst die Leiste mit den Logos, dann blendet der Rest ein – in seiner vollen Breite, damit
-     nichts gestaucht am Rand der Seite abgeschnitten wird. Zuklappen: Der Rest verschwindet sofort (.side-slim). */
-  body.side-flyout :is(.side.left, .side.right) { min-width: calc(var(--chrome-w-full) - 2 * var(--margin) - 16px); }
-  /* (Startbildschirm: Das Suchfeld steht fest in der Mitte und bleibt, nur der Tab oben blendet mit ein) */
-  body.side-flyout :is(.nav, .side.right, .side.left > .tab-new, #tabs .tab .title),
-  body.side-flyout:not(.start) .center, body.side-flyout.start .center > .tab.slotted {
-    animation: side-reveal .16s var(--ease) .16s backwards;
-  }
-  @keyframes side-reveal { from { opacity: 0; } }
   /* Startbildschirm: Der aktive Tab steht oben an der Stelle des Adressfelds (renderTabList: .slotted) */
   /* Glas wie .glass, aber ohne die Klasse: glass-rim.js hängt sonst einen Rand an, der beim Zurück in die Liste
      im Tab liegen bliebe und das Logo verschiebt */
@@ -852,7 +822,6 @@
     clip-path: polygon(0px calc(0px + 4px), calc(0px + 0.54px) calc(0px + 3.46px), calc(0px + 2px) calc(0px + 2px), calc(0px + 3.46px) calc(0px + 0.54px), calc(0px + 4px) 0px, calc(100% - 4px) 0px, calc(100% - 3.46px) calc(0px + 0.54px), calc(100% - 2px) calc(0px + 2px), calc(100% - 0.54px) calc(0px + 3.46px), 100% calc(0px + 4px), 100% calc(var(--strip-h) - 4px), calc(100% - 0.54px) calc(var(--strip-h) - 3.46px), calc(100% - 2px) calc(var(--strip-h) - 2px), calc(100% - 3.46px) calc(var(--strip-h) - 0.54px), calc(100% - 4px) var(--strip-h), calc(var(--bar) + 8px) var(--strip-h), calc(var(--bar) + 4px) calc(var(--strip-h) + 1.07px), calc(var(--bar) + 1.07px) calc(var(--strip-h) + 4px), var(--bar) calc(var(--strip-h) + 8px), var(--bar) calc(100% - 4px), calc(var(--bar) - 0.54px) calc(100% - 3.46px), calc(var(--bar) - 2px) calc(100% - 2px), calc(var(--bar) - 3.46px) calc(100% - 0.54px), calc(var(--bar) - 4px) 100%, calc(0px + 4px) 100%, calc(0px + 3.46px) calc(100% - 0.54px), calc(0px + 2px) calc(100% - 2px), calc(0px + 0.54px) calc(100% - 3.46px), 0px calc(100% - 4px));
     transition: clip-path .26s var(--ease);
   }
-  body.side-flyout #sidepanel { --bar: calc(var(--chrome-w-full) - 2 * var(--margin)); }
   #sidestrip { display: none; }
   body.side-left #sidestrip {
     position: fixed; z-index: 6; top: var(--margin); left: calc(var(--chrome-w) - var(--margin)); right: var(--margin);
@@ -935,10 +904,7 @@
   </div>
 
   <div id="toolbar-menu" role="menu" aria-label="Leiste" hidden>
-    <button id="toolbar-pin" class="item" type="button" role="menuitemcheckbox" aria-checked="false" hidden><span class="check" aria-hidden="true">✓</span>Leiste einklappen</button>
     <button id="toolbar-side" class="item" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check" aria-hidden="true">✓</span>Leiste links</button>
-    <button id="toolbar-default" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Als Standardbrowser festlegen…</button>
-    <button id="toolbar-privacy" class="item" type="button" role="menuitem"><span class="check" aria-hidden="true"></span>Datenschutz</button>
   </div>
   <div id="mail-menu" role="menu" aria-label="Postfach" hidden>
     <button id="mail-forget" class="item" type="button" role="menuitem" title="Du bleibst dort angemeldet"></button>
@@ -1545,13 +1511,11 @@
     const ids = new Set(state.tabs.map((t) => t.id));
     for (const [id, el] of tabEls) if (!ids.has(id)) { el.remove(); tabEls.delete(id); }
     // Geteilte Ansicht: Der aktive Tab steht im Adressfeld, sein Partner rechts in derselben Kapsel (kein Tab doppelt)
-    // Eingeklappte Leiste links: kein Adressfeld – der aktive Tab (bzw. das Paar) steht mit Linse in der Liste
-    const collapsed = document.body.classList.contains('side-slim');
-    const split = activeSplit(), inBar = !document.body.classList.contains('start') && !collapsed;
+    const split = activeSplit(), inBar = !document.body.classList.contains('start');
     const docked = split && inBar ? (split.left === state.active ? split.right : split.left) : null;
     // Leiste links, Startbildschirm: Das Adressfeld steht als Suche in der Mitte – der aktive Tab bleibt trotzdem
     // oben an seinem Platz, wie auf einer Seite (ganz oben steht immer, wo man gerade ist)
-    const slotted = !inBar && !collapsed && !split && sideLeft() ? state.active : null;
+    const slotted = !inBar && !split && sideLeft() ? state.active : null;
     center.classList.toggle('docked', docked != null); // Adressfeld wird um den Partner breiter
     // Ist gerade ein anderer Tab aktiv, steht ein kombiniertes Paar trotzdem als Einheit in der Leiste:
     // beide nebeneinander (links, rechts wie auf der Seite) an der Stelle des vorderen
@@ -3159,7 +3123,6 @@
   // Das Licht verfolgt auch die Position über Webseiten. Nur echte UI-Treffer erhalten .vh.
   let vhover = [];
   window.hoverAt = (x, y, overUI = true) => {
-    sideHover(x, y);
     window.GroupHover.at(x, y, overUI);
     trackLight(x, y);
     const el = x == null || !overUI ? null : document.elementFromPoint(x, y);
@@ -3275,17 +3238,9 @@
 
   // ---------- Menü der Leiste ----------
   // Die Leiste bleibt immer sichtbar – oben wie links blendet sie sich beim Scrollen nicht aus.
-  // Leiste links: standardmäßig voll; „Leiste einklappen“ lässt nur die Tab-Logos stehen
-  const SIDE_COLLAPSED_KEY = 'glass.sideCollapsed';
-  let sideCollapsedPref = false;
-  try { sideCollapsedPref = localStorage.getItem(SIDE_COLLAPSED_KEY) === 'true'; } catch { /* Sitzungseinstellung */ }
-  const toolbarMenu = $('toolbar-menu'), toolbarPin = $('toolbar-pin');
-  // „Leiste einklappen“ gibt es nur links
-  function renderToolbarPin() {
-    toolbarPin.hidden = !sideLeft();
-    toolbarPin.setAttribute('aria-checked', String(sideCollapsedPref));
-  }
-  renderToolbarPin();
+  // Leiste links steht immer voll da (einklappen lässt sie sich nicht)
+  const toolbarMenu = $('toolbar-menu');
+  try { localStorage.removeItem('glass.sideCollapsed'); } catch { /* egal */ }
   function closeToolbarMenu() {
     if (toolbarMenu.hidden) return;
     toolbarMenu.hidden = true;
@@ -3303,18 +3258,6 @@
     send('overlay', { rect: { x, y, w: toolbarMenu.offsetWidth, h: toolbarMenu.offsetHeight, r: 12 } });
     toolbarMenu.querySelector('.item:not([hidden])').focus({ preventScroll: true });
   });
-  // Glass bei Windows anmelden und die Einstellungsseite dafür öffnen (wie „Festlegen“ im Hinweis auf dem Startbildschirm)
-  $('toolbar-default').addEventListener('click', () => { closeToolbarMenu(); send('default_browser'); });
-  $('toolbar-privacy').addEventListener('click', () => { closeToolbarMenu(); send('privacy'); });
-  toolbarPin.addEventListener('click', () => {
-    sideCollapsedPref = !sideCollapsedPref;
-    try { localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsedPref)); } catch { /* Sitzungseinstellung */ }
-    renderToolbarPin();
-    closeToolbarMenu();
-    toolbarPin.blur();
-    sendSide(); // links: ein- bzw. ausklappen
-    layoutSide();
-  });
 
   // Leiste oben oder links: Die Oberfläche merkt sich die Wahl und sagt Rust, wo die Webseiten Platz haben
   const TOOLBAR_SIDE_KEY = 'glass.toolbarSide';
@@ -3322,11 +3265,7 @@
   // Rust bekommt immer die gewählte Seite (Webseiten gibt es ohnehin erst mit Tabs). Die Oberfläche steht aber
   // nur links, wenn etwas offen ist – ohne Tabs sitzen die Knöpfe wie bei der Leiste oben rechts oben.
   let sidePref = false;
-  // Eingeklappt (links, „Leiste einklappen“): Die Seiten beginnen neben den Tab-Logos. `flyout`: Maus auf
-  // der Leiste oder Strg+L klappt sie über der Seite auf – die Seite bleibt, Rust spart die Fläche aus ihr aus.
-  const SIDEBAR_FULL = 240; // = --chrome-w-full
-  let flyout = false;
-  const sendSide = () => send('chrome_side', { value: sidePref ? 'left' : 'top', collapsed: sidePref && sideCollapsedPref });
+  const sendSide = () => send('chrome_side', { value: sidePref ? 'left' : 'top' });
   function applySide(left) {
     sidePref = left;
     toolbarSide.setAttribute('aria-checked', String(left));
@@ -3334,20 +3273,13 @@
     layoutSide();
   }
   function layoutSide() {
-    const left = sidePref && !!state.tabbar, collapsed = left && sideCollapsedPref;
-    if (!collapsed) flyout = false;
-    const slim = collapsed && !flyout, body = document.body.classList;
-    if (sideLeft() === left && body.contains('side-collapsed') === collapsed && body.contains('side-slim') === slim) return;
-    body.toggle('side-left', left);
-    body.toggle('side-collapsed', collapsed);
-    body.toggle('side-slim', slim);
-    body.toggle('side-flyout', collapsed && flyout);
+    const left = sidePref && !!state.tabbar;
+    if (sideLeft() === left) return;
+    document.body.classList.toggle('side-left', left);
     // Fensterknöpfe rechts oben: am Ende der Leiste oben – bei der Leiste links im Streifen über den Seiten
     const winctl = document.querySelector('.winctl');
     if (left) $('sidestrip').append(winctl);
     else document.querySelector('.side.right').append(winctl);
-    renderToolbarPin();
-    reportSideOverlay();
     // Feld und Tabs sind jetzt anders angeordnet: alles neu vermessen
     address.classList.remove('resizing');
     if (left) { toolbar.style.removeProperty('--side-left'); toolbar.style.removeProperty('--side-right'); toolbar.style.removeProperty('--address-width'); }
@@ -3366,59 +3298,6 @@
     applySide(left);
   });
 
-  // Aufgeklappt über der Seite: Rust schneidet die Leiste aus der Webseite aus – Bild für Bild genau so breit,
-  // wie sie gerade ist (auch in der Zeitlupe). Eine feste Aussparung stünde sonst als zweite Ebene vor ihr.
-  // Zuletzt gesendet – über alle Durchläufe hinweg: Begänne jeder mit „nichts“, käme das Entfernen der Aussparung
-  // nie bei Rust an (z. B. beim Wechsel nach oben aus der aufgeklappten Leiste)
-  let sideOverlayFrame = 0, sideOverlaySent;
-  function reportSideOverlay() {
-    cancelAnimationFrame(sideOverlayFrame);
-    const radius = parseFloat(getComputedStyle($('sidepanel')).borderTopLeftRadius) || 0;
-    const since = performance.now();
-    (function follow() {
-      const r = toolbar.getBoundingClientRect(), body = document.body.classList;
-      // Nur eingeklappt links liegt die Leiste über der Seite; schmal liegt sie daneben – nichts mehr auszusparen.
-      // (Oben ist die Leiste fensterbreit: ohne diese Bedingung fehlte der Seite ein Streifen.)
-      const over = body.contains('side-collapsed') && (body.contains('side-flyout') || r.right > state.chromeWidth);
-      const rect = over ? { x: r.left, y: r.top, w: r.width, h: r.height, r: radius } : null;
-      if (JSON.stringify(rect) !== JSON.stringify(sideOverlaySent)) { send('overlay', { key: 'sidebar', rect }); sideOverlaySent = rect; }
-      // Weiter, solange sie gleitet (der Übergang beginnt erst mit dem nächsten Bild)
-      if (toolbar.getAnimations().length || performance.now() - since < 100) sideOverlayFrame = requestAnimationFrame(follow);
-    })();
-  }
-  addEventListener('resize', () => { if (flyout) reportSideOverlay(); });
-  function setFlyout(open) {
-    clearTimeout(flyoutTimer); flyoutTimer = 0;
-    if (open === flyout || (open && !document.body.classList.contains('side-collapsed'))) return;
-    flyout = open;
-    layoutSide();
-  }
-  // Solange darin gearbeitet wird, bleibt sie offen (Suchen, Menü, Tab ziehen …)
-  const flyoutBusy = () => editing() || tabDrag || resizeDrag || !toolbarMenu.hidden
-    || [suggestBox, favPanel, dlPanel].some((el) => el.classList.contains('open'))
-    || document.body.matches('.modal, .wheel-open');
-  // Mausposition von hoverAt (auch über Webseiten): auf den Logos kurz verweilen öffnet, daneben schließt
-  let flyoutTimer = 0, flyoutPointer = null;
-  function sideHover(x, y) {
-    flyoutPointer = x == null || y == null ? null : { x, y };
-    if (!document.body.classList.contains('side-collapsed')) return;
-    const inside = !!flyoutPointer && x < (flyout ? SIDEBAR_FULL : state.chromeWidth);
-    if (inside === flyout) { clearTimeout(flyoutTimer); flyoutTimer = 0; return; }
-    if (flyoutTimer) return;
-    flyoutTimer = setTimeout(function settle() {
-      flyoutTimer = 0;
-      if (!inside && flyoutBusy()) { flyoutTimer = setTimeout(settle, 300); return; }
-      setFlyout(inside);
-    }, inside ? 120 : 300);
-  }
-  // Suchen auf einer Seite braucht das Feld in der Leiste: vorher aufklappen (versteckt nimmt es keinen Fokus an)
-  const focusAddressIn = window.focusAddress;
-  window.focusAddress = () => {
-    if (!document.body.classList.contains('start')) setFlyout(true);
-    focusAddressIn();
-  };
-  // Fertig gesucht: zuklappen, sofern die Maus nicht gerade auf der Leiste steht
-  input.addEventListener('blur', () => { clearTimeout(flyoutTimer); flyoutTimer = 0; sideHover(flyoutPointer?.x, flyoutPointer?.y); });
 
   document.addEventListener('pointerdown', (e) => {
     if (!toolbarMenu.contains(e.target)) closeToolbarMenu();

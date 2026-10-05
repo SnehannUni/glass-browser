@@ -102,7 +102,7 @@ try {
   await openToolbarMenu();
   assert.equal(await evaluate(`document.getElementById('toolbar-menu').hidden`), false);
   assert.ok(await evaluate(`document.getElementById('toolbar-menu').getBoundingClientRect().right <= innerWidth`));
-  assert.equal(await evaluate(`document.getElementById('toolbar-pin').offsetWidth`), 0, 'top toolbar: no collapse entry');
+  assert.equal(await evaluate(`document.getElementById('toolbar-pin')`), null, 'no collapse entry');
   assert.equal(await evaluate(`document.activeElement.id`), 'toolbar-side', 'focus starts on the first visible entry');
   assert.equal(await evaluate(`typeof window.pageScrolled`), 'undefined', 'the toolbar no longer hides on scroll');
   await key('Escape','Escape');
