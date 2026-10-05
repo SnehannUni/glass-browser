@@ -47,10 +47,7 @@ window.UI_EN = {
 
   // Kontextmenü der Leiste
   'Leiste': 'Toolbar',
-  'Leiste einklappen': 'Collapse toolbar',
   'Leiste links': 'Toolbar on the left',
-  'Als Standardbrowser festlegen…': 'Set as default browser…',
-  'Datenschutz': 'Privacy',
 
   // Privates Surfen, Standardbrowser
   'Privates Surfen': 'Private browsing',

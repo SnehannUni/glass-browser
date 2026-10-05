@@ -221,6 +221,32 @@
   // bliebe die gemeinsame Liste sonst stehen
   window.__glassMailHome = () => { if (provider === 'gmail' && !inInbox()) location.hash = '#inbox'; };
 
+  // Wohin in die Zeile klicken? Outlook legt links neben den Absender ein Häkchen zum Auswählen (erscheint beim
+  // Überfahren) und rechts Knöpfe (Löschen, Kennzeichnen …) – ein Klick dorthin öffnet die Mail nicht, sondern wählt
+  // mehrere aus. Deshalb auf Betreff bzw. Absender und nur auf eine Stelle, die die Zeile selbst trifft.
+  const CONTROL = '[role="checkbox"], [role="button"], button, input, a[href]';
+  function clickPoint(row) {
+    const r = row.getBoundingClientRect(), mid = r.top + r.height / 2;
+    const points = [];
+    if (provider === 'outlook') {
+      const sender = row.querySelector('span[title*="@"]');
+      const stamp = [...row.querySelectorAll('span[title]')].find((s) => s !== sender && /\d{4}/.test(s.title));
+      const subject = stamp && [...stamp.parentElement.children].find((c) => c !== stamp);
+      for (const el of [subject, sender]) {
+        const b = el?.getBoundingClientRect();
+        if (b?.width) points.push([b.left + Math.min(20, b.width / 2), b.top + b.height / 2]);
+      }
+      points.push([r.left + r.width * 0.45, mid]);
+    }
+    points.push([r.left + Math.min(60, r.width / 2), mid]);
+    const hits = ([x, y]) => {
+      const el = row.ownerDocument.elementFromPoint(x, y);
+      const control = el?.closest(CONTROL);
+      return el && row.contains(el) && !(control && row.contains(control));
+    };
+    return points.find(hits) || points[0];
+  }
+
   // Mail aus der gemeinsamen Liste im Postfach öffnen (Rust ruft das nach dem Tabwechsel auf)
   window.__glassMailOpen = (key) => {
     if (provider === 'gmail') { location.hash = `#inbox/${encodeURIComponent(key)}`; return; }
@@ -242,8 +268,7 @@
     }
     row.scrollIntoView({ block: 'nearest' });
     requestAnimationFrame(() => {
-      const r = row.getBoundingClientRect();
-      let x = r.left + Math.min(60, r.width / 2), y = r.top + r.height / 2;
+      let [x, y] = clickPoint(row);
       // Koordinaten des iframes hinzurechnen: Glass klickt ins oberste Dokument
       for (let w = row.ownerDocument.defaultView; w !== window && w.frameElement; w = w.parent) {
         const f = w.frameElement.getBoundingClientRect();

@@ -51,9 +51,11 @@ wallImg.crossOrigin = 'anonymous'; // sonst ist das Canvas für die Helligkeitsm
 let geo = null, bakedFor = '', wellImage = '';
 wallImg.onload = () => { bakeWall(); placeWall(); };
 wallImg.src = document.body.dataset.wall;
+// Windows zeigt ein anderes Hintergrundbild (main.rs): neu laden – bis es da ist, bleibt das alte stehen
+window.__glassWallpaperChanged = () => { wallImg.src = `${document.body.dataset.wall}?${Date.now()}`; };
 function bakeWall() {
   if (!geo || !wallImg.naturalWidth) return;
-  const dpr = devicePixelRatio, key = `${geo.mw}x${geo.mh}@${dpr}`;
+  const dpr = devicePixelRatio, key = `${geo.mw}x${geo.mh}@${dpr} ${wallImg.src}`;
   if (key === bakedFor) return;
   bakedFor = key;
   const W = Math.round(geo.mw * dpr), H = Math.round(geo.mh * dpr);
