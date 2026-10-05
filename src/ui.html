@@ -813,14 +813,13 @@
   /* Leiste links: Oben läuft sie als dünner Streifen über den Seiten bis zum rechten Rand weiter, darin rechts die
      Fensterknöpfe; er dient wie eine Titelleiste zum Verschieben. Nahtlos, weil beides eine einzige Glasfläche ist:
      #sidepanel reicht oben bis zum rechten Fensterrand und ist per clip-path zu einem L zugeschnitten (--bar: Breite
-     der Leiste, folgt beim Aufklappen über der Seite mit; die Innenecke ist mit 8 px gerundet, konzentrisch zur Ecke
-     der Seite darunter). #sidestrip trägt nur die Knöpfe. */
+     der Leiste; die Innenecke ist mit 8 px gerundet, konzentrisch zur Ecke der Seite darunter). #sidestrip trägt
+     nur die Knöpfe. */
   :root { --strip-h: calc(var(--side-top) - 2 * var(--margin)); }
   body.side-left #sidepanel {
     right: auto; width: calc(100vw - 2 * var(--margin)); border-radius: var(--pane-radius);
     --bar: calc(var(--chrome-w) - 2 * var(--margin));
     clip-path: polygon(0px calc(0px + 4px), calc(0px + 0.54px) calc(0px + 3.46px), calc(0px + 2px) calc(0px + 2px), calc(0px + 3.46px) calc(0px + 0.54px), calc(0px + 4px) 0px, calc(100% - 4px) 0px, calc(100% - 3.46px) calc(0px + 0.54px), calc(100% - 2px) calc(0px + 2px), calc(100% - 0.54px) calc(0px + 3.46px), 100% calc(0px + 4px), 100% calc(var(--strip-h) - 4px), calc(100% - 0.54px) calc(var(--strip-h) - 3.46px), calc(100% - 2px) calc(var(--strip-h) - 2px), calc(100% - 3.46px) calc(var(--strip-h) - 0.54px), calc(100% - 4px) var(--strip-h), calc(var(--bar) + 8px) var(--strip-h), calc(var(--bar) + 4px) calc(var(--strip-h) + 1.07px), calc(var(--bar) + 1.07px) calc(var(--strip-h) + 4px), var(--bar) calc(var(--strip-h) + 8px), var(--bar) calc(100% - 4px), calc(var(--bar) - 0.54px) calc(100% - 3.46px), calc(var(--bar) - 2px) calc(100% - 2px), calc(var(--bar) - 3.46px) calc(100% - 0.54px), calc(var(--bar) - 4px) 100%, calc(0px + 4px) 100%, calc(0px + 3.46px) calc(100% - 0.54px), calc(0px + 2px) calc(100% - 2px), calc(0px + 0.54px) calc(100% - 3.46px), 0px calc(100% - 4px));
-    transition: clip-path .26s var(--ease);
   }
   #sidestrip { display: none; }
   body.side-left #sidestrip {
@@ -3296,6 +3295,17 @@
     closeToolbarMenu();
     toolbarSide.blur();
     applySide(left);
+  });
+  // Chromium-Fehler: Wird das Fenster kleiner (z. B. maximiert → wiederhergestellt), schneidet clip-path den
+  // backdrop-filter der Glasfläche nicht mehr zu – das Glas füllt den Spalt zwischen Leiste und Seite. Eine kurz
+  // eigene Ebene (will-change) baut den Filter neu auf, ohne dass er ein Bild lang fehlt.
+  let sidePanelFrame = 0;
+  addEventListener('resize', () => {
+    if (!sideLeft()) return;
+    const panel = $('sidepanel');
+    panel.style.willChange = 'transform';
+    cancelAnimationFrame(sidePanelFrame);
+    sidePanelFrame = requestAnimationFrame(() => { sidePanelFrame = requestAnimationFrame(() => panel.style.removeProperty('will-change')); });
   });
 
 
