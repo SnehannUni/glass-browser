@@ -1251,11 +1251,13 @@
   let geo = null, bakedFor = '';
   wallImg.onload = () => { bakeWall(); placeWall(); };
   wallImg.src = '/wallpaper';
+  // Windows zeigt ein anderes Hintergrundbild (main.rs): neu laden – bis es da ist, bleibt das alte stehen
+  window.wallpaperChanged = () => { wallImg.src = `/wallpaper?${Date.now()}`; };
 
   // Wallpaper einmal in Monitorgröße verschwommen in ein Canvas zeichnen ("Füllen" wie der Desktop)
   function bakeWall() {
     if (!geo || !wallImg.naturalWidth) return;
-    const dpr = devicePixelRatio, key = `${geo.mw}x${geo.mh}@${dpr}`;
+    const dpr = devicePixelRatio, key = `${geo.mw}x${geo.mh}@${dpr} ${wallImg.src}`;
     if (key === bakedFor) return;
     bakedFor = key;
     const W = Math.round(geo.mw * dpr), H = Math.round(geo.mh * dpr);

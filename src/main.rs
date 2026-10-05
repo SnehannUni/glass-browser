@@ -61,6 +61,8 @@ const SPLIT_GAP: f64 = 4.0;
 const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// Takt von `poll_hover`, solange Glass im Vordergrund ist (ein Bild bei 60 Hz).
 const HOVER_TICK: std::time::Duration = std::time::Duration::from_millis(16);
+/// So oft sieht Glass nach, ob Windows den Desktop-Hintergrund gewechselt hat (Einstellungen, Diashow).
+const WALLPAPER_CHECK: std::time::Duration = std::time::Duration::from_secs(2);
 /// Ein `UserEvent::HoverTick` ist unterwegs – höchstens einer, auch wenn die Ereignisschleife gerade hängt.
 static HOVER_TICK_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const PROMPT_JS: &str = include_str!("prompt.js");
@@ -124,6 +126,8 @@ enum UserEvent {
     SleepTabs,
     /// Mausposition prüfen (siehe `poll_hover` und den Takt-Thread in `main`).
     HoverTick,
+    /// Windows zeigt ein anderes Hintergrundbild – das Glas soll es auch zeigen.
+    WallpaperChanged,
     /// Ladende Tabs auf hängende Seiten prüfen (`check_hung`).
     HangTick,
     /// WebView2 meldet: Der Renderer der Seite dieses Tabs reagiert nicht mehr.
@@ -1340,6 +1344,12 @@ impl Browser {
                 HOVER_TICK_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
                 self.poll_hover();
             }
+            UserEvent::WallpaperChanged => {
+                let _ = self.ui.evaluate_script("window.wallpaperChanged?.()");
+                for wv in self.tabs.iter().filter(|t| t.pdf_viewer).filter_map(|t| t.webview.as_ref()) {
+                    let _ = wv.evaluate_script("window.__glassWallpaperChanged?.()");
+                }
+            }
             UserEvent::Download(id, change) => {
                 let (mut started, mut dialog) = (false, false);
                 if let downloads::Change::Started { fresh, confirm } = change {
@@ -2026,6 +2036,14 @@ fn wallpaper() -> Option<Vec<u8>> {
     wallpaper_paths().find_map(|p| std::fs::read(p).ok())
 }
 
+/// Kennzeichen des Hintergrundbilds (Datei, Größe, Änderungszeit): Es ändert sich, wenn Windows ein anderes zeigt.
+fn wallpaper_stamp() -> Option<(std::path::PathBuf, u64, std::time::SystemTime)> {
+    wallpaper_paths().find_map(|p| {
+        let meta = std::fs::metadata(&p).ok().filter(|m| m.is_file())?;
+        Some((p, meta.len(), meta.modified().ok()?))
+    })
+}
+
 /// Wo das Hintergrundbild liegen kann, in dieser Reihenfolge.
 fn wallpaper_paths() -> impl Iterator<Item = std::path::PathBuf> {
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
@@ -2249,6 +2267,25 @@ fn main() -> wry::Result<()> {
             && p_hover.send_event(UserEvent::HoverTick).is_err()
         {
             break;
+        }
+    });
+
+    // Desktop-Hintergrund gewechselt? Nur Registry und Dateiattribute – gelesen wird das Bild erst von der Seite.
+    // Gemeldet wird erst, wenn Windows fertig geschrieben hat (zweimal hintereinander dasselbe Kennzeichen).
+    let p_wall = proxy.clone();
+    std::thread::spawn(move || {
+        let mut shown = wallpaper_stamp();
+        let mut seen = shown.clone();
+        loop {
+            std::thread::sleep(WALLPAPER_CHECK);
+            let now = wallpaper_stamp();
+            if now != shown && now == seen {
+                shown = now.clone();
+                if p_wall.send_event(UserEvent::WallpaperChanged).is_err() {
+                    break;
+                }
+            }
+            seen = now;
         }
     });
 
